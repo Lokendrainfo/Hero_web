@@ -43,3 +43,4 @@ frontend/.env.tunnel
 
 frontend/vite.config.js
 docker-compose.yml
+frontend/nginx.conf
