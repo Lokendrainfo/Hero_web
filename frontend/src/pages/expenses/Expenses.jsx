@@ -66,6 +66,9 @@ export const Expenses = () => {
   const [rejectionReason, setRejectionReason] = useState('');
   const [payModalOpen, setPayModalOpen] = useState(null);
   const [paymentForm, setPaymentForm] = useState({ payment_mode: 'CASH', payment_reference: '' });
+  const [genMonthlyModalOpen, setGenMonthlyModalOpen] = useState(false);
+  const [genMonthlyForm, setGenMonthlyForm] = useState({ month: new Date().getMonth() + 1, year: new Date().getFullYear(), vendor_id: '' });
+  const [generatingMonthly, setGeneratingMonthly] = useState(false);
 
   // Form State
   const [formState, setFormState] = useState({
@@ -132,7 +135,8 @@ export const Expenses = () => {
         else if (typeStr === 'OTDR_SURVEY') typeStr = 'OTDR Survey';
 
         const codeStr = t.taskCode || t.code || t.id || '';
-        const locStr = t.location || t.site_name || '';
+        const rawLoc = t.location || t.site_name || t.site || '';
+        const locStr = typeof rawLoc === 'string' ? rawLoc : (rawLoc?.name || rawLoc?.title || rawLoc?.address || '');
         const displayLabel = typeStr ? `${typeStr} - ${codeStr}` : (codeStr || 'Assigned Task');
 
         return {
@@ -140,7 +144,7 @@ export const Expenses = () => {
           raw_code: codeStr,
           task_type: typeStr || 'Trenching / Ducting',
           title: displayLabel,
-          site_name: locStr ? `${locStr} (${displayLabel})` : displayLabel,
+          site_name: locStr,
           vendor: t.vendor || t.vendor_id || t.assigned_vendor,
           vendor_name: t.assigned_vendor || t.vendor_name
         };
@@ -209,9 +213,121 @@ export const Expenses = () => {
 
   const filteredFormTasks = useMemo(() => {
     const list = ensureArray(tasks);
-    if (!formState.vendor_id) return list;
-    return list.filter(t => String(t.vendor) === String(formState.vendor_id) || String(t.vendor_id) === String(formState.vendor_id));
+    const vendorFiltered = !formState.vendor_id
+      ? list
+      : list.filter(t => String(t.vendor) === String(formState.vendor_id) || String(t.vendor_id) === String(formState.vendor_id));
+
+    // Deduplicate by task_type so only one option per unique task category appears
+    const seenTypes = new Set();
+    const uniqueTasks = [];
+
+    vendorFiltered.forEach(t => {
+      let typeLabel = (t.task_type || t.title || 'Trenching / Ducting').trim();
+      if (typeLabel === 'FIBER_TRENCHING_DUCTING_TASK') typeLabel = 'Trenching / Ducting';
+
+      if (!seenTypes.has(typeLabel)) {
+        seenTypes.add(typeLabel);
+        uniqueTasks.push({
+          ...t,
+          task_type: typeLabel,
+          display_label: typeLabel
+        });
+      }
+    });
+
+    return uniqueTasks;
   }, [tasks, formState.vendor_id]);
+
+  // Handle Category / Expense Master selection -> Step 2: Auto-loads Payment Type, UoM, Default Qty, Default Rate
+  const handleCategoryChange = (catIdVal) => {
+    if (!catIdVal) {
+      setFormState(prev => ({ ...prev, category_id: '', subcategory_id: '' }));
+      return;
+    }
+
+    const selectedCatObj = catList.find(c => String(c.id) === String(catIdVal));
+    if (selectedCatObj) {
+      const defQty = selectedCatObj.default_quantity !== null && selectedCatObj.default_quantity !== undefined ? String(selectedCatObj.default_quantity) : '1';
+      const defRate = selectedCatObj.default_rate !== null && selectedCatObj.default_rate !== undefined ? String(selectedCatObj.default_rate) : '0';
+      const defUom = selectedCatObj.uom || 'NOS';
+      const reqProof = Boolean(selectedCatObj.requires_proof || selectedCatObj.payment_type === 'ACTUAL_WITH_PROOF');
+
+      setFormState(prev => {
+        const existingItems = Array.isArray(prev.items) && prev.items.length > 0 ? prev.items : [];
+        const updatedItems = existingItems.map((it, idx) => {
+          if (idx === 0) {
+            return {
+              ...it,
+              category_id: catIdVal,
+              subcategory_id: '',
+              description: it.description || selectedCatObj.name,
+              quantity: defQty,
+              unit: defUom,
+              rate: defRate
+            };
+          }
+          return it;
+        });
+
+        return {
+          ...prev,
+          category_id: catIdVal,
+          subcategory_id: '',
+          title: prev.title || selectedCatObj.name,
+          payment_type: selectedCatObj.payment_type || 'ACTUAL_WITH_PROOF',
+          requires_proof: reqProof,
+          unit: defUom,
+          quantity: defQty,
+          rate: defRate,
+          items: updatedItems.length > 0 ? updatedItems : [
+            {
+              id: Date.now(),
+              category_id: catIdVal,
+              subcategory_id: '',
+              description: selectedCatObj.name,
+              quantity: defQty,
+              unit: defUom,
+              rate: defRate,
+              discount: '0',
+              gst_applicable: false,
+              gst_percentage: '18'
+            }
+          ]
+        };
+      });
+    } else {
+      setFormState(prev => ({ ...prev, category_id: catIdVal, subcategory_id: '' }));
+    }
+  };
+
+  // Handle individual line item Category change
+  const handleLineItemCategoryChange = (itemId, catIdVal) => {
+    const selectedCatObj = catList.find(c => String(c.id) === String(catIdVal));
+    setFormState(prev => {
+      const currentItems = Array.isArray(prev.items) ? [...prev.items] : [];
+      const updated = currentItems.map(it => {
+        if (it.id === itemId) {
+          if (selectedCatObj) {
+            const defQty = selectedCatObj.default_quantity !== null && selectedCatObj.default_quantity !== undefined ? String(selectedCatObj.default_quantity) : '1';
+            const defRate = selectedCatObj.default_rate !== null && selectedCatObj.default_rate !== undefined ? String(selectedCatObj.default_rate) : '0';
+            const defUom = selectedCatObj.uom || 'NOS';
+            return {
+              ...it,
+              category_id: catIdVal,
+              subcategory_id: '',
+              description: it.description || selectedCatObj.name,
+              quantity: defQty,
+              unit: defUom,
+              rate: defRate
+            };
+          }
+          return { ...it, category_id: catIdVal, subcategory_id: '' };
+        }
+        return it;
+      });
+      return { ...prev, items: updated };
+    });
+  };
 
   // Handle Task selection -> Auto fills Expense Title & Project/Site Name
   const handleTaskChange = (taskIdVal) => {
@@ -247,16 +363,12 @@ export const Expenses = () => {
   // Multi-item calculation & item helpers
   const handleAddItemRow = () => {
     setFormState(prev => {
-      const currentItems = Array.isArray(prev.items) && prev.items.length > 0 ? prev.items : [{
-        id: 1,
-        description: '',
-        quantity: prev.quantity || '1',
-        unit: prev.unit || 'NOS',
-        rate: prev.rate || '0',
-        discount: prev.discount || '0',
-        gst_applicable: Boolean(prev.gst_applicable),
-        gst_percentage: prev.gst_percentage || '18'
-      }];
+      const defaultCatObj = catList.find(c => String(c.id) === String(prev.category_id)) || (catList.length > 0 ? catList[0] : null);
+      const defQty = defaultCatObj?.default_quantity !== null && defaultCatObj?.default_quantity !== undefined ? String(defaultCatObj.default_quantity) : '1';
+      const defRate = defaultCatObj?.default_rate !== null && defaultCatObj?.default_rate !== undefined ? String(defaultCatObj.default_rate) : '0';
+      const defUom = defaultCatObj?.uom || 'NOS';
+
+      const currentItems = Array.isArray(prev.items) && prev.items.length > 0 ? prev.items : [];
 
       return {
         ...prev,
@@ -264,10 +376,12 @@ export const Expenses = () => {
           ...currentItems,
           {
             id: Date.now() + Math.random(),
-            description: '',
-            quantity: '1',
-            unit: 'NOS',
-            rate: '0',
+            category_id: defaultCatObj ? defaultCatObj.id : '',
+            subcategory_id: prev.subcategory_id || '',
+            description: defaultCatObj ? defaultCatObj.name : '',
+            quantity: defQty,
+            unit: defUom,
+            rate: defRate,
             discount: '0',
             gst_applicable: false,
             gst_percentage: '18'
@@ -285,6 +399,8 @@ export const Expenses = () => {
         ...prev,
         items: filtered.length > 0 ? filtered : [{
           id: Date.now(),
+          category_id: prev.category_id || '',
+          subcategory_id: prev.subcategory_id || '',
           description: '',
           quantity: '1',
           unit: 'NOS',
@@ -301,6 +417,8 @@ export const Expenses = () => {
     setFormState(prev => {
       const currentItems = Array.isArray(prev.items) && prev.items.length > 0 ? [...prev.items] : [{
         id: 1,
+        category_id: prev.category_id || '',
+        subcategory_id: prev.subcategory_id || '',
         description: '',
         quantity: prev.quantity || '1',
         unit: prev.unit || 'NOS',
@@ -471,6 +589,20 @@ export const Expenses = () => {
       return;
     }
 
+    // Proof / Attachment Validation if requires_proof is True or payment_type === ACTUAL_WITH_PROOF
+    const selectedCatObj = catList.find(c => String(c.id) === String(formState.category_id));
+    const requiresProof = Boolean(
+      formState.requires_proof ||
+      selectedCatObj?.requires_proof ||
+      formState.payment_type === 'ACTUAL_WITH_PROOF' ||
+      selectedCatObj?.payment_type === 'ACTUAL_WITH_PROOF'
+    );
+
+    if (requiresProof && !attachmentFile && (!editExpense || (!editExpense.attachment_url && !editExpense.attachment))) {
+      setStatusMessage({ type: 'error', text: 'Proof attachment (bill/receipt) is required for this expense before submission.' });
+      return;
+    }
+
     setSubmitting(true);
     setStatusMessage(null);
 
@@ -604,6 +736,33 @@ export const Expenses = () => {
     }
   };
 
+  // Generate Monthly Fixed Expenses Handler
+  const handleGenerateMonthlySubmit = async (e) => {
+    if (e) e.preventDefault();
+    setGeneratingMonthly(true);
+    try {
+      const payload = {
+        month: Number(genMonthlyForm.month),
+        year: Number(genMonthlyForm.year),
+        vendor_id: genMonthlyForm.vendor_id || undefined
+      };
+      const res = await expenseService.generateMonthlyExpenses(payload);
+      const data = res?.data || res;
+      setStatusMessage({
+        type: 'success',
+        text: data?.message || `Successfully generated ${data?.created_count || 0} monthly expenses (${data?.skipped_count || 0} already existed).`
+      });
+      setGenMonthlyModalOpen(false);
+      await fetchExpenseData();
+    } catch (err) {
+      console.error("Error generating monthly expenses:", err);
+      const msg = err?.response?.data?.detail || err?.message || 'Failed to generate monthly expenses.';
+      setStatusMessage({ type: 'error', text: msg });
+    } finally {
+      setGeneratingMonthly(false);
+    }
+  };
+
   const handleDeleteExpense = async (exp) => {
     if (!window.confirm(`Are you sure you want to delete expense "${exp.title}"?`)) return;
     try {
@@ -690,6 +849,16 @@ export const Expenses = () => {
           >
             <LucideLayers size={16} />
             {showDashboard ? 'Hide Analytics' : 'Show Analytics'}
+          </button>
+
+          <button
+            onClick={() => setGenMonthlyModalOpen(true)}
+            className="btn-secondary"
+            style={{ padding: '8px 14px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#eff6ff', color: '#1e40af', borderColor: '#bfdbfe' }}
+            title="Generate monthly fixed expense transactions from Expense Master"
+          >
+            <LucideRefreshCw size={16} />
+            Generate Fixed Expenses
           </button>
           
           <button
@@ -1003,11 +1172,27 @@ export const Expenses = () => {
                   </td>
 
                   <td>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                       <strong style={{ fontSize: '0.82rem', color: '#111827' }}>{exp.title}</strong>
                       <span style={{ fontSize: '0.72rem', color: '#6b7280' }}>
                         {exp.category_name || exp.category} {exp.subcategory_name ? `• ${exp.subcategory_name}` : ''}
                       </span>
+                      <div style={{ display: 'flex', gap: '4px', marginTop: '2px', alignItems: 'center' }}>
+                        <span className="badge-pill" style={{
+                          fontSize: '0.66rem',
+                          padding: '1px 6px',
+                          background: exp.payment_type === 'FIXED_MONTHLY' ? '#eff6ff' : '#fef3c7',
+                          color: exp.payment_type === 'FIXED_MONTHLY' ? '#1e40af' : '#92400e',
+                          border: `1px solid ${exp.payment_type === 'FIXED_MONTHLY' ? '#bfdbfe' : '#fde68a'}`
+                        }}>
+                          {exp.payment_type === 'FIXED_MONTHLY' ? 'Fixed Monthly' : 'Actuals / As per Proof'}
+                        </span>
+                        {exp.requires_proof && (
+                          <span className="badge-pill" style={{ fontSize: '0.64rem', padding: '1px 5px', background: '#fef2f2', color: '#991b1b', border: '1px solid #fecaca' }}>
+                            Proof Req.
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </td>
 
@@ -1176,7 +1361,7 @@ export const Expenses = () => {
                       <option value="">-- Select Assigned Task --</option>
                       {filteredFormTasks.map(t => (
                         <option key={t.id} value={t.id}>
-                          {t.task_type || t.title}
+                          {t.display_label || t.task_type || t.title}
                         </option>
                       ))}
                     </select>
@@ -1223,19 +1408,27 @@ export const Expenses = () => {
 
                 <div>
                   <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
-                    Category *
+                    Expense Master Category *
                   </label>
                   <select
                     required
                     value={formState.category_id}
-                    onChange={(e) => setFormState({ ...formState, category_id: e.target.value, subcategory_id: '' })}
+                    onChange={(e) => handleCategoryChange(e.target.value)}
                     style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.82rem', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
                   >
-                    <option value="">-- Select Category --</option>
+                    <option value="">-- Select Master Category --</option>
                     {catList.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
+                      <option key={c.id} value={c.id}>
+                        {c.name} {c.payment_type === 'FIXED_MONTHLY' ? ' [Fixed Monthly]' : ' [Actuals]'}
+                      </option>
                     ))}
                   </select>
+                  {currentFormCategoryObj && (
+                    <div style={{ fontSize: '0.7rem', marginTop: '3px', color: '#047857', fontWeight: '500' }}>
+                      Type: <strong>{currentFormCategoryObj.payment_type === 'FIXED_MONTHLY' ? 'Fixed Monthly' : 'Actuals / As per Proof'}</strong>
+                      {currentFormCategoryObj.requires_proof ? ' • Proof Attachment Required' : ''}
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -1269,116 +1462,193 @@ export const Expenses = () => {
                 </div>
 
                 {/* Line Items Rows */}
-                {(formState.items || []).map((item, index) => (
-                  <div key={item.id || index} style={{ padding: '10px', background: '#ffffff', borderRadius: '6px', border: '1px solid #a7f3d0', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr 0.8fr 1fr 0.8fr 1fr 32px', gap: '8px', alignItems: 'center' }}>
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>
-                          Item / Entry Details
-                        </label>
-                        <input
-                          type="text"
-                          placeholder={`Entry #${index + 1} item name...`}
-                          value={item.description || ''}
-                          onChange={(e) => handleUpdateItemRow(item.id, 'description', e.target.value)}
-                          style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', outline: 'none', boxSizing: 'border-box' }}
-                        />
-                      </div>
+                {(formState.items || []).map((item, index) => {
+                  const itemCatObj = catList.find(c => String(c.id) === String(item.category_id || formState.category_id));
+                  const isFixedMonthly = itemCatObj?.payment_type === 'FIXED_MONTHLY';
+                  const itemSubcatOptions = itemCatObj ? ensureArray(itemCatObj.subcategories) : [];
 
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>Quantity</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0.01"
-                          value={item.quantity}
-                          onChange={(e) => handleUpdateItemRow(item.id, 'quantity', e.target.value)}
-                          style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', outline: 'none', boxSizing: 'border-box' }}
-                        />
-                      </div>
-
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>Unit</label>
-                        <select
-                          value={item.unit}
-                          onChange={(e) => handleUpdateItemRow(item.id, 'unit', e.target.value)}
-                          style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', background: '#fff', boxSizing: 'border-box' }}
-                        >
-                          <option value="NOS">NOS</option>
-                          <option value="Hours">Hours</option>
-                          <option value="Litres">Litres</option>
-                          <option value="Meters">Meters</option>
-                          <option value="Days">Days</option>
-                          <option value="KG">KG</option>
-                          <option value="Trips">Trips</option>
-                          <option value="Lot">Lot</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>Rate (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={item.rate}
-                          onChange={(e) => handleUpdateItemRow(item.id, 'rate', e.target.value)}
-                          style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', outline: 'none', boxSizing: 'border-box' }}
-                        />
-                      </div>
-
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>Discount (₹)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={item.discount}
-                          onChange={(e) => handleUpdateItemRow(item.id, 'discount', e.target.value)}
-                          style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', outline: 'none', boxSizing: 'border-box' }}
-                        />
-                      </div>
-
-                      <div>
-                        <label style={{ fontSize: '0.68rem', fontWeight: '600', color: '#065f46', display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer', marginBottom: '2px' }}>
-                          <input
-                            type="checkbox"
-                            checked={item.gst_applicable}
-                            onChange={(e) => handleUpdateItemRow(item.id, 'gst_applicable', e.target.checked)}
-                          />
-                          GST
-                        </label>
-                        {item.gst_applicable ? (
+                  return (
+                    <div key={item.id || index} style={{ padding: '12px', background: '#ffffff', borderRadius: '8px', border: '1px solid #a7f3d0', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      
+                      {/* Row 1: Category, Subcategory & Entry Details */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.2fr', gap: '10px', alignItems: 'center' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>
+                            Category *
+                          </label>
                           <select
-                            value={item.gst_percentage}
-                            onChange={(e) => handleUpdateItemRow(item.id, 'gst_percentage', e.target.value)}
-                            style={{ padding: '3px 4px', borderRadius: '4px', border: '1px solid #a7f3d0', fontSize: '0.72rem', width: '100%' }}
+                            value={item.category_id || formState.category_id || ''}
+                            onChange={(e) => handleLineItemCategoryChange(item.id, e.target.value)}
+                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', background: '#fff', outline: 'none', boxSizing: 'border-box' }}
                           >
-                            <option value="5">5%</option>
-                            <option value="12">12%</option>
-                            <option value="18">18%</option>
-                            <option value="28">28%</option>
+                            <option value="">-- Select Category --</option>
+                            {catList.map(c => (
+                              <option key={c.id} value={c.id}>
+                                {c.name} {c.payment_type === 'FIXED_MONTHLY' ? ' [Fixed Monthly]' : ''}
+                              </option>
+                            ))}
                           </select>
-                        ) : (
-                          <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}>N/A</span>
-                        )}
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>
+                            Subcategory
+                          </label>
+                          <select
+                            value={item.subcategory_id || ''}
+                            onChange={(e) => handleUpdateItemRow(item.id, 'subcategory_id', e.target.value)}
+                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', background: '#fff', outline: 'none', boxSizing: 'border-box' }}
+                          >
+                            <option value="">-- Select Subcategory --</option>
+                            {itemSubcatOptions.map(s => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
+                            <label style={{ fontSize: '0.7rem', fontWeight: '600', color: '#065f46' }}>
+                              Item / Entry Details
+                            </label>
+                            {isFixedMonthly && (
+                              <span style={{ fontSize: '0.64rem', padding: '1px 5px', background: '#eff6ff', color: '#1e40af', borderRadius: '3px', border: '1px solid #bfdbfe', fontWeight: '600' }}>
+                                Fixed Monthly
+                              </span>
+                            )}
+                          </div>
+                          <input
+                            type="text"
+                            placeholder={`Entry #${index + 1} item name...`}
+                            value={item.description || ''}
+                            onChange={(e) => handleUpdateItemRow(item.id, 'description', e.target.value)}
+                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', outline: 'none', boxSizing: 'border-box' }}
+                          />
+                        </div>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '14px' }}>
-                        {(formState.items || []).length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItemRow(item.id)}
-                            title="Remove entry"
-                            style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
+                      {/* Row 2: Quantity, Unit, Rate, Discount, GST, Action */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '0.8fr 0.8fr 1fr 0.8fr 1fr 32px', gap: '8px', alignItems: 'center' }}>
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>
+                            Quantity {isFixedMonthly ? '(Fixed)' : ''}
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            readOnly={isFixedMonthly}
+                            disabled={isFixedMonthly}
+                            value={item.quantity}
+                            onChange={(e) => !isFixedMonthly && handleUpdateItemRow(item.id, 'quantity', e.target.value)}
+                            style={{
+                              width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', outline: 'none', boxSizing: 'border-box',
+                              background: isFixedMonthly ? '#f3f4f6' : '#ffffff',
+                              cursor: isFixedMonthly ? 'not-allowed' : 'text',
+                              color: isFixedMonthly ? '#4b5563' : '#111827'
+                            }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>Unit</label>
+                          <select
+                            disabled={isFixedMonthly}
+                            value={item.unit}
+                            onChange={(e) => handleUpdateItemRow(item.id, 'unit', e.target.value)}
+                            style={{
+                              width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', boxSizing: 'border-box',
+                              background: isFixedMonthly ? '#f3f4f6' : '#ffffff',
+                              cursor: isFixedMonthly ? 'not-allowed' : 'pointer',
+                              color: isFixedMonthly ? '#4b5563' : '#111827'
+                            }}
                           >
-                            <LucideTrash2 size={16} />
-                          </button>
-                        )}
+                            <option value="NOS">NOS</option>
+                            <option value="Hours">Hours</option>
+                            <option value="Litres">Litres</option>
+                            <option value="Meters">Meters</option>
+                            <option value="Days">Days</option>
+                            <option value="KG">KG</option>
+                            <option value="Trips">Trips</option>
+                            <option value="Lumpsum">Lumpsum</option>
+                            <option value="Lot">Lot</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>
+                            Rate (₹) {isFixedMonthly ? '(Fixed)' : ''}
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            readOnly={isFixedMonthly}
+                            disabled={isFixedMonthly}
+                            value={item.rate}
+                            onChange={(e) => !isFixedMonthly && handleUpdateItemRow(item.id, 'rate', e.target.value)}
+                            style={{
+                              width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', outline: 'none', boxSizing: 'border-box',
+                              background: isFixedMonthly ? '#f3f4f6' : '#ffffff',
+                              cursor: isFixedMonthly ? 'not-allowed' : 'text',
+                              color: isFixedMonthly ? '#4b5563' : '#111827'
+                            }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>Discount (₹)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={item.discount}
+                            onChange={(e) => handleUpdateItemRow(item.id, 'discount', e.target.value)}
+                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', outline: 'none', boxSizing: 'border-box' }}
+                          />
+                        </div>
+
+                        <div>
+                          <label style={{ fontSize: '0.68rem', fontWeight: '600', color: '#065f46', display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer', marginBottom: '2px' }}>
+                            <input
+                              type="checkbox"
+                              checked={item.gst_applicable}
+                              onChange={(e) => handleUpdateItemRow(item.id, 'gst_applicable', e.target.checked)}
+                            />
+                            GST
+                          </label>
+                          {item.gst_applicable ? (
+                            <select
+                              value={item.gst_percentage}
+                              onChange={(e) => handleUpdateItemRow(item.id, 'gst_percentage', e.target.value)}
+                              style={{ padding: '3px 4px', borderRadius: '4px', border: '1px solid #a7f3d0', fontSize: '0.72rem', width: '100%' }}
+                            >
+                              <option value="5">5%</option>
+                              <option value="12">12%</option>
+                              <option value="18">18%</option>
+                              <option value="28">28%</option>
+                            </select>
+                          ) : (
+                            <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}>N/A</span>
+                          )}
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '14px' }}>
+                          {(formState.items || []).length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItemRow(item.id)}
+                              title="Remove entry"
+                              style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '2px' }}
+                            >
+                              <LucideTrash2 size={16} />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {/* + Add Entry Button */}
                 <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: '8px' }}>
@@ -1724,8 +1994,108 @@ export const Expenses = () => {
         </div>
       )}
 
+      {/* GENERATE MONTHLY FIXED EXPENSES MODAL */}
+      {genMonthlyModalOpen && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', zIndex: 1100,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
+        }}>
+          <div className="card" style={{ width: '100%', maxWidth: '480px', background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e5e7eb', pb: '10px', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#1e40af', margin: 0 }}>
+                Generate Monthly Fixed Expenses
+              </h3>
+              <button onClick={() => setGenMonthlyModalOpen(false)} style={{ background: 'none', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: '#6b7280' }}>×</button>
+            </div>
+
+            <p style={{ fontSize: '0.78rem', color: '#4b5563', marginBottom: '14px' }}>
+              Automatically generate monthly fixed expense transactions for all active Expense Master items marked as <strong>FIXED_MONTHLY</strong> (e.g. Water Charges, Fuel Transport, Warehouse).
+            </p>
+
+            <form onSubmit={handleGenerateMonthlySubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
+                    Select Month *
+                  </label>
+                  <select
+                    required
+                    value={genMonthlyForm.month}
+                    onChange={(e) => setGenMonthlyForm({ ...genMonthlyForm, month: e.target.value })}
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.82rem', outline: 'none', background: '#fff' }}
+                  >
+                    {[
+                      { v: 1, label: 'January' }, { v: 2, label: 'February' }, { v: 3, label: 'March' },
+                      { v: 4, label: 'April' }, { v: 5, label: 'May' }, { v: 6, label: 'June' },
+                      { v: 7, label: 'July' }, { v: 8, label: 'August' }, { v: 9, label: 'September' },
+                      { v: 10, label: 'October' }, { v: 11, label: 'November' }, { v: 12, label: 'December' }
+                    ].map(m => (
+                      <option key={m.v} value={m.v}>{m.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
+                    Select Year *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="2020"
+                    max="2035"
+                    value={genMonthlyForm.year}
+                    onChange={(e) => setGenMonthlyForm({ ...genMonthlyForm, year: e.target.value })}
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+
+              {isAdmin && (
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
+                    Target Vendor (Optional for Admin)
+                  </label>
+                  <select
+                    value={genMonthlyForm.vendor_id}
+                    onChange={(e) => setGenMonthlyForm({ ...genMonthlyForm, vendor_id: e.target.value })}
+                    style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.82rem', outline: 'none', background: '#fff' }}
+                  >
+                    <option value="">-- System Wide / All Permitted Vendors --</option>
+                    {venList.map(v => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', pt: '10px', borderTop: '1px solid #e5e7eb' }}>
+                <button
+                  type="button"
+                  onClick={() => setGenMonthlyModalOpen(false)}
+                  className="btn-secondary"
+                  style={{ padding: '8px 14px', fontSize: '0.8rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={generatingMonthly}
+                  className="btn-primary"
+                  style={{ padding: '8px 18px', fontSize: '0.8rem', background: '#2563eb', borderColor: '#2563eb' }}
+                >
+                  {generatingMonthly ? 'Generating...' : 'Run Monthly Generator'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
+
 
 export default Expenses;

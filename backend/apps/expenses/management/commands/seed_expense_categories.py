@@ -1,5 +1,79 @@
 from django.core.management.base import BaseCommand
+from decimal import Decimal
 from apps.expenses.models import ExpenseCategory, ExpenseSubCategory
+
+PREDEFINED_EXPENSE_MASTERS = [
+    {
+        "code": "HDD_TRACTOR_TROLLEY_TANKER",
+        "name": "Tractor + Trolley + Tanker - HDD Works",
+        "uom": "Lumpsum",
+        "default_quantity": Decimal("1.00"),
+        "default_rate": Decimal("38000.00"),
+        "payment_type": "FIXED_MONTHLY",
+        "requires_proof": False,
+        "order": 1
+    },
+    {
+        "code": "HDD_CUSTOMIZED_TROLLEY",
+        "name": "Customized Trolley for HDD Movement",
+        "uom": None,
+        "default_quantity": None,
+        "default_rate": None,
+        "payment_type": "FIXED_MONTHLY",
+        "requires_proof": False,
+        "order": 2
+    },
+    {
+        "code": "HDD_WATER_CHARGES",
+        "name": "Water Charges",
+        "uom": "Per Shot",
+        "default_quantity": Decimal("60.00"),
+        "default_rate": Decimal("250.00"),
+        "payment_type": "FIXED_MONTHLY",
+        "requires_proof": False,
+        "order": 3
+    },
+    {
+        "code": "HDD_STAY_TRAVEL_FOOD",
+        "name": "Stay, Travel and Fooding for Whole Team",
+        "uom": "Lumpsum",
+        "default_quantity": Decimal("1.00"),
+        "default_rate": Decimal("10000.00"),
+        "payment_type": "FIXED_MONTHLY",
+        "requires_proof": False,
+        "order": 4
+    },
+    {
+        "code": "HDD_FUEL_TRANSPORTATION",
+        "name": "HDD Fuel Transportation",
+        "uom": "Lumpsum",
+        "default_quantity": Decimal("30.00"),
+        "default_rate": Decimal("200.00"),
+        "payment_type": "FIXED_MONTHLY",
+        "requires_proof": False,
+        "order": 5
+    },
+    {
+        "code": "HDD_WAREHOUSE",
+        "name": "Ware-House",
+        "uom": "Monthly",
+        "default_quantity": Decimal("1.00"),
+        "default_rate": Decimal("5000.00"),
+        "payment_type": "FIXED_MONTHLY",
+        "requires_proof": False,
+        "order": 6
+    },
+    {
+        "code": "HDD_LOCAL_ROW_INCENTIVE",
+        "name": "Local-Row-Incentive",
+        "uom": "8 Km",
+        "default_quantity": Decimal("2.00"),
+        "default_rate": Decimal("10000.00"),
+        "payment_type": "FIXED_MONTHLY",
+        "requires_proof": False,
+        "order": 7
+    }
+]
 
 CATEGORY_SUBCATEGORY_DATA = [
     {
@@ -164,7 +238,35 @@ CATEGORY_SUBCATEGORY_DATA = [
 ]
 
 def seed_categories():
-    for cat_idx, cat_data in enumerate(CATEGORY_SUBCATEGORY_DATA, start=1):
+    # 1. Seed Predefined Fixed Monthly Expense Master Records
+    for item in PREDEFINED_EXPENSE_MASTERS:
+        cat_obj, _ = ExpenseCategory.objects.get_or_create(
+            code=item["code"],
+            defaults={
+                "name": item["name"],
+                "uom": item["uom"],
+                "default_quantity": item["default_quantity"],
+                "default_rate": item["default_rate"],
+                "payment_type": item["payment_type"],
+                "requires_proof": item["requires_proof"],
+                "order": item["order"],
+                "is_active": True
+            }
+        )
+        # Update attributes to ensure exact state idempotently
+        cat_obj.name = item["name"]
+        cat_obj.uom = item["uom"]
+        cat_obj.default_quantity = item["default_quantity"]
+        cat_obj.default_rate = item["default_rate"]
+        cat_obj.payment_type = item["payment_type"]
+        cat_obj.requires_proof = item["requires_proof"]
+        cat_obj.order = item["order"]
+        cat_obj.is_active = True
+        cat_obj.save() # Triggers calculate_monthly_cost()
+
+    # 2. Seed Standard Operational Expense Categories & Subcategories
+    start_order = len(PREDEFINED_EXPENSE_MASTERS) + 1
+    for cat_idx, cat_data in enumerate(CATEGORY_SUBCATEGORY_DATA, start=start_order):
         cat_obj, _ = ExpenseCategory.objects.get_or_create(
             code=cat_data["code"],
             defaults={
@@ -195,8 +297,12 @@ def seed_categories():
                 sub_obj.save()
 
 class Command(BaseCommand):
-    help = 'Seed 21 Main Expense Categories and Subcategories for HDD Operational Expense Management System'
+    help = 'Seed Predefined Expense Master Records and Operational Expense Categories'
 
     def handle(self, *args, **options):
         seed_categories()
-        self.stdout.write(self.style.SUCCESS(f"Successfully seeded {ExpenseCategory.objects.count()} categories and {ExpenseSubCategory.objects.count()} subcategories."))
+        predefined_count = ExpenseCategory.objects.filter(code__in=[p['code'] for p in PREDEFINED_EXPENSE_MASTERS]).count()
+        defined_monthly_total = sum(c.monthly_cost for c in ExpenseCategory.objects.filter(code__in=[p['code'] for p in PREDEFINED_EXPENSE_MASTERS]) if c.monthly_cost is not None)
+        self.stdout.write(self.style.SUCCESS(
+            f"Successfully seeded {predefined_count} predefined expense masters (Total Monthly Cost: INR {defined_monthly_total:,.2f}) and {ExpenseCategory.objects.count()} total categories."
+        ))

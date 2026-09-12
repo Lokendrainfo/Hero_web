@@ -16,14 +16,30 @@ class ExpenseSubCategorySerializer(serializers.ModelSerializer):
 
 class ExpenseCategorySerializer(serializers.ModelSerializer):
     subcategories = ExpenseSubCategorySerializer(many=True, read_only=True)
+    payment_type_display = serializers.CharField(source='get_payment_type_display', read_only=True)
 
     class Meta:
         model = ExpenseCategory
-        fields = ['id', 'name', 'code', 'order', 'is_active', 'subcategories']
+        fields = [
+            'id', 'name', 'code', 'order', 'payment_type', 'payment_type_display',
+            'uom', 'default_quantity', 'default_rate', 'monthly_cost',
+            'requires_proof', 'is_active', 'subcategories'
+        ]
+
+    def validate_default_quantity(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Default quantity cannot be negative.")
+        return value
+
+    def validate_default_rate(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Default rate cannot be negative.")
+        return value
 
 class ExpenseSerializer(serializers.ModelSerializer):
     category_name = serializers.SerializerMethodField()
     subcategory_name = serializers.SerializerMethodField()
+    payment_type_display = serializers.CharField(source='get_payment_type_display', read_only=True)
     vendor_name = serializers.CharField(source='vendor.name', read_only=True, allow_null=True)
     vendor_code = serializers.CharField(source='vendor.code', read_only=True, allow_null=True)
     machine_name = serializers.CharField(source='machine.name', read_only=True, allow_null=True)
@@ -43,7 +59,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = [
             'expense_id', 'basic_amount', 'taxable_amount', 'gst_amount',
-            'total_amount', 'amount', 'created_by', 'submitted_at',
+            'created_by', 'submitted_at',
             'approved_by', 'approved_at', 'rejected_by', 'rejected_at',
             'paid_by', 'paid_at', 'created_at', 'updated_at'
         ]
@@ -130,6 +146,18 @@ class ExpenseSerializer(serializers.ModelSerializer):
                 if v_obj:
                     attrs['vendor'] = v_obj
 
+        # Vendor scoping validation
+        request = self.context.get('request')
+        user = request.user if request else None
+        if user and user.is_authenticated and not (user.is_superuser or 'ADMIN' in [r.upper() for r in user.get_role_list()]):
+            from apps.common.vendor_scope import get_user_vendor_ids
+            user_v_ids = get_user_vendor_ids(user)
+            if user_v_ids is not None:
+                provided_vendor = attrs.get('vendor')
+                if not provided_vendor or provided_vendor.id not in user_v_ids:
+                    from apps.vendors.models import Vendor
+                    attrs['vendor'] = Vendor.objects.filter(id=user_v_ids[0]).first() if len(user_v_ids) > 0 else None
+
         vendor = attrs.get('vendor') or (self.instance.vendor if self.instance else None)
         machine = attrs.get('machine') or (self.instance.machine if self.instance else None)
         task = attrs.get('task') or (self.instance.task if self.instance else None)
@@ -139,5 +167,19 @@ class ExpenseSerializer(serializers.ModelSerializer):
 
         if task and vendor and task.vendor_id and task.vendor_id != vendor.id:
             raise serializers.ValidationError({"task": f"Task '{task.title}' does not belong to the selected vendor."})
+
+        # Proof requirement validation
+        cat_ref = attrs.get('category_ref') or (self.instance.category_ref if self.instance else None)
+        if cat_ref and isinstance(cat_ref, int):
+            cat_ref = ExpenseCategory.objects.filter(id=cat_ref).first()
+
+        payment_type = attrs.get('payment_type') or (cat_ref.payment_type if cat_ref and hasattr(cat_ref, 'payment_type') else None)
+        requires_proof = attrs.get('requires_proof', cat_ref.requires_proof if cat_ref and hasattr(cat_ref, 'requires_proof') else False)
+
+        attachment = attrs.get('attachment') or (self.instance.attachment if self.instance else None)
+        receipt_url = attrs.get('receipt_url') or (self.instance.receipt_url if self.instance else None)
+
+        if (payment_type == 'ACTUAL_WITH_PROOF' or requires_proof) and not attachment and not receipt_url:
+            raise serializers.ValidationError({"attachment": "Proof/bill/receipt attachment is required for this expense type."})
 
         return attrs

@@ -34,4 +34,6 @@ export const expenseService = {
   reject: (id, reason) => api.post(`/expenses/${id}/reject/`, { reason }),
   pay: (id, paymentData) => api.post(`/expenses/${id}/pay/`, paymentData),
   exportExpenses: (params) => api.get('/expenses/export/', { params, responseType: 'blob' }),
+  generateMonthlyExpenses: (data) => api.post('/expenses/generate-monthly/', data),
 };
+
