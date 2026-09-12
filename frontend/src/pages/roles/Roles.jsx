@@ -137,6 +137,24 @@ export const Roles = () => {
     return acc;
   }, {});
 
+  const handleSelectAll = () => {
+    setSelectedPermIds(permissions.map(p => p.id));
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedPermIds([]);
+  };
+
+  const handleToggleCategory = (perms) => {
+    const catIds = perms.map(p => p.id);
+    const allChecked = catIds.every(id => selectedPermIds.includes(id));
+    if (allChecked) {
+      setSelectedPermIds(prev => prev.filter(id => !catIds.includes(id)));
+    } else {
+      setSelectedPermIds(prev => Array.from(new Set([...prev, ...catIds])));
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', boxSizing: 'border-box' }}>
       {/* Top Header */}
@@ -401,7 +419,7 @@ export const Roles = () => {
           <form
             onSubmit={handleSaveRole}
             className="app-card"
-            style={{ width: '100%', maxWidth: '640px', padding: '24px', maxHeight: '90vh', overflowY: 'auto' }}
+            style={{ width: '100%', maxWidth: '780px', padding: '24px', maxHeight: '90vh', overflowY: 'auto' }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #e5e7eb', paddingBottom: '12px' }}>
               <h3 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#111827' }}>
@@ -465,47 +483,81 @@ export const Roles = () => {
             </div>
 
             <div style={{ marginBottom: '20px' }}>
-              <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#111827', marginBottom: '10px' }}>
-                Assign Module Permissions ({selectedPermIds.length} selected):
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#111827' }}>
+                  Assign Module Permissions ({selectedPermIds.length} of {permissions.length} selected):
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={handleSelectAll}
+                    style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid #10b981', background: '#ecfdf5', color: '#047857', cursor: 'pointer', fontWeight: '600' }}
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDeselectAll}
+                    style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: '4px', border: '1px solid #d1d5db', background: '#f9fafb', color: '#4b5563', cursor: 'pointer' }}
+                  >
+                    Deselect All
+                  </button>
+                </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '340px', overflowY: 'auto', paddingRight: '6px' }}>
-                {Object.entries(groupedPermissions).map(([category, perms]) => (
-                  <div key={category} style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '12px', background: '#fafafa' }}>
-                    <div style={{ fontSize: '0.8rem', fontWeight: '700', color: '#0a2d23', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                      {category}
-                    </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '420px', overflowY: 'auto', paddingRight: '6px' }}>
+                {Object.entries(groupedPermissions).map(([category, perms]) => {
+                  const catIds = perms.map(p => p.id);
+                  const isCatAllSelected = catIds.every(id => selectedPermIds.includes(id));
+                  const selectedCountInCat = catIds.filter(id => selectedPermIds.includes(id)).length;
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '8px' }}>
-                      {perms.map(p => {
-                        const isChecked = selectedPermIds.includes(p.id);
-                        return (
-                          <label
-                            key={p.id}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px',
-                              fontSize: '0.78rem',
-                              color: isChecked ? '#111827' : '#4b5563',
-                              cursor: 'pointer',
-                              padding: '4px 6px',
-                              borderRadius: '4px',
-                              background: isChecked ? '#e0f2fe' : 'transparent'
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => handleTogglePermission(p.id)}
-                            />
-                            <span>{p.name}</span>
-                          </label>
-                        );
-                      })}
+                  return (
+                    <div key={category} style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '12px', background: '#fafafa' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid #f0f0f0', paddingBottom: '6px' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#0a2d23', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                          {category} <span style={{ fontSize: '0.72rem', color: '#6b7280', fontWeight: 'normal' }}>({selectedCountInCat}/{perms.length})</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleCategory(perms)}
+                          style={{ fontSize: '0.7rem', color: isCatAllSelected ? '#dc2626' : '#2563eb', background: 'none', border: 'none', cursor: 'pointer', fontWeight: '600' }}
+                        >
+                          {isCatAllSelected ? 'Deselect Category' : 'Select Category'}
+                        </button>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '8px' }}>
+                        {perms.map(p => {
+                          const isChecked = selectedPermIds.includes(p.id);
+                          return (
+                            <label
+                              key={p.id}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                fontSize: '0.78rem',
+                                color: isChecked ? '#111827' : '#4b5563',
+                                cursor: 'pointer',
+                                padding: '5px 8px',
+                                borderRadius: '4px',
+                                border: isChecked ? '1px solid #bae6fd' : '1px solid transparent',
+                                background: isChecked ? '#e0f2fe' : '#ffffff'
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => handleTogglePermission(p.id)}
+                              />
+                              <span>{p.name}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 

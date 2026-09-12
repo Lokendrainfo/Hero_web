@@ -5,18 +5,44 @@ from apps.machines.models import Machine
 from apps.tasks.models import Task
 from apps.authentication.models import User
 
+PAYMENT_TYPE_CHOICES = (
+    ('FIXED_MONTHLY', 'Fixed Monthly'),
+    ('ACTUAL_WITH_PROOF', 'Actuals / As per Proof'),
+)
+
 class ExpenseCategory(models.Model):
     name = models.CharField(max_length=150, unique=True)
     code = models.CharField(max_length=100, unique=True)
     order = models.IntegerField(default=0)
+    
+    # Expense Master Enhancement Fields
+    payment_type = models.CharField(max_length=50, choices=PAYMENT_TYPE_CHOICES, default='FIXED_MONTHLY')
+    uom = models.CharField(max_length=50, null=True, blank=True)
+    default_quantity = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    default_rate = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    monthly_cost = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    requires_proof = models.BooleanField(default=False)
+    
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['order', 'name']
 
+    def calculate_monthly_cost(self):
+        if self.default_quantity is not None and self.default_rate is not None:
+            qty = Decimal(str(self.default_quantity))
+            rate = Decimal(str(self.default_rate))
+            self.monthly_cost = (qty * rate).quantize(Decimal('0.01'))
+        else:
+            self.monthly_cost = None
+
+    def save(self, *args, **kwargs):
+        self.calculate_monthly_cost()
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.get_payment_type_display()})"
 
 class ExpenseSubCategory(models.Model):
     category = models.ForeignKey(ExpenseCategory, on_delete=models.CASCADE, related_name='subcategories')
@@ -47,6 +73,10 @@ class Expense(models.Model):
     subcategory = models.CharField(max_length=100, blank=True, null=True)
     category_ref = models.ForeignKey(ExpenseCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='expenses')
     subcategory_ref = models.ForeignKey(ExpenseSubCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='expenses')
+
+    # Master Enhancement References
+    payment_type = models.CharField(max_length=50, choices=PAYMENT_TYPE_CHOICES, default='FIXED_MONTHLY', null=True, blank=True)
+    requires_proof = models.BooleanField(default=False)
 
     # Details
     title = models.CharField(max_length=255)
@@ -104,10 +134,16 @@ class Expense(models.Model):
         return f"[{self.expense_id or self.id}] {self.title} - ₹{self.total_amount}"
 
     def calculate_amounts(self):
-        qty = Decimal(str(self.quantity or 0))
+        qty = Decimal(str(self.quantity or 1))
         rt = Decimal(str(self.rate or 0))
         disc = Decimal(str(self.discount or 0))
         gst_pct = Decimal(str(self.gst_percentage or 0))
+
+        if rt == Decimal('0.00') and (self.total_amount or self.amount):
+            given_tot = Decimal(str(self.total_amount or self.amount or 0))
+            if given_tot > Decimal('0.00'):
+                rt = given_tot / qty
+                self.rate = rt
 
         basic = qty * rt
         taxable = max(Decimal('0.00'), basic - disc)

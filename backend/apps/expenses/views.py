@@ -1,13 +1,13 @@
-import csv
-from decimal import Decimal
-from django.http import HttpResponse
-from django.db.models import Q, Sum, Count
-from django.utils import timezone
-from datetime import datetime
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.db.models import Q, Sum, Count
+from django.utils import timezone
+from django.http import HttpResponse
+import csv
+from datetime import datetime
+from decimal import Decimal
 
 from .models import Expense, ExpenseCategory, ExpenseSubCategory
 from .serializers import ExpenseSerializer, ExpenseCategorySerializer, ExpenseSubCategorySerializer
@@ -49,6 +49,16 @@ class ExpenseCategoryViewSet(viewsets.ModelViewSet):
             qs = qs.filter(Q(name__icontains=search) | Q(code__icontains=search))
         return qs
 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except Exception as e:
+            return error_response(
+                message=f"Cannot delete category '{instance.name}' because related subcategories or expense records exist. You can set status to INACTIVE instead.",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
 class ExpenseSubCategoryViewSet(viewsets.ModelViewSet):
     queryset = ExpenseSubCategory.objects.all().select_related('category').order_by('order', 'name')
     serializer_class = ExpenseSubCategorySerializer
@@ -86,6 +96,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         search = self.request.query_params.get('search', '').strip()
         category = self.request.query_params.get('category', '').strip()
         subcategory = self.request.query_params.get('subcategory', '').strip()
+        payment_type = self.request.query_params.get('payment_type', '').strip()
         vendor_id = self.request.query_params.get('vendor_id', '').strip() or self.request.query_params.get('vendor', '').strip()
         machine_id = self.request.query_params.get('machine_id', '').strip() or self.request.query_params.get('machine', '').strip()
         task_id = self.request.query_params.get('task_id', '').strip() or self.request.query_params.get('task', '').strip()
@@ -112,6 +123,9 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
         if subcategory and subcategory.upper() != 'ALL':
             qs = qs.filter(Q(subcategory__iexact=subcategory) | Q(subcategory_ref__name__iexact=subcategory))
+
+        if payment_type and payment_type.upper() != 'ALL':
+            qs = qs.filter(Q(payment_type__iexact=payment_type) | Q(category_ref__payment_type__iexact=payment_type))
 
         if vendor_id and vendor_id.upper() != 'ALL':
             if vendor_id.isdigit():
@@ -152,17 +166,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         return qs.order_by('-expense_date', '-id')
 
     def perform_create(self, serializer):
-        user = self.request.user
-        allowed_vendor_ids = get_user_vendor_ids(user)
-        
-        # If non-admin user is restricted to specific vendors and didn't select one, default to first assigned vendor
-        vendor = serializer.validated_data.get('vendor')
-        if allowed_vendor_ids is not None and len(allowed_vendor_ids) > 0 and not vendor:
-            from apps.vendors.models import Vendor
-            default_v = Vendor.objects.filter(id=allowed_vendor_ids[0]).first()
-            serializer.save(created_by=user, vendor=default_v)
-        else:
-            serializer.save(created_by=user)
+        serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
         instance = serializer.instance
@@ -263,6 +267,95 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         expense.save()
         return success_response(data=ExpenseSerializer(expense, context={'request': request}).data, message="Expense marked as PAID.")
 
+    @action(detail=False, methods=['post'], url_path='generate-monthly')
+    def generate_monthly_expenses(self, request):
+        user = request.user
+        allowed_vendor_ids = get_user_vendor_ids(user)
+        req_vendor = request.data.get('vendor_id') or request.data.get('vendor')
+        
+        target_vendor = None
+        if req_vendor:
+            from apps.vendors.models import Vendor
+            v_str = str(req_vendor).strip()
+            if v_str.isdigit():
+                target_vendor = Vendor.objects.filter(id=int(v_str)).first()
+            if not target_vendor:
+                target_vendor = Vendor.objects.filter(Q(external_vendor_id=v_str) | Q(name__icontains=v_str)).first()
+        elif allowed_vendor_ids and len(allowed_vendor_ids) > 0:
+            from apps.vendors.models import Vendor
+            target_vendor = Vendor.objects.filter(id=allowed_vendor_ids[0]).first()
+        elif hasattr(user, 'vendor') and user.vendor:
+            target_vendor = user.vendor
+
+        now = timezone.now().date()
+        year = int(request.data.get('year', now.year))
+        month = int(request.data.get('month', now.month))
+        exp_date = datetime(year, month, 1).date()
+
+        fixed_categories = ExpenseCategory.objects.filter(
+            is_active=True,
+            payment_type='FIXED_MONTHLY',
+            default_quantity__isnull=False,
+            default_rate__isnull=False
+        )
+
+        generated = []
+        skipped = 0
+
+        for cat in fixed_categories:
+            if cat.monthly_cost is None or cat.monthly_cost <= Decimal('0.00'):
+                continue
+
+            existing = Expense.objects.filter(
+                category_ref=cat,
+                expense_date__year=year,
+                expense_date__month=month
+            )
+            if target_vendor:
+                existing = existing.filter(vendor=target_vendor)
+            else:
+                existing = existing.filter(vendor__isnull=True)
+
+            if existing.exists():
+                skipped += 1
+                continue
+
+            exp = Expense(
+                title=cat.name,
+                category=cat.name,
+                category_ref=cat,
+                vendor=target_vendor,
+                quantity=cat.default_quantity,
+                unit=cat.uom or 'NOS',
+                rate=cat.default_rate,
+                basic_amount=cat.monthly_cost,
+                total_amount=cat.monthly_cost,
+                amount=cat.monthly_cost,
+                payment_mode='FIXED_MONTHLY',
+                payment_type='FIXED_MONTHLY',
+                requires_proof=cat.requires_proof,
+                expense_date=exp_date,
+                status='APPROVED',
+                created_by=user,
+                approved_by=user,
+                approved_at=timezone.now()
+            )
+            exp.save()
+            generated.append(exp)
+
+        total_gen_amount = sum(e.total_amount for e in generated)
+        return success_response(
+            data={
+                "generated_count": len(generated),
+                "skipped_count": skipped,
+                "total_monthly_amount": float(total_gen_amount),
+                "year": year,
+                "month": month,
+                "expenses": ExpenseSerializer(generated, many=True, context={'request': request}).data
+            },
+            message=f"Generated {len(generated)} fixed monthly expenses for {month}/{year} (Skipped {skipped} duplicates)."
+        )
+
     @action(detail=False, methods=['get'])
     def dashboard_stats(self, request):
         qs = self.get_queryset()
@@ -282,6 +375,12 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         rejected_qs = qs.filter(status='REJECTED')
         paid_qs = qs.filter(status='PAID')
         draft_qs = qs.filter(status='DRAFT')
+
+        fixed_monthly_qs = qs.filter(Q(payment_type='FIXED_MONTHLY') | Q(category_ref__payment_type='FIXED_MONTHLY'))
+        actual_proof_qs = qs.filter(Q(payment_type='ACTUAL_WITH_PROOF') | Q(category_ref__payment_type='ACTUAL_WITH_PROOF'))
+
+        fixed_monthly_amount = fixed_monthly_qs.aggregate(s=Sum('total_amount'))['s'] or Decimal('0.00')
+        actual_proof_amount = actual_proof_qs.aggregate(s=Sum('total_amount'))['s'] or Decimal('0.00')
 
         by_category_raw = qs.values('category').annotate(amount=Sum('total_amount'), count=Count('id')).order_by('-amount')
         by_category = [{"category": item['category'] or 'Miscellaneous', "amount": float(item['amount'] or 0), "count": item['count']} for item in by_category_raw]
@@ -307,6 +406,10 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             "rejected_amount": float(rejected_qs.aggregate(s=Sum('total_amount'))['s'] or 0),
             "paid_count": paid_qs.count(),
             "paid_amount": float(paid_qs.aggregate(s=Sum('total_amount'))['s'] or 0),
+            "fixed_monthly_count": fixed_monthly_qs.count(),
+            "fixed_monthly_amount": float(fixed_monthly_amount),
+            "actual_with_proof_count": actual_proof_qs.count(),
+            "actual_with_proof_amount": float(actual_proof_amount),
             "by_category": by_category,
             "by_vendor": by_vendor,
             "by_machine": by_machine,
@@ -322,7 +425,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
         writer = csv.writer(response)
         writer.writerow([
-            'Expense ID', 'Date', 'Category', 'Subcategory', 'Vendor',
+            'Expense ID', 'Date', 'Category', 'Subcategory', 'Payment Type', 'Vendor',
             'Site', 'Task', 'Machine', 'Title', 'Description',
             'Quantity', 'Unit', 'Rate', 'Basic Amount', 'Discount',
             'GST Applicable', 'GST %', 'GST Amount', 'Total Amount',
@@ -336,6 +439,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
                 exp.expense_date,
                 exp.category_ref.name if exp.category_ref else exp.category,
                 exp.subcategory_ref.name if exp.subcategory_ref else (exp.subcategory or ''),
+                exp.payment_type or (exp.category_ref.payment_type if exp.category_ref else 'FIXED_MONTHLY'),
                 exp.vendor.name if exp.vendor else '',
                 exp.site or '',
                 exp.task.title if exp.task else '',
