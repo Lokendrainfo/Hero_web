@@ -4,7 +4,10 @@
 
 ### Local Development
 
-## MAKE SURE YOU HAVE THE .env file
+## MAKE SURE YOU HAVE THose files
+## .env
+## frontend/vite-config.js
+## docker-compose.yml
 
 1. **Backend**:
    ```bash
