@@ -59,20 +59,30 @@ export const taskService = {
       return { data: { data: cachedResult } };
     }
 
+    const CHUNK = 40;
+    const chunks = [];
+    for (let i = 0; i < missingKeys.length; i += CHUNK) {
+      chunks.push(missingKeys.slice(i, i + CHUNK));
+    }
+
     try {
-      const res = await api.post('/integrations/survey/photo-urls/', { photoKeys: missingKeys });
-      const fetchedMap = res?.data?.data || res?.data || res || {};
-      
-      Object.entries(fetchedMap).forEach(([k, url]) => {
-        if (url) {
-          photoUrlCache.set(k, url);
-          cachedResult[k] = url;
-        }
+      const responses = await Promise.all(chunks.map((chunk) => (
+        api.post('/integrations/survey/photo-urls/', { photoKeys: chunk }).catch(() => null)
+      )));
+
+      responses.forEach((res) => {
+        const fetchedMap = res?.data?.data || res?.data || {};
+        if (!fetchedMap || typeof fetchedMap !== 'object') return;
+        Object.entries(fetchedMap).forEach(([k, url]) => {
+          if (url) {
+            photoUrlCache.set(k, url);
+            cachedResult[k] = url;
+          }
+        });
       });
 
       return { data: { data: cachedResult } };
     } catch (err) {
-      // If endpoint fails, return whatever we had in cache
       if (Object.keys(cachedResult).length > 0) {
         return { data: { data: cachedResult } };
       }

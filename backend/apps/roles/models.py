@@ -30,6 +30,9 @@ class RolePermission(models.Model):
     class Meta:
         unique_together = ('role', 'permission')
 
+    def __str__(self):
+        return f"{self.role} → {self.permission}"
+
 class UserRole(models.Model):
     user = models.ForeignKey('authentication.User', on_delete=models.CASCADE, related_name='user_roles')
     role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='user_roles')
@@ -37,3 +40,6 @@ class UserRole(models.Model):
 
     class Meta:
         unique_together = ('user', 'role')
+
+    def __str__(self):
+        return f"{self.user} → {self.role}"

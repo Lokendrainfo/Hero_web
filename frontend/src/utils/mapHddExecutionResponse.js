@@ -359,6 +359,7 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     vendorId: task.vendorId,
     vendorName: task.vendorName,
     date: task.updatedAt ? new Date(task.updatedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+    updatedAt: task.updatedAt || null,
     lastModified: task.updatedAt ? new Date(task.updatedAt).toLocaleString() : 'N/A',
     status: task.status || 'CREATED',
     workExecutionMode: fieldData?.workExecutionMode || (trenching ? 'HDD' : 'N/A'),

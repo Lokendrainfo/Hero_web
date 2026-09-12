@@ -3,6 +3,7 @@ import { machineService } from '../../services/machineService';
 import { useParams, useNavigate } from 'react-router-dom';
 import { LeafletMap } from '../../components/common/LeafletMap';
 import { LucideMapPin, LucideAlertCircle, LucideWrench, LucideWifiOff, LucideFuel, LucideNavigation } from 'lucide-react';
+import { PageHeader } from '../../components/common/PageHeader';
 import '../../styles/screens.css';
 
 export const MachineDetails = () => {
@@ -44,52 +45,32 @@ export const MachineDetails = () => {
   const location = machine?.site_name || machine?.location_name || 'Sujangarh-SITE, HR';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', boxSizing: 'border-box' }}>
-      {/* Top Header Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button
-            onClick={() => navigate('/machines')}
-            style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#374151', cursor: 'pointer', padding: '4px', border: 'none', background: 'none' }}
-          >
-            ←
-          </button>
-          <div>
-            <h1 style={{ fontSize: '1.4rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', color: '#111827' }}>
-              {machine?.name || 'A600 HDD'}
-            </h1>
-            <p style={{ fontSize: '0.8rem', color: '#6b7280', fontFamily: 'monospace' }}>
-              {machine?.model_name || 'APOLLO A600 V2'} • Chassis: {machine?.machine_chassis_no || machine?.serial_number || '600202608396'}
-            </p>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <button
-            onClick={() => navigate(`/machines/${machine?.id || id}/tracking`)}
-            className="btn-primary"
-            style={{ padding: '8px 14px', fontSize: '0.8rem' }}
-          >
-            <LucideNavigation size={15} /> Live Tracking
-          </button>
-          <button
-            onClick={() => navigate(`/machines/${machine?.id || id}/refuel`)}
-            className="app-card"
-            style={{ padding: '8px 14px', fontSize: '0.8rem', fontWeight: '600', color: '#0a2d23', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-          >
-            <LucideFuel size={15} color="#10b981" /> Fuel Logs
-          </button>
-        </div>
-      </div>
+    <div className="screen-container">
+      <PageHeader
+        title={machine?.name || 'Machine'}
+        subtitle={`${machine?.model_name || 'HDD'} · Chassis ${machine?.machine_chassis_no || machine?.serial_number || '—'}`}
+        actions={
+          <>
+            <button type="button" className="btn-secondary" onClick={() => navigate('/machines')}>Back</button>
+            <button type="button" className="btn-primary" onClick={() => navigate(`/machines/${machine?.id || id}/tracking`)}>
+              <LucideNavigation size={15} /> Live tracking
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => navigate(`/machines/${machine?.id || id}/refuel`)}>
+              <LucideFuel size={15} /> Fuel logs
+            </button>
+          </>
+        }
+      />
 
       {/* Main Machine Banner Card */}
       <div className="app-card" style={{ display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
         <div style={{
           width: '72px',
           height: '72px',
-          borderRadius: '14px',
-          background: '#0a2d23',
-          color: '#ffffff',
+          borderRadius: '6px',
+          background: 'var(--bg-subtle)',
+          border: '1px solid var(--border)',
+          color: 'var(--text-primary)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -142,7 +123,7 @@ export const MachineDetails = () => {
               <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: '2px' }}>Fuel Used Today</div>
             </div>
             <div style={{ background: '#f9fafb', padding: '10px', borderRadius: '10px', border: '1px solid #f3f4f6' }}>
-              <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#10b981' }}>{fuelPercent}%</div>
+              <div style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--live)' }}>{fuelPercent}%</div>
               <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: '2px' }}>Fuel Level</div>
             </div>
           </div>
@@ -187,14 +168,14 @@ export const MachineDetails = () => {
               width: '60px',
               height: '60px',
               borderRadius: '50%',
-              border: '6px solid #10b981',
-              borderTopColor: fuelPercent < 40 ? '#f59e0b' : '#e5e7eb',
+              border: '6px solid var(--live)',
+              borderTopColor: fuelPercent < 40 ? 'var(--warning)' : 'var(--border)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               flexShrink: 0
             }}>
-              <LucideFuel size={22} color="#10b981" />
+              <LucideFuel size={22} color="var(--live)" />
             </div>
           </div>
         </div>

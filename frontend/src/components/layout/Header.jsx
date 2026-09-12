@@ -17,7 +17,7 @@ export const Header = ({ viewMode, setViewMode }) => {
       padding: '0 24px'
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-        <span style={{ fontWeight: 'bold', fontFamily: 'Outfit', fontSize: '1.1rem' }}>HERO Operations</span>
+        <span style={{ fontWeight: 'bold', fontFamily: 'inherit', fontSize: '1.1rem' }}>HERO Operations</span>
         
         {/* Device View Mode Switcher */}
         <div style={{ display: 'flex', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', padding: '2px' }}>

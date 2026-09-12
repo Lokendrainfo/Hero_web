@@ -1,10 +1,12 @@
 import React, { createContext, useState, useEffect } from 'react';
 import { authService } from '../services/authService';
+import { VIEWER_FALLBACK_PERMS } from '../utils/permissions';
 
 export const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [vendor, setVendor] = useState(null);
   const [userVendorsList, setUserVendorsList] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -14,7 +16,9 @@ export const AuthProvider = ({ children }) => {
       const payload = res?.data || res;
       const uData = payload?.user || (payload?.id !== undefined ? payload : null);
       const vData = payload?.vendors || uData?.vendors || [];
+      const primaryVendor = payload?.vendor || uData?.vendor_details || uData?.vendor || null;
       setUser(uData);
+      setVendor(primaryVendor);
       setUserVendorsList(vData);
       return uData;
     } catch (err) {
@@ -22,6 +26,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
       setUser(null);
+      setVendor(null);
       setUserVendorsList([]);
       return null;
     }
@@ -63,6 +68,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
     setUser(null);
+    setVendor(null);
     setUserVendorsList([]);
   };
 
@@ -82,7 +88,9 @@ export const AuthProvider = ({ children }) => {
     if (!user) return false;
     if (isAdmin) return true;
     if (isAllViewer && (code.endsWith('.view') || code.includes('view'))) return true;
-    return userPermissions.includes(code);
+    if (userPermissions.includes(code)) return true;
+    if (userPermissions.length === 0 && VIEWER_FALLBACK_PERMS.includes(code)) return true;
+    return false;
   };
 
   const hasRole = (roleName) => {
@@ -94,6 +102,7 @@ export const AuthProvider = ({ children }) => {
   return (
     <AuthContext.Provider value={{
       user,
+      vendor,
       loading,
       roles: userRoles,
       permissions: userPermissions,

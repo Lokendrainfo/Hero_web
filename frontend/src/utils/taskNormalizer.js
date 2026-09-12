@@ -64,8 +64,11 @@ export const normalizeTask = (t, vendorMasterMap = {}) => {
     const segmentSnapshots = t.segmentSnapshots || [];
 
     // Scopes & Metrics
-    const totalLengthKm = Number(routeSnapshot.lengthKm || t.totalLengthKm || 0);
-    const coveredLengthKm = Number(t.coveredLengthKm || 0);
+    const totalLengthKm = Number(Number(routeSnapshot.lengthKm || t.totalLengthKm || 0).toFixed(2));
+    const coveredLengthKm = Number(Number(t.coveredLengthKm || 0).toFixed(2));
+    const coveredScopeStr = typeof t.coveredScopeStr === 'string'
+      ? t.coveredScopeStr.replace(/-?\d+(?:\.\d+)?/g, (n) => Number(n).toFixed(2))
+      : `${coveredLengthKm.toFixed(2)} km`;
 
     // Hierarchy & Timestamps
     const parentTaskId = t.parentTaskId || null;
@@ -96,6 +99,7 @@ export const normalizeTask = (t, vendorMasterMap = {}) => {
       segmentSnapshots,
       totalLengthKm,
       coveredLengthKm,
+      coveredScopeStr,
       parentTaskId,
       rootTaskId,
       depth,

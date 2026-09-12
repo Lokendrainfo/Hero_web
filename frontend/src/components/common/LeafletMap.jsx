@@ -11,7 +11,9 @@ export const LeafletMap = ({
   showRoute = false,
   routePoints = [],
   title = "Location",
-  loading = false
+  loading = false,
+  chrome = true,
+  fill = false
 }) => {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -98,47 +100,37 @@ export const LeafletMap = ({
       const status = (m.status || 'RUNNING').toUpperCase();
 
       // Custom mint circular directional arrow marker matching screenshot
+      const statusColor = status === 'RUNNING' ? '#059669' : status === 'IDLE' ? '#1d4ed8' : '#6b7280';
       const customIcon = L.divIcon({
         className: 'custom-directional-arrow-marker',
         html: `
-          <div style="
-            width: 46px;
-            height: 46px;
-            border-radius: 50%;
-            background: rgba(167, 243, 208, 0.65);
-            border: 2px solid #0d9488;
-            box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: transform 0.2s ease;
-          ">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="#042f2e" stroke="#ffffff" stroke-width="1.5" style="transform: rotate(${course}deg); transition: transform 0.3s ease;">
-              <path d="M12 2L19 21L12 17L5 21L12 2Z"/>
+          <div style="display:flex;flex-direction:column;align-items:center;cursor:pointer;">
+            <svg width="22" height="28" viewBox="0 0 24 32" style="transform: rotate(${course}deg); transform-origin: 50% 40%;">
+              <path d="M12 0C5.37 0 0 5.37 0 12C0 21 12 32 12 32C12 32 24 21 24 12C24 5.37 18.63 0 12 0Z" fill="${statusColor}" stroke="#ffffff" stroke-width="1.4"/>
+              <circle cx="12" cy="11" r="4.2" fill="#ffffff"/>
             </svg>
           </div>
         `,
-        iconSize: [46, 46],
-        iconAnchor: [23, 23],
-        popupAnchor: [0, -23]
+        iconSize: [22, 28],
+        iconAnchor: [11, 28],
+        popupAnchor: [0, -26]
       });
 
       const marker = L.marker([lat, lng], { icon: customIcon });
 
       const popupContent = `
         <div style="font-family: Inter, sans-serif; min-width: 220px; padding: 4px;">
-          <div style="font-family: Outfit, sans-serif; font-size: 1rem; font-weight: 700; color: #111827;">
+          <div style="font-family: Inter, sans-serif; font-size: 0.9375rem; font-weight: 600; color: #111827;">
             ${m.name || m.model_name || 'HDD Machine'}
           </div>
           <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 6px;">
             Chassis: <strong>${m.chassis_no || m.machine_chassis_no || m.serial_number || '600202608396'}</strong>
           </div>
           <div style="display: flex; gap: 6px; margin-bottom: 8px;">
-            <span style="background: #0d9488; color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;">
+            <span style="background: #111827; color: #fff; padding: 2px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 600;">
               ${status}
             </span>
-            <span style="background: #f3f4f6; color: #374151; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;">
+            <span style="background: #f3f4f6; color: #374151; padding: 2px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 600;">
               ${m.speed !== undefined ? m.speed + ' km/h' : '0.92 km/h'}
             </span>
           </div>
@@ -152,7 +144,7 @@ export const LeafletMap = ({
           <button id="btn-inspect-${m.id || 1}" style="
             margin-top: 10px;
             width: 100%;
-            background: #0a2d23;
+            background: #111827;
             color: #ffffff;
             border: none;
             padding: 6px 12px;
@@ -180,10 +172,12 @@ export const LeafletMap = ({
     // Draw historic route polyline only if showRoute is true AND explicit routePoints are provided
     if (showRoute && Array.isArray(routePoints) && routePoints.length > 1) {
       polylineRef.current = L.polyline(routePoints, {
-        color: '#0d9488',
-        weight: 3,
-        dashArray: '6, 8',
-        opacity: 0.85
+        color: '#111827',
+        weight: 2,
+        dashArray: '4, 6',
+        opacity: 0.8,
+        lineCap: 'round',
+        lineJoin: 'round'
       }).addTo(map);
     }
 
@@ -193,72 +187,76 @@ export const LeafletMap = ({
     } else if (bounds.length === 1) {
       map.setView(bounds[0], zoom);
     }
+
+    setTimeout(() => {
+      try { map.invalidateSize(); } catch (e) { /* ignore */ }
+    }, 80);
   }, [machines, singleMachine, zoom, showRoute, routePoints]);
+
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    const el = wrapperRef.current;
+    if (!map || !el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => {
+      try { map.invalidateSize(); } catch (e) { /* ignore */ }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   return (
     <div
       ref={wrapperRef}
       style={{
         width: '100%',
-        height: isFullscreen ? '100vh' : height,
-        borderRadius: isFullscreen ? '0' : '14px',
+        height: isFullscreen || fill ? '100%' : height,
+        borderRadius: isFullscreen || !chrome ? '0' : '6px',
         overflow: 'hidden',
         background: '#ffffff',
-        border: '1px solid #e5e7eb',
-        boxShadow: '0 2px 10px rgba(0,0,0,0.05)',
+        border: chrome && !fill && !isFullscreen ? '1px solid #e5e7eb' : 'none',
+        boxShadow: 'none',
         display: 'flex',
         flexDirection: 'column',
         position: 'relative'
       }}
     >
-      {/* Location Live Top Card Header */}
+      {chrome ? (
       <div style={{
         display: 'flex',
         justifyContent: 'space-between',
         alignItems: 'center',
-        padding: '12px 16px',
+        padding: '10px 14px',
         background: '#ffffff',
-        borderBottom: '1px solid #f3f4f6',
+        borderBottom: '1px solid #e5e7eb',
         zIndex: 10
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ fontFamily: 'Outfit, sans-serif', fontSize: '1.05rem', fontWeight: '700', color: '#111827' }}>
+          <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#111827' }}>
             {title}
           </span>
-          <span style={{
-            fontSize: '0.72rem',
-            background: '#ecfdf5',
-            color: '#059669',
-            border: '1px solid #a7f3d0',
-            padding: '2px 9px',
-            borderRadius: '12px',
-            fontWeight: '600',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '4px'
-          }}>
-            ● Live
-          </span>
+          <span className="badge-pill badge-running">Live</span>
         </div>
 
         <button
+          type="button"
+          className="header-icon-btn"
           onClick={toggleFullscreen}
           title="Toggle Fullscreen"
-          style={{
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            color: '#9ca3af',
-            fontSize: '1.2rem',
-            lineHeight: 1,
-            padding: '4px 6px',
-            borderRadius: '6px',
-            transition: 'color 0.15s ease'
-          }}
         >
           ⤢
         </button>
       </div>
+      ) : (
+        <button
+          type="button"
+          className="header-icon-btn"
+          onClick={toggleFullscreen}
+          title="Toggle Fullscreen"
+          style={{ position: 'absolute', top: 10, right: 10, zIndex: 20, background: '#fff', border: '1px solid #e5e7eb' }}
+        >
+          ⤢
+        </button>
+      )}
 
       {/* Map Container */}
       <div style={{ flex: 1, width: '100%', position: 'relative' }}>
@@ -274,7 +272,7 @@ export const LeafletMap = ({
           height: '44px',
           background: '#ffffff',
           borderRadius: '50%',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+          boxShadow: 'none',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',

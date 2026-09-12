@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 
 import { vendorService } from '../../services/vendorService';
+import { SearchableSelect } from '../../components/common/Select';
+import { roleBadgeClass } from '../../utils/roleBadge';
 
 export const Users = () => {
   const { hasPermission } = useAuth();
@@ -352,13 +354,11 @@ export const Users = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <LucideUserCheck size={24} color="#0a2d23" />
-            <h1 style={{ fontSize: '1.4rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', color: '#111827' }}>
-              User Management & Access Control
-            </h1>
+            <LucideUserCheck size={24} color="#111827" />
+            <h1 className="page-title">Users</h1>
           </div>
           <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '2px' }}>
-            Synchronize external portal identity & assign local HERO RBAC roles
+            Platform accounts, roles, and vendor assignments
           </p>
         </div>
 
@@ -494,7 +494,7 @@ export const Users = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <LucideFilter size={15} color="#6b7280" />
           <span style={{ fontSize: '0.8rem', fontWeight: '600', color: '#374151' }}>Role:</span>
-          <select
+          <SearchableSelect
             value={selectedRoleFilter}
             onChange={(e) => setSelectedRoleFilter(e.target.value)}
             style={{
@@ -510,13 +510,13 @@ export const Users = () => {
             {roleOptions.map(r => (
               <option key={r} value={r}>{r}</option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
 
         {/* Page Size Selector */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <span style={{ fontSize: '0.8rem', fontWeight: '600', color: '#374151' }}>Page Size:</span>
-          <select
+          <SearchableSelect
             value={pagination.size}
             onChange={(e) => {
               const newSize = e.target.value;
@@ -537,7 +537,7 @@ export const Users = () => {
             <option value={50}>50 Per Page</option>
             <option value={100}>100 Per Page</option>
             <option value="all">Show All ({pagination.total || users.length} Users)</option>
-          </select>
+          </SearchableSelect>
         </div>
       </div>
 
@@ -588,14 +588,14 @@ export const Users = () => {
                     </td>
 
                     <td style={{ padding: '12px 16px' }}>
-                      <select
+                      <SearchableSelect
                         value={currentRole}
                         onChange={(e) => handleRoleChange(u.id, e.target.value)}
                         style={{
                           padding: '4px 8px',
                           borderRadius: '6px',
-                          border: '1px solid #0a2d23',
-                          background: '#0a2d23',
+                          border: '1px solid #111827',
+                          background: '#111827',
                           color: '#ffffff',
                           fontWeight: '600',
                           fontSize: '0.75rem',
@@ -605,7 +605,7 @@ export const Users = () => {
                         {roleOptions.map(r => (
                           <option key={r} value={r}>{r}</option>
                         ))}
-                      </select>
+                      </SearchableSelect>
                     </td>
 
                     <td style={{ padding: '12px 16px' }}>
@@ -773,7 +773,7 @@ export const Users = () => {
                 ◀ Prev
               </button>
 
-              <span style={{ padding: '0 8px', fontWeight: '700', color: '#0a2d23' }}>
+              <span style={{ padding: '0 8px', fontWeight: '700', color: '#111827' }}>
                 Page {pagination.page + 1} / {pagination.total_pages}
               </span>
 
@@ -847,9 +847,9 @@ export const Users = () => {
               <div style={{ fontSize: '0.8rem', color: '#374151', fontWeight: '600', marginBottom: '6px' }}>
                 Assigned HERO Role:
               </div>
-              <div style={{ display: 'inline-block', background: '#0a2d23', color: '#6ee7b7', padding: '4px 12px', borderRadius: '6px', fontWeight: '700', fontSize: '0.85rem' }}>
+              <span className={`badge-pill ${roleBadgeClass(inspectUser.role || 'VIEWER')}`}>
                 {inspectUser.role || 'VIEWER'}
-              </div>
+              </span>
             </div>
 
             <div>
@@ -859,7 +859,7 @@ export const Users = () => {
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                 {inspectUser.permissions && inspectUser.permissions.length > 0 ? (
                   inspectUser.permissions.map(p => (
-                    <span key={p} style={{ fontSize: '0.72rem', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', padding: '2px 8px', borderRadius: '4px' }}>
+                    <span key={p} className="badge-pill badge-neutral">
                       {p}
                     </span>
                   ))
@@ -1061,7 +1061,7 @@ export const Users = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>HERO Role:</label>
-                  <select
+                  <SearchableSelect
                     value={editForm.role}
                     onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
                     style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff' }}
@@ -1069,18 +1069,18 @@ export const Users = () => {
                     {roleOptions.map(r => (
                       <option key={r} value={r}>{r}</option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
                 <div>
                   <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>User Status:</label>
-                  <select
+                  <SearchableSelect
                     value={editForm.is_active ? 'active' : 'inactive'}
                     onChange={(e) => setEditForm({ ...editForm, is_active: e.target.value === 'active' })}
                     style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff' }}
                   >
                     <option value="active">Active</option>
                     <option value="inactive">Inactive / Disabled</option>
-                  </select>
+                  </SearchableSelect>
                 </div>
               </div>
 
@@ -1397,7 +1397,7 @@ export const Users = () => {
                 </div>
                 <div>
                   <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>HERO Role</label>
-                  <select
+                  <SearchableSelect
                     value={createForm.role}
                     onChange={(e) => setCreateForm({ ...createForm, role: e.target.value })}
                     style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
@@ -1405,7 +1405,7 @@ export const Users = () => {
                     {roleOptions.map(r => (
                       <option key={r} value={r}>{r}</option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
               </div>
 

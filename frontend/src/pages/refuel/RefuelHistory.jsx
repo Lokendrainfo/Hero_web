@@ -30,7 +30,7 @@ export const RefuelHistory = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span onClick={() => navigate(-1)} style={{ fontSize: '1.4rem', cursor: 'pointer', fontWeight: 'bold' }}>←</span>
-          <h2 style={{ fontSize: '1.25rem', fontFamily: 'Outfit', fontWeight: 'bold' }}>Refuel History</h2>
+          <h2 style={{ fontSize: '1.25rem', fontFamily: 'inherit', fontWeight: 'bold' }}>Refuel History</h2>
         </div>
         <LucideCalendar size={20} color="#374151" />
       </div>
@@ -43,7 +43,7 @@ export const RefuelHistory = () => {
         </div>
         <div>
           <div style={{ fontSize: '0.7rem', color: '#6b7280' }}>Total Fuel Added</div>
-          <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#10b981' }}>225 L</div>
+          <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: 'var(--live)' }}>225 L</div>
         </div>
         <div>
           <div style={{ fontSize: '0.7rem', color: '#6b7280' }}>Avg / Refuel</div>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { roleService } from '../../services/roleService';
 import { useAuth } from '../../hooks/useAuth';
+import { roleBadgeClass } from '../../utils/roleBadge';
 import {
   LucideShieldCheck, LucidePlus, LucideEdit, LucideTrash2, LucideUsers,
   LucideCheck, LucideAlertCircle, LucideShield, LucideLock, LucideExternalLink, LucideRefreshCw
@@ -158,26 +159,20 @@ export const Roles = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', boxSizing: 'border-box' }}>
       {/* Top Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+      <div className="page-header">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <LucideShieldCheck size={24} color="#0a2d23" />
-            <h1 style={{ fontSize: '1.4rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', color: '#111827' }}>
-              Roles & Permissions Configuration
-            </h1>
-          </div>
-          <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '2px' }}>
-            Define local HERO access roles and inspect external enterprise portal roles
-          </p>
+          <h1 className="page-title">Roles & permissions</h1>
+          <p className="page-subtitle">Local HERO access roles and external ILYNC roles</p>
         </div>
-
-        <button
-          onClick={handleOpenCreateModal}
-          className="btn-primary"
-          style={{ padding: '8px 16px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
-        >
-          <LucidePlus size={16} /> Create Custom Role
-        </button>
+        <div className="page-header-actions">
+          <button
+            type="button"
+            onClick={handleOpenCreateModal}
+            className="btn-primary"
+          >
+            <LucidePlus size={16} /> Create role
+          </button>
+        </div>
       </div>
 
       {statusMessage && (
@@ -195,40 +190,20 @@ export const Roles = () => {
       )}
 
       {/* Tabs Bar */}
-      <div style={{ display: 'flex', gap: '8px', borderBottom: '2px solid #e5e7eb', paddingBottom: '2px' }}>
+      <div className="tab-bar">
         <button
+          type="button"
+          className={`tab-item ${activeTab === 'LOCAL' ? 'active' : ''}`}
           onClick={() => setActiveTab('LOCAL')}
-          style={{
-            padding: '8px 16px',
-            fontSize: '0.85rem',
-            fontWeight: '700',
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'LOCAL' ? '3px solid #0a2d23' : '3px solid transparent',
-            color: activeTab === 'LOCAL' ? '#0a2d23' : '#6b7280',
-            cursor: 'pointer'
-          }}
         >
-          Local HERO Roles ({roles.length})
+          Local roles ({roles.length})
         </button>
-
         <button
+          type="button"
+          className={`tab-item ${activeTab === 'ILYNC' ? 'active' : ''}`}
           onClick={() => setActiveTab('ILYNC')}
-          style={{
-            padding: '8px 16px',
-            fontSize: '0.85rem',
-            fontWeight: '700',
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'ILYNC' ? '3px solid #0a2d23' : '3px solid transparent',
-            color: activeTab === 'ILYNC' ? '#0a2d23' : '#6b7280',
-            cursor: 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '6px'
-          }}
         >
-          <LucideExternalLink size={14} /> External ILYNC Enterprise Roles ({ilyncRoles.length})
+          <LucideExternalLink size={14} /> ILYNC roles ({ilyncRoles.length})
         </button>
       </div>
 
@@ -250,7 +225,7 @@ export const Roles = () => {
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
-                      <span style={{ fontSize: '0.68rem', background: '#0a2d23', color: '#6ee7b7', padding: '2px 8px', borderRadius: '4px', fontWeight: '700' }}>
+                      <span className={`badge-pill ${roleBadgeClass(r.code || r.name)}`}>
                         {r.code || r.name}
                       </span>
                       <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#111827', marginTop: '6px' }}>
@@ -260,13 +235,11 @@ export const Roles = () => {
 
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                       {r.is_system ? (
-                        <span style={{ fontSize: '0.68rem', background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a', padding: '2px 6px', borderRadius: '4px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                          <LucideLock size={10} /> System Critical
+                        <span className="badge-pill badge-amber">
+                          <LucideLock size={10} /> System
                         </span>
                       ) : (
-                        <span style={{ fontSize: '0.68rem', background: '#f3f4f6', color: '#4b5563', padding: '2px 6px', borderRadius: '4px', fontWeight: '600' }}>
-                          Custom
-                        </span>
+                        <span className="badge-pill badge-neutral">Custom</span>
                       )}
                     </div>
                   </div>
@@ -277,7 +250,7 @@ export const Roles = () => {
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px', padding: '8px 12px', background: '#f9fafb', borderRadius: '6px' }}>
                     <div style={{ fontSize: '0.78rem', color: '#374151', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <LucideUsers size={14} color="#0a2d23" />
+                      <LucideUsers size={14} color="#111827" />
                       <strong>{r.user_count || 0}</strong> user(s) assigned
                     </div>
                     <div style={{ fontSize: '0.78rem', color: '#374151', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -289,7 +262,7 @@ export const Roles = () => {
                   {/* Permissions tags sample */}
                   <div style={{ marginTop: '12px', display: 'flex', flexWrap: 'wrap', gap: '4px', maxHeight: '80px', overflowY: 'auto' }}>
                     {(r.permission_codes || (r.permissions_details || []).map(p => p.code)).map(code => (
-                      <span key={code} style={{ fontSize: '0.68rem', background: '#e0f2fe', color: '#0369a1', padding: '1px 6px', borderRadius: '4px' }}>
+                      <span key={code} className="badge-pill badge-neutral">
                         {code}
                       </span>
                     ))}
@@ -514,7 +487,7 @@ export const Roles = () => {
                   return (
                     <div key={category} style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '12px', background: '#fafafa' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderBottom: '1px solid #f0f0f0', paddingBottom: '6px' }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#0a2d23', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#111827', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
                           {category} <span style={{ fontSize: '0.72rem', color: '#6b7280', fontWeight: 'normal' }}>({selectedCountInCat}/{perms.length})</span>
                         </span>
                         <button

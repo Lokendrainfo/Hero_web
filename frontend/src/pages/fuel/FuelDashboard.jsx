@@ -4,6 +4,7 @@ import { machineService } from '../../services/machineService';
 import { useAuth } from '../../hooks/useAuth';
 import { LucideFuel, LucideTruck, LucideBuilding2, LucideFilter, LucideRefreshCw, LucidePlus, LucideDollarSign } from 'lucide-react';
 import '../../styles/components.css';
+import { SearchableSelect } from '../../components/common/Select';
 
 export const FuelDashboard = () => {
   const { selectedVendorId } = useAuth();
@@ -60,7 +61,7 @@ export const FuelDashboard = () => {
       {/* Page Title & Controls */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
         <div>
-          <h2 style={{ fontSize: '1.3rem', fontFamily: 'Outfit', fontWeight: 'bold', color: '#111827' }}>
+          <h2 style={{ fontSize: '1.3rem', fontFamily: 'inherit', fontWeight: 'bold', color: '#111827' }}>
             Fuel Analytics & Machine Logs
           </h2>
           <p style={{ fontSize: '0.8rem', color: '#6b7280' }}>
@@ -79,7 +80,7 @@ export const FuelDashboard = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <LucideTruck size={16} color="#0284c7" />
           <label style={{ fontSize: '0.8rem', fontWeight: '700', color: '#374151' }}>Machine Filter:</label>
-          <select
+          <SearchableSelect
             value={selectedMachineId}
             onChange={(e) => setSelectedMachineId(e.target.value)}
             style={{
@@ -100,7 +101,7 @@ export const FuelDashboard = () => {
                 {m.machine_no || m.name || `Machine #${m.id}`} ({m.model_name || m.model || 'HDD'})
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
 
         {/* Selected Vendor Scope Indicator */}

@@ -12,3 +12,6 @@ class Alert(models.Model):
     alert_severity = models.CharField(max_length=50, default='CRITICAL') # CRITICAL, WARNING, INFO
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.alert_severity}: {self.title}"

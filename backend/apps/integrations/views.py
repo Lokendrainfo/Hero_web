@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -6,6 +8,8 @@ from apps.common.responses import success_response
 from .ilync_client import IlyncClient
 from .fiberforce.client import FiberForceClient
 from .exceptions import IlyncAPIException
+
+logger = logging.getLogger(__name__)
 
 class IlyncBaseView(APIView):
     permission_classes = [AllowAny]
@@ -24,6 +28,9 @@ class IlyncBaseView(APIView):
                 },
                 status=resp_status
             )
+        return super().handle_exception(exc)
+
+
 def safe_float(val, default=0.0):
     try:
         return float(val) if val is not None else default
@@ -504,12 +511,12 @@ class IlyncSurveyPhotoUrlsView(IlyncBaseView):
         try:
             client = IlyncClient()
             res = client.get_survey_photo_urls(cleaned_keys)
-            if res and isinstance(res, dict) and 'data' in res:
-                return success_response(data=res.get('data'), message="Photo URLs resolved successfully")
-        except Exception as e:
-            logger.error("[IlyncSurveyPhotoUrlsView] Error resolving photo URLs: %s", str(e))
-            return Response({"success": False, "message": str(e), "data": {}}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            data = res.get('data') if isinstance(res, dict) else None
+            if isinstance(data, dict):
+                return success_response(data=data, message="Photo URLs resolved successfully")
+        except Exception:
+            logger.exception("[IlyncSurveyPhotoUrlsView] Error resolving photo URLs")
 
-        return success_response(data={}, message="Failed to generate view URLs")
+        return success_response(data={}, message="Photo URLs unavailable")
 
 

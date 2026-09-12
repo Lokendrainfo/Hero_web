@@ -30,8 +30,12 @@ class UserSerializer(serializers.ModelSerializer):
             'employee_id', 'phone_number', 'vendor', 'vendor_id', 'vendor_details', 'vendor_name', 'role', 'roles',
             'vendors', 'permissions', 'reporting_manager', 'reporting_manager_id', 'reporting_manager_name',
             'reporting_manager_details', 'direct_reports', 'password',
-            'is_active', 'avatar', 'date_joined'
+            'is_active', 'is_staff', 'is_superuser', 'avatar', 'date_joined'
         ]
+        extra_kwargs = {
+            'is_superuser': {'read_only': True},
+            'is_staff': {'read_only': True},
+        }
 
     def get_name(self, obj):
         full_name = obj.get_full_name()

@@ -2,6 +2,10 @@ from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
 
+admin.site.site_header = 'HERO Administration'
+admin.site.site_title = 'HERO Admin'
+admin.site.index_title = 'Fleet & operations data'
+
 def root_api_status(request):
     return JsonResponse({
         "status": "running",

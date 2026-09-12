@@ -18,6 +18,7 @@ import {
   LucideAlertTriangle
 } from 'lucide-react';
 import '../../styles/screens.css';
+import { SearchableSelect } from '../../components/common/Select';
 
 export const Breakdowns = () => {
   const { user, isAdmin, vendors } = useAuth();
@@ -216,16 +217,16 @@ export const Breakdowns = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <h1 style={{ fontSize: '1.4rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', color: '#111827' }}>
+            <h1 style={{ fontSize: '1.4rem', fontFamily: 'inherit', fontWeight: '700', color: '#111827' }}>
               Breakdown Tickets & Repair History
             </h1>
             {isAdmin ? (
-              <span style={{ fontSize: '0.72rem', background: '#0a2d23', color: '#6ee7b7', padding: '2px 10px', borderRadius: '12px', fontWeight: '700' }}>
-                ● Admin Master View (All Breakdown Tickets)
+              <span className="badge-pill badge-role-admin">
+                Admin master view
               </span>
             ) : (
-              <span style={{ fontSize: '0.72rem', background: '#fef3c7', color: '#92400e', padding: '2px 10px', borderRadius: '12px', fontWeight: '700' }}>
-                ● Vendor Scoped Breakdown History: {activeVendorName}
+              <span className="badge-pill badge-role-vendor">
+                {activeVendorName}
               </span>
             )}
           </div>
@@ -242,7 +243,7 @@ export const Breakdowns = () => {
               borderRadius: '8px',
               fontSize: '0.8rem',
               fontWeight: '700',
-              background: '#0a2d23',
+              background: '#111827',
               color: '#ffffff',
               border: 'none',
               cursor: 'pointer',
@@ -319,7 +320,7 @@ export const Breakdowns = () => {
                 fontWeight: '700',
                 border: 'none',
                 cursor: 'pointer',
-                background: statusFilter === st ? '#0a2d23' : 'transparent',
+                background: statusFilter === st ? '#111827' : 'transparent',
                 color: statusFilter === st ? '#ffffff' : '#4b5563'
               }}
             >
@@ -331,9 +332,9 @@ export const Breakdowns = () => {
         {/* Admin Vendor Selection Dropdown */}
         {isAdmin && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#ffffff', border: '1px solid #d1d5db', borderRadius: '10px', padding: '4px 12px' }}>
-            <LucideBuilding2 size={16} color="#0a2d23" />
+            <LucideBuilding2 size={16} color="#111827" />
             <span style={{ fontSize: '0.82rem', fontWeight: '600', color: '#374151' }}>Vendor:</span>
-            <select
+            <SearchableSelect
               value={selectedVendor}
               onChange={(e) => setSelectedVendor(e.target.value)}
               style={{
@@ -353,7 +354,7 @@ export const Breakdowns = () => {
                   {v.partnerName || v.name}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
         )}
       </div>
@@ -467,7 +468,7 @@ export const Breakdowns = () => {
             maxWidth: '500px',
             padding: '24px',
             boxSizing: 'border-box',
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)'
+            boxShadow: 'none'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h2 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#111827', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -481,7 +482,7 @@ export const Breakdowns = () => {
             <form onSubmit={handleFormSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
                 <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Select Machine</label>
-                <select
+                <SearchableSelect
                   required
                   value={formData.machine_id}
                   onChange={(e) => setFormData({ ...formData, machine_id: e.target.value })}
@@ -493,7 +494,7 @@ export const Breakdowns = () => {
                   ))}
                   <option value="999">A800 HDD (8593)</option>
                   <option value="998">XCMG 320 (7421)</option>
-                </select>
+                </SearchableSelect>
               </div>
 
               <div>
@@ -511,7 +512,7 @@ export const Breakdowns = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Severity</label>
-                  <select
+                  <SearchableSelect
                     value={formData.severity}
                     onChange={(e) => setFormData({ ...formData, severity: e.target.value })}
                     style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '0.88rem' }}
@@ -519,7 +520,7 @@ export const Breakdowns = () => {
                     <option value="HIGH">CRITICAL / HIGH</option>
                     <option value="MEDIUM">MEDIUM</option>
                     <option value="LOW">LOW</option>
-                  </select>
+                  </SearchableSelect>
                 </div>
 
                 <div>

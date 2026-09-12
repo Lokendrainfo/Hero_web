@@ -113,6 +113,9 @@ class IlyncClient:
     def get_task_by_id(self, task_id):
         return self.get(f"api/tasks/{task_id}")
 
+    def get_task_detail(self, task_id):
+        return self.get_task_by_id(task_id)
+
     def get_task_children(self, task_id):
         return self.get(f"api/tasks/{task_id}/children")
 
@@ -168,6 +171,28 @@ class IlyncClient:
     def get_survey_photo_urls(self, photo_keys):
         if not photo_keys or not isinstance(photo_keys, list):
             return {"success": True, "data": {}}
-        return self.post("api/survey/photo-urls", json={"photoKeys": photo_keys})
+
+        merged = {}
+        chunk_size = 40
+        previous_timeout = self.timeout
+        self.timeout = (5.0, 25.0)
+        try:
+            for i in range(0, len(photo_keys), chunk_size):
+                chunk = photo_keys[i:i + chunk_size]
+                try:
+                    res = self.post("api/survey/photo-urls", json={"photoKeys": chunk})
+                    data = res.get("data") if isinstance(res, dict) else None
+                    if isinstance(data, dict):
+                        merged.update(data)
+                except IlyncAPIException as exc:
+                    logger.warning(
+                        "Photo URL chunk failed (%s keys at offset %s): %s",
+                        len(chunk),
+                        i,
+                        exc,
+                    )
+        finally:
+            self.timeout = previous_timeout
+        return {"success": True, "data": merged}
 
 

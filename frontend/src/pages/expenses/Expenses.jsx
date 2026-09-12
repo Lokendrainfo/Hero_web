@@ -14,6 +14,8 @@ import {
   LucideTag, LucideShieldAlert, LucideCreditCard
 } from 'lucide-react';
 import '../../styles/components.css';
+import { SearchableSelect } from '../../components/common/Select';
+import { DateField } from '../../components/common/DateField';
 
 // Helper to safely extract arrays from any API response structure
 const ensureArray = (val) => {
@@ -833,12 +835,10 @@ export const Expenses = () => {
       {/* Top Header & Actions */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h2 style={{ fontSize: '1.4rem', fontFamily: 'Outfit', fontWeight: 'bold', color: '#111827', margin: 0 }}>
-            HDD Operational Expense Management
-          </h2>
-          <span style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-            Comprehensive expense tracking, approval workflows & financial auditing for trenching & fiber operations.
-          </span>
+          <h2 className="page-title">Expenses</h2>
+          <p className="page-subtitle">
+            Site costs, approvals, and payments
+          </p>
         </div>
 
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -1042,7 +1042,7 @@ export const Expenses = () => {
           </div>
 
           {/* Category Filter */}
-          <select
+          <SearchableSelect
             value={filters.category}
             onChange={(e) => setFilters(prev => ({ ...prev, category: e.target.value, subcategory: 'ALL' }))}
             style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.8rem', outline: 'none', background: '#fff' }}
@@ -1051,10 +1051,10 @@ export const Expenses = () => {
             {catList.map(c => (
               <option key={c.id} value={c.name}>{c.name}</option>
             ))}
-          </select>
+          </SearchableSelect>
 
           {/* Subcategory Filter */}
-          <select
+          <SearchableSelect
             value={filters.subcategory}
             onChange={(e) => setFilters(prev => ({ ...prev, subcategory: e.target.value }))}
             style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.8rem', outline: 'none', background: '#fff' }}
@@ -1063,10 +1063,10 @@ export const Expenses = () => {
             {catSubcategoriesFilter.map(s => (
               <option key={s.id} value={s.name}>{s.name}</option>
             ))}
-          </select>
+          </SearchableSelect>
 
           {/* Vendor Filter */}
-          <select
+          <SearchableSelect
             value={filters.vendor_id}
             onChange={(e) => setFilters(prev => ({ ...prev, vendor_id: e.target.value }))}
             style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.8rem', outline: 'none', background: '#fff' }}
@@ -1075,10 +1075,10 @@ export const Expenses = () => {
             {venList.map(v => (
               <option key={v.id} value={v.id}>{v.name}</option>
             ))}
-          </select>
+          </SearchableSelect>
 
           {/* Status Filter */}
-          <select
+          <SearchableSelect
             value={filters.status}
             onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
             style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.8rem', outline: 'none', background: '#fff' }}
@@ -1089,10 +1089,10 @@ export const Expenses = () => {
             <option value="APPROVED">Approved</option>
             <option value="PAID">Paid</option>
             <option value="REJECTED">Rejected</option>
-          </select>
+          </SearchableSelect>
 
           {/* Payment Mode Filter */}
-          <select
+          <SearchableSelect
             value={filters.payment_mode}
             onChange={(e) => setFilters(prev => ({ ...prev, payment_mode: e.target.value }))}
             style={{ padding: '7px 10px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.8rem', outline: 'none', background: '#fff' }}
@@ -1103,31 +1103,26 @@ export const Expenses = () => {
             <option value="UPI">UPI</option>
             <option value="CHEQUE">Cheque</option>
             <option value="CREDIT">Credit</option>
-          </select>
+          </SearchableSelect>
 
-          {/* Date From */}
-          <input
-            type="date"
-            placeholder="From Date"
+          <DateField
             value={filters.date_from}
-            onChange={(e) => setFilters(prev => ({ ...prev, date_from: e.target.value }))}
-            style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.78rem', outline: 'none' }}
+            onChange={(e) => setFilters((prev) => ({ ...prev, date_from: e.target.value }))}
+            placeholder="From date"
+            aria-label="From date"
           />
-
-          {/* Date To */}
-          <input
-            type="date"
-            placeholder="To Date"
+          <DateField
             value={filters.date_to}
-            onChange={(e) => setFilters(prev => ({ ...prev, date_to: e.target.value }))}
-            style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.78rem', outline: 'none' }}
+            onChange={(e) => setFilters((prev) => ({ ...prev, date_to: e.target.value }))}
+            placeholder="To date"
+            aria-label="To date"
           />
 
         </div>
       </div>
 
       {/* Main Expenses Table */}
-      <div className="table-container" style={{ background: '#ffffff', borderRadius: '10px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+      <div className="table-container" style={{ background: '#ffffff', borderRadius: '10px', boxShadow: 'none' }}>
         <table className="data-table">
           <thead>
             <tr>
@@ -1334,7 +1329,7 @@ export const Expenses = () => {
         }}>
           <div className="card" style={{
             width: '100%', maxWidth: '850px', maxHeight: '90vh', overflowY: 'auto',
-            background: '#ffffff', borderRadius: '12px', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)'
+            background: '#ffffff', borderRadius: '12px', padding: '24px', boxShadow: 'none'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e5e7eb', pb: '12px', marginBottom: '16px' }}>
               <h3 style={{ fontSize: '1.2rem', fontWeight: 'bold', color: '#111827', margin: 0 }}>
@@ -1352,7 +1347,7 @@ export const Expenses = () => {
                     Expense Title *
                   </label>
                   {filteredFormTasks.length > 0 ? (
-                    <select
+                    <SearchableSelect
                       required
                       value={formState.task_id}
                       onChange={(e) => handleTaskChange(e.target.value)}
@@ -1364,7 +1359,7 @@ export const Expenses = () => {
                           {t.display_label || t.task_type || t.title}
                         </option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                   ) : (
                     <input
                       type="text"
@@ -1397,12 +1392,12 @@ export const Expenses = () => {
                   <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
                     Expense Date *
                   </label>
-                  <input
-                    type="date"
+                  <DateField
                     required
                     value={formState.expense_date}
                     onChange={(e) => setFormState({ ...formState, expense_date: e.target.value })}
-                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box' }}
+                    style={{ width: '100%' }}
+                    aria-label="Expense date"
                   />
                 </div>
 
@@ -1410,7 +1405,7 @@ export const Expenses = () => {
                   <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
                     Expense Master Category *
                   </label>
-                  <select
+                  <SearchableSelect
                     required
                     value={formState.category_id}
                     onChange={(e) => handleCategoryChange(e.target.value)}
@@ -1422,7 +1417,7 @@ export const Expenses = () => {
                         {c.name} {c.payment_type === 'FIXED_MONTHLY' ? ' [Fixed Monthly]' : ' [Actuals]'}
                       </option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                   {currentFormCategoryObj && (
                     <div style={{ fontSize: '0.7rem', marginTop: '3px', color: '#047857', fontWeight: '500' }}>
                       Type: <strong>{currentFormCategoryObj.payment_type === 'FIXED_MONTHLY' ? 'Fixed Monthly' : 'Actuals / As per Proof'}</strong>
@@ -1435,7 +1430,7 @@ export const Expenses = () => {
                   <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
                     Subcategory
                   </label>
-                  <select
+                  <SearchableSelect
                     value={formState.subcategory_id}
                     onChange={(e) => setFormState({ ...formState, subcategory_id: e.target.value })}
                     style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.82rem', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
@@ -1444,7 +1439,7 @@ export const Expenses = () => {
                     {formSubcategoryOptions.map(s => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
               </div>
 
@@ -1476,7 +1471,7 @@ export const Expenses = () => {
                           <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>
                             Category *
                           </label>
-                          <select
+                          <SearchableSelect
                             value={item.category_id || formState.category_id || ''}
                             onChange={(e) => handleLineItemCategoryChange(item.id, e.target.value)}
                             style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', background: '#fff', outline: 'none', boxSizing: 'border-box' }}
@@ -1487,14 +1482,14 @@ export const Expenses = () => {
                                 {c.name} {c.payment_type === 'FIXED_MONTHLY' ? ' [Fixed Monthly]' : ''}
                               </option>
                             ))}
-                          </select>
+                          </SearchableSelect>
                         </div>
 
                         <div>
                           <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>
                             Subcategory
                           </label>
-                          <select
+                          <SearchableSelect
                             value={item.subcategory_id || ''}
                             onChange={(e) => handleUpdateItemRow(item.id, 'subcategory_id', e.target.value)}
                             style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #a7f3d0', fontSize: '0.78rem', background: '#fff', outline: 'none', boxSizing: 'border-box' }}
@@ -1503,7 +1498,7 @@ export const Expenses = () => {
                             {itemSubcatOptions.map(s => (
                               <option key={s.id} value={s.id}>{s.name}</option>
                             ))}
-                          </select>
+                          </SearchableSelect>
                         </div>
 
                         <div>
@@ -1552,7 +1547,7 @@ export const Expenses = () => {
 
                         <div>
                           <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: '600', color: '#065f46', marginBottom: '2px' }}>Unit</label>
-                          <select
+                          <SearchableSelect
                             disabled={isFixedMonthly}
                             value={item.unit}
                             onChange={(e) => handleUpdateItemRow(item.id, 'unit', e.target.value)}
@@ -1572,7 +1567,7 @@ export const Expenses = () => {
                             <option value="Trips">Trips</option>
                             <option value="Lumpsum">Lumpsum</option>
                             <option value="Lot">Lot</option>
-                          </select>
+                          </SearchableSelect>
                         </div>
 
                         <div>
@@ -1618,7 +1613,7 @@ export const Expenses = () => {
                             GST
                           </label>
                           {item.gst_applicable ? (
-                            <select
+                            <SearchableSelect
                               value={item.gst_percentage}
                               onChange={(e) => handleUpdateItemRow(item.id, 'gst_percentage', e.target.value)}
                               style={{ padding: '3px 4px', borderRadius: '4px', border: '1px solid #a7f3d0', fontSize: '0.72rem', width: '100%' }}
@@ -1627,7 +1622,7 @@ export const Expenses = () => {
                               <option value="12">12%</option>
                               <option value="18">18%</option>
                               <option value="28">28%</option>
-                            </select>
+                            </SearchableSelect>
                           ) : (
                             <span style={{ fontSize: '0.7rem', color: '#9ca3af' }}>N/A</span>
                           )}
@@ -1667,7 +1662,7 @@ export const Expenses = () => {
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      boxShadow: '0 2px 4px rgba(16, 185, 129, 0.15)'
+                      boxShadow: 'none'
                     }}
                   >
                     <LucidePlus size={18} />
@@ -1700,7 +1695,7 @@ export const Expenses = () => {
 
                 <div>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '600', color: '#374151', marginBottom: '2px' }}>Payment Mode</label>
-                  <select
+                  <SearchableSelect
                     value={formState.payment_mode}
                     onChange={(e) => setFormState({ ...formState, payment_mode: e.target.value })}
                     style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.78rem', background: '#fff', boxSizing: 'border-box' }}
@@ -1710,7 +1705,7 @@ export const Expenses = () => {
                     <option value="UPI">UPI</option>
                     <option value="CHEQUE">Cheque</option>
                     <option value="CREDIT">Credit / Due</option>
-                  </select>
+                  </SearchableSelect>
                 </div>
 
                 <div>
@@ -1771,7 +1766,7 @@ export const Expenses = () => {
         }}>
           <div className="card" style={{
             width: '100%', maxWidth: '700px', maxHeight: '90vh', overflowY: 'auto',
-            background: '#ffffff', borderRadius: '12px', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)'
+            background: '#ffffff', borderRadius: '12px', padding: '24px', boxShadow: 'none'
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e5e7eb', pb: '12px', marginBottom: '16px' }}>
               <div>
@@ -1955,7 +1950,7 @@ export const Expenses = () => {
                 <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
                   Payment Mode
                 </label>
-                <select
+                <SearchableSelect
                   value={paymentForm.payment_mode}
                   onChange={(e) => setPaymentForm({ ...paymentForm, payment_mode: e.target.value })}
                   style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.82rem', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
@@ -1965,7 +1960,7 @@ export const Expenses = () => {
                   <option value="UPI">UPI</option>
                   <option value="CHEQUE">Cheque</option>
                   <option value="CREDIT">Credit Settlement</option>
-                </select>
+                </SearchableSelect>
               </div>
 
               <div>
@@ -2001,7 +1996,7 @@ export const Expenses = () => {
           background: 'rgba(0,0,0,0.5)', zIndex: 1100,
           display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px'
         }}>
-          <div className="card" style={{ width: '100%', maxWidth: '480px', background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)' }}>
+          <div className="card" style={{ width: '100%', maxWidth: '480px', background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: 'none' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e5e7eb', pb: '10px', marginBottom: '16px' }}>
               <h3 style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#1e40af', margin: 0 }}>
                 Generate Monthly Fixed Expenses
@@ -2019,7 +2014,7 @@ export const Expenses = () => {
                   <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
                     Select Month *
                   </label>
-                  <select
+                  <SearchableSelect
                     required
                     value={genMonthlyForm.month}
                     onChange={(e) => setGenMonthlyForm({ ...genMonthlyForm, month: e.target.value })}
@@ -2033,7 +2028,7 @@ export const Expenses = () => {
                     ].map(m => (
                       <option key={m.v} value={m.v}>{m.label}</option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
 
                 <div>
@@ -2057,7 +2052,7 @@ export const Expenses = () => {
                   <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
                     Target Vendor (Optional for Admin)
                   </label>
-                  <select
+                  <SearchableSelect
                     value={genMonthlyForm.vendor_id}
                     onChange={(e) => setGenMonthlyForm({ ...genMonthlyForm, vendor_id: e.target.value })}
                     style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #d1d5db', fontSize: '0.82rem', outline: 'none', background: '#fff' }}
@@ -2066,7 +2061,7 @@ export const Expenses = () => {
                     {venList.map(v => (
                       <option key={v.id} value={v.id}>{v.name}</option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
               )}
 

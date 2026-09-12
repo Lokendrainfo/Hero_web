@@ -15,6 +15,7 @@ import {
   LucideShieldCheck
 } from 'lucide-react';
 import '../../styles/screens.css';
+import { SearchableSelect } from '../../components/common/Select';
 
 export const Stock = () => {
   const { user, isAdmin, vendors } = useAuth();
@@ -124,16 +125,16 @@ export const Stock = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <h1 style={{ fontSize: '1.4rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', color: '#111827' }}>
+            <h1 style={{ fontSize: '1.4rem', fontFamily: 'inherit', fontWeight: '700', color: '#111827' }}>
               Stock & Inventory Management
             </h1>
             {isAdmin ? (
-              <span style={{ fontSize: '0.72rem', background: '#0a2d23', color: '#6ee7b7', padding: '2px 10px', borderRadius: '12px', fontWeight: '700' }}>
-                ● Admin View (Circle-Wise & Vendor Breakdown)
+              <span className="badge-pill badge-role-admin">
+                Admin master view
               </span>
             ) : (
-              <span style={{ fontSize: '0.72rem', background: '#fef3c7', color: '#92400e', padding: '2px 10px', borderRadius: '12px', fontWeight: '700' }}>
-                ● Vendor Stock View: {activeVendorName}
+              <span className="badge-pill badge-role-vendor">
+                {activeVendorName}
               </span>
             )}
           </div>
@@ -152,10 +153,10 @@ export const Stock = () => {
 
       {/* KPI Overview Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-        <div className="app-card" style={{ padding: '14px 18px', borderLeft: '4px solid #0a2d23' }}>
+        <div className="app-card" style={{ padding: '14px 18px', borderLeft: '4px solid #111827' }}>
           <div style={{ fontSize: '0.75rem', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase' }}>Total Issued Material</div>
           <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#111827', marginTop: '4px' }}>
-            {totalMeters.toLocaleString('en-IN')} <span style={{ fontSize: '0.8rem', color: '#0a2d23', fontWeight: '600' }}>Meters</span>
+            {totalMeters.toLocaleString('en-IN')} <span style={{ fontSize: '0.8rem', color: '#111827', fontWeight: '600' }}>Meters</span>
           </div>
           <div style={{ fontSize: '0.72rem', color: '#059669', marginTop: '4px' }}>● PLB HDPE Telecom Duct (40/33mm)</div>
         </div>
@@ -191,7 +192,7 @@ export const Stock = () => {
       {isAdmin && (
         <div style={{ marginTop: '4px' }}>
           <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#111827', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <LucideMapPin size={18} color="#0a2d23" />
+            <LucideMapPin size={18} color="#111827" />
             Circle-Wise Stock Summary (Admin View)
           </div>
 
@@ -200,14 +201,14 @@ export const Stock = () => {
               <div key={c.code} className="app-card" style={{ padding: '16px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '10px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
-                    <span style={{ fontSize: '0.7rem', fontWeight: '800', background: '#0a2d23', color: '#6ee7b7', padding: '2px 8px', borderRadius: '6px' }}>
+                    <span className="badge-pill badge-neutral">
                       {c.code}
                     </span>
                     <div style={{ fontSize: '1.05rem', fontWeight: '700', color: '#111827', marginTop: '6px' }}>
                       {c.name}
                     </div>
                   </div>
-                  <LucidePackage size={22} color="#0a2d23" />
+                  <LucidePackage size={22} color="#111827" />
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '14px', background: '#ffffff', padding: '10px', borderRadius: '8px', border: '1px solid #f3f4f6' }}>
@@ -251,7 +252,7 @@ export const Stock = () => {
               borderRadius: '8px',
               fontSize: '0.85rem',
               fontWeight: activeTab === 'drum_items' ? '700' : '500',
-              background: activeTab === 'drum_items' ? '#0a2d23' : '#ffffff',
+              background: activeTab === 'drum_items' ? '#111827' : '#ffffff',
               color: activeTab === 'drum_items' ? '#ffffff' : '#4b5563',
               border: '1px solid #d1d5db',
               cursor: 'pointer'
@@ -267,7 +268,7 @@ export const Stock = () => {
               borderRadius: '8px',
               fontSize: '0.85rem',
               fontWeight: activeTab === 'issues' ? '700' : '500',
-              background: activeTab === 'issues' ? '#0a2d23' : '#ffffff',
+              background: activeTab === 'issues' ? '#111827' : '#ffffff',
               color: activeTab === 'issues' ? '#ffffff' : '#4b5563',
               border: '1px solid #d1d5db',
               cursor: 'pointer'
@@ -280,7 +281,7 @@ export const Stock = () => {
         {/* Filters */}
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
           {/* Status Filter */}
-          <select
+          <SearchableSelect
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             style={{
@@ -298,11 +299,11 @@ export const Stock = () => {
             <option value="all">⚡ All Item Statuses</option>
             <option value="ISSUED">✅ ISSUED Only</option>
             <option value="RESERVED">🔒 RESERVED Only</option>
-          </select>
+          </SearchableSelect>
 
           {/* Admin Circle Filter Dropdown */}
           {isAdmin && (
-            <select
+            <SearchableSelect
               value={selectedCircle}
               onChange={(e) => setSelectedCircle(e.target.value)}
               style={{
@@ -323,12 +324,12 @@ export const Stock = () => {
                   {c.code} ({c.name})
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           )}
 
           {/* Admin Vendor Filter Dropdown */}
           {isAdmin && (
-            <select
+            <SearchableSelect
               value={selectedVendor}
               onChange={(e) => setSelectedVendor(e.target.value)}
               style={{
@@ -349,7 +350,7 @@ export const Stock = () => {
                   {v.partnerName || v.name}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           )}
         </div>
       </div>
@@ -417,27 +418,20 @@ export const Stock = () => {
                     <td style={{ padding: '12px 16px', fontWeight: '600', color: '#374151' }}>
                       {it.materialDescription}
                     </td>
-                    <td style={{ padding: '12px 16px', fontWeight: '700', color: '#0a2d23' }}>
+                    <td style={{ padding: '12px 16px', fontWeight: '700', color: '#111827' }}>
                       {(Number(it.unitCount || it.quantity) || 0).toLocaleString('en-IN')} {it.unitOfMeasurement || 'METER'}
                     </td>
                     <td style={{ padding: '12px 16px' }}>
-                      <span style={{
-                        padding: '3px 10px',
-                        borderRadius: '12px',
-                        fontSize: '0.72rem',
-                        fontWeight: '700',
-                        background: it.itemStatus === 'RESERVED' ? '#fef3c7' : '#ecfdf5',
-                        color: it.itemStatus === 'RESERVED' ? '#92400e' : '#047857'
-                      }}>
-                        ● {it.itemStatus || 'ISSUED'}
+                      <span className={`badge-pill ${it.itemStatus === 'RESERVED' ? 'badge-amber' : 'badge-running'}`}>
+                        {it.itemStatus || 'ISSUED'}
                       </span>
                     </td>
                     <td style={{ padding: '12px 16px', color: it.reservedQuantity ? '#d97706' : '#9ca3af', fontWeight: it.reservedQuantity ? '700' : 'normal' }}>
                       {it.reservedQuantity ? `${it.reservedQuantity} M` : '-'}
                     </td>
                     <td style={{ padding: '12px 16px' }}>
-                      <span style={{ background: '#f3f4f6', color: '#374151', padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: '600' }}>
-                        {it.fromWarehouseCode || 'RAJ-WH-CIR-0001'}
+                      <span className="badge-pill badge-neutral">
+                        {it.fromWarehouseCode || '—'}
                       </span>
                     </td>
                     <td style={{ padding: '12px 16px', fontWeight: '600', color: '#111827' }}>
@@ -478,7 +472,7 @@ export const Stock = () => {
                   <td style={{ padding: '12px 16px', fontWeight: '600', color: '#374151' }}>
                     {iss.issueeName}
                   </td>
-                  <td style={{ padding: '12px 16px', fontWeight: '700', color: '#0a2d23' }}>
+                  <td style={{ padding: '12px 16px', fontWeight: '700', color: '#111827' }}>
                     {Array.isArray(iss.items) ? iss.items.length : 0} items
                   </td>
                   <td style={{ padding: '12px 16px', color: '#6b7280' }}>
