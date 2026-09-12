@@ -5,6 +5,7 @@ import dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 dotenv.load_dotenv(BASE_DIR / '.env')
+dotenv.load_dotenv(BASE_DIR.parent / '.env')
 
 SECRET_KEY = os.environ.get('SECRET_KEY', 'hero-web-default-secret-key')
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
@@ -86,9 +87,23 @@ AUTH_USER_MODEL = 'authentication.User'
 
 import urllib.parse as urlparse
 
+DB_MODE = (os.environ.get('DB') or os.environ.get('db') or '').strip().lower()
 DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:admin123@127.0.0.1:5432/hero_db')
+USE_SQLITE = DB_MODE in ('local', 'sqlite') or DATABASE_URL.startswith('sqlite')
 
-if DATABASE_URL.startswith('postgres'):
+if USE_SQLITE:
+    sqlite_name = BASE_DIR / 'db.sqlite3'
+    if DATABASE_URL.startswith('sqlite'):
+        parsed = urlparse.urlparse(DATABASE_URL)
+        if parsed.path and parsed.path not in ('/', ':memory:'):
+            sqlite_name = parsed.path
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': sqlite_name,
+        }
+    }
+elif DATABASE_URL.startswith('postgres'):
     url = urlparse.urlparse(DATABASE_URL)
     DATABASES = {
         'default': {

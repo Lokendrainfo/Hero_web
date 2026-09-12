@@ -9,6 +9,9 @@ import {
   LucideX, LucideClock, LucideUserCheck, LucideExternalLink, LucideUser
 } from 'lucide-react';
 import '../../styles/components.css';
+import { SearchableSelect } from '../../components/common/Select';
+import { DateField } from '../../components/common/DateField';
+import { roleBadgeClass } from '../../utils/roleBadge';
 
 export const Team = () => {
   const { user, isAdmin, vendors } = useAuth();
@@ -149,16 +152,16 @@ export const Team = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <h1 style={{ fontSize: '1.4rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', color: '#0f172a', margin: 0 }}>
+            <h1 style={{ fontSize: '1.4rem', fontFamily: 'inherit', fontWeight: '700', color: '#0f172a', margin: 0 }}>
               Vendor Team Directory
             </h1>
             {isAdmin ? (
-              <span className="badge-pill badge-blue" style={{ fontSize: '0.72rem', fontWeight: '700' }}>
-                Admin Master View
+              <span className="badge-pill badge-role-admin">
+                Admin master view
               </span>
             ) : (
-              <span className="badge-pill badge-green" style={{ fontSize: '0.72rem', fontWeight: '700' }}>
-                Vendor Team: {activeVendorName}
+              <span className="badge-pill badge-role-vendor">
+                {activeVendorName}
               </span>
             )}
           </div>
@@ -216,9 +219,9 @@ export const Team = () => {
         {/* Admin Vendor Selection Dropdown (Only shown for Admin users per Section 2) */}
         {isAdmin && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '6px 12px' }}>
-            <LucideBuilding2 size={16} color="#0a2d23" />
+            <LucideBuilding2 size={16} color="#111827" />
             <span style={{ fontSize: '0.82rem', fontWeight: '700', color: '#334155' }}>Filter Vendor:</span>
-            <select
+            <SearchableSelect
               value={selectedVendor}
               onChange={(e) => setSelectedVendor(e.target.value)}
               style={{
@@ -237,7 +240,7 @@ export const Team = () => {
                   {v.partnerName || v.name}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
         )}
       </div>
@@ -271,17 +274,10 @@ export const Team = () => {
                     {u.employee_id || u.external_user_id || `EMP-${u.id}`}
                   </td>
                   <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#0a2d23', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.82rem' }}>
-                        {(u.first_name || u.username || 'U')[0].toUpperCase()}
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.88rem' }}>
-                          {u.first_name ? `${u.first_name} ${u.last_name || ''}` : u.username}
-                        </div>
-                        {u.email && <div style={{ fontSize: '0.72rem', color: '#64748b' }}>{u.email}</div>}
-                      </div>
+                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {u.first_name ? `${u.first_name} ${u.last_name || ''}` : u.username}
                     </div>
+                    {u.email && <div className="page-subtitle">{u.email}</div>}
                   </td>
                   <td>
                     <div style={{ fontSize: '0.82rem', color: '#334155' }}>
@@ -289,7 +285,7 @@ export const Team = () => {
                     </div>
                   </td>
                   <td>
-                    <span className="badge-pill badge-purple" style={{ fontSize: '0.72rem', fontWeight: '700' }}>
+                    <span className={`badge-pill ${roleBadgeClass(u.role || (u.roles && u.roles[0]?.name) || 'OPERATOR')}`}>
                       {u.role || (u.roles && u.roles[0]?.name) || 'OPERATOR'}
                     </span>
                   </td>
@@ -309,8 +305,8 @@ export const Team = () => {
                     </span>
                   </td>
                   <td>
-                    <span className="badge-pill badge-green" style={{ fontSize: '0.72rem' }}>
-                      ● ACTIVE
+                    <span className="badge-pill badge-running">
+                      Active
                     </span>
                   </td>
                   <td>
@@ -356,10 +352,10 @@ export const Team = () => {
       {selectedEmployeeForAttendance && (
         <div className="modal-overlay">
           <div className="modal-card" style={{ maxWidth: '650px' }}>
-            <div style={{ padding: '18px 22px', background: '#0a2d23', color: '#ffffff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ padding: '18px 22px', background: 'var(--bg-subtle)', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <div style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: '600', textTransform: 'uppercase' }}>Employee Attendance Log</div>
-                <h3 style={{ fontSize: '1.1rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', margin: '2px 0 0', color: '#ffffff' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--live)', fontWeight: '600', textTransform: 'uppercase' }}>Employee Attendance Log</div>
+                <h3 style={{ fontSize: '1.1rem', fontFamily: 'inherit', fontWeight: '700', margin: '2px 0 0', color: 'var(--text-primary)' }}>
                   {selectedEmployeeForAttendance.first_name ? `${selectedEmployeeForAttendance.first_name} ${selectedEmployeeForAttendance.last_name || ''}` : selectedEmployeeForAttendance.username} ({selectedEmployeeForAttendance.employee_id || `EMP-${selectedEmployeeForAttendance.id}`})
                 </h3>
               </div>
@@ -374,19 +370,12 @@ export const Team = () => {
             <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {/* Month Selector */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <label style={{ fontSize: '0.85rem', fontWeight: '700', color: '#334155' }}>Select Month:</label>
-                <input
-                  type="month"
+                <label style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)' }}>Month</label>
+                <DateField
+                  mode="month"
                   value={historyMonth}
                   onChange={(e) => setHistoryMonth(e.target.value)}
-                  style={{
-                    padding: '8px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '0.85rem',
-                    fontWeight: '600',
-                    outline: 'none'
-                  }}
+                  aria-label="Attendance month"
                 />
               </div>
 

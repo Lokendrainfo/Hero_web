@@ -3,8 +3,6 @@ import { Outlet } from 'react-router-dom';
 import { TopHeader } from '../components/navigation/TopHeader';
 import { BottomNav } from '../components/navigation/BottomNav';
 import { NavDrawer } from '../components/navigation/NavDrawer';
-import '../styles/globals.css';
-import '../styles/components.css';
 
 export const DashboardLayout = () => {
   const [sidebarVisible, setSidebarVisible] = useState(true);

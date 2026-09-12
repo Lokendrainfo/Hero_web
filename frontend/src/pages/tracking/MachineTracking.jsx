@@ -36,75 +36,25 @@ export const MachineTracking = () => {
   const siteName = machine?.site_name || machine?.location_name || 'Sujangarh-SITE, HR';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', boxSizing: 'border-box' }}>
-      {/* Screen Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button onClick={() => navigate(-1)} style={{ fontSize: '1.4rem', cursor: 'pointer', fontWeight: 'bold', border: 'none', background: 'none' }}>←</button>
-          <div>
-            <h1 style={{ fontSize: '1.3rem', fontFamily: 'Outfit, sans-serif', fontWeight: 'bold', color: '#111827' }}>
-              {machine?.name || 'A600 HDD'} — GPS Route Tracking
-            </h1>
-            <div style={{ fontSize: '0.78rem', color: '#6b7280', fontFamily: 'monospace' }}>
-              Chassis: {machine?.machine_chassis_no || machine?.serial_number || '600202608396'}
-            </div>
-          </div>
+    <div className="map-fill-page">
+      <div className="page-toolbar" style={{ flexShrink: 0 }}>
+        <div>
+          <h1 className="page-title" style={{ fontSize: '1.05rem' }}>{machine?.name || 'Machine'}</h1>
+          <p className="page-subtitle">Chassis {machine?.machine_chassis_no || machine?.serial_number || '—'}</p>
         </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '0.75rem', background: '#0a2d23', color: '#6ee7b7', padding: '4px 10px', borderRadius: '12px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-            <LucideRadio size={14} color="#10b981" /> ● LIVE GPS
-          </span>
-        </div>
+        <span className="badge-pill badge-running"><LucideRadio size={12} /> Live GPS</span>
+        <span className="page-subtitle">Speed {speed} · {siteName} · {status}</span>
+        <button type="button" className="btn-secondary" onClick={() => navigate(-1)}>Back</button>
       </div>
-
-      {/* Live Map Canvas Component */}
-      <div style={{ width: '100%' }}>
+      <div className="map-fill-canvas">
         <LeafletMap
           singleMachine={machine}
-          height="450px"
+          height="100%"
           zoom={13}
           showRoute={false}
+          chrome={false}
+          fill
         />
-      </div>
-
-      {/* Telemetry Indicator Strip */}
-      <div className="app-card" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', textAlign: 'center' }}>
-        <div>
-          <div style={{ fontSize: '0.7rem', color: '#6b7280', textTransform: 'uppercase', fontWeight: '600' }}>Current Speed</div>
-          <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#10b981', marginTop: '2px' }}>{speed}</div>
-        </div>
-        <div>
-          <div style={{ fontSize: '0.7rem', color: '#6b7280', textTransform: 'uppercase', fontWeight: '600' }}>Heading</div>
-          <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#1f2937', marginTop: '2px' }}>NE (45°)</div>
-        </div>
-        <div>
-          <div style={{ fontSize: '0.7rem', color: '#6b7280', textTransform: 'uppercase', fontWeight: '600' }}>Distance Today</div>
-          <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#1f2937', marginTop: '2px' }}>24.6 km</div>
-        </div>
-        <div>
-          <div style={{ fontSize: '0.7rem', color: '#6b7280', textTransform: 'uppercase', fontWeight: '600' }}>Moving Time</div>
-          <div style={{ fontSize: '1.1rem', fontWeight: '700', color: '#1f2937', marginTop: '2px' }}>2h 35m</div>
-        </div>
-      </div>
-
-      {/* Machine & Operator Details Card */}
-      <div className="app-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#111827' }}>Machine Telemetry Details</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', fontSize: '0.82rem' }}>
-          <div>
-            <span style={{ color: '#6b7280' }}>Site Location:</span> <strong>{siteName}</strong>
-          </div>
-          <div>
-            <span style={{ color: '#6b7280' }}>Operator:</span> <strong>{machine?.operator?.name || 'Swarnim Mittal'}</strong>
-          </div>
-          <div>
-            <span style={{ color: '#6b7280' }}>Fuel Capacity:</span> <strong>{machine?.fuel_capacity || 500} L</strong>
-          </div>
-          <div>
-            <span style={{ color: '#6b7280' }}>Fuel Level:</span> <strong style={{ color: '#10b981' }}>{machine?.fuel_percentage || 58}% ({machine?.current_fuel_level || 290} L)</strong>
-          </div>
-        </div>
       </div>
     </div>
   );

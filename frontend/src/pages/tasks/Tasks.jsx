@@ -12,8 +12,10 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { normalizeTask } from '../../utils/taskNormalizer';
+import { formatKm, formatPct, formatScopeStr } from '../../utils/formatters';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import '../../styles/components.css';
+import { SearchableSelect } from '../../components/common/Select';
 
 export const Tasks = () => {
   const [tasks, setTasks] = useState([]);
@@ -408,24 +410,16 @@ export const Tasks = () => {
 
   return (
     <div className="tasks-page-container" style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', boxSizing: 'border-box' }}>
-      {/* Top Action Header Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+      <div className="page-header">
         <div>
-          <h1 style={{ fontSize: '1.4rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', color: '#111827' }}>
-            Task Management
-          </h1>
-          <p style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-            {isAdmin ? 'Global Task Overview across all vendors and field operations' : 'Vendor-Scoped Task Management & Live Execution Records'}
+          <h1 className="page-title">Tasks</h1>
+          <p className="page-subtitle">
+            {isAdmin ? 'Field execution across vendors' : 'Your vendor’s assigned field work'}
           </p>
         </div>
-
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <button
-            onClick={fetchMyTasks}
-            className="app-card"
-            style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#374151', cursor: 'pointer' }}
-          >
-            <LucideRefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh Tasks
+        <div className="page-header-actions">
+          <button type="button" className="btn-secondary" onClick={fetchMyTasks}>
+            <LucideRefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
         </div>
       </div>
@@ -456,7 +450,7 @@ export const Tasks = () => {
         {isAdmin ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <LucideBuilding2 size={16} color="#6b7280" />
-            <select
+            <SearchableSelect
               value={selectedVendorId}
               onChange={(e) => setSelectedVendorId(e.target.value)}
               style={{
@@ -476,11 +470,11 @@ export const Tasks = () => {
                   {v.partnerName || v.name}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: '700', color: '#0a2d23', background: '#ecfdf5', padding: '6px 12px', borderRadius: '8px', border: '1px solid #a7f3d0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 500, color: '#111827', background: '#fff', padding: '6px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}>
               <LucideBuilding2 size={16} color="#059669" />
               <span>Vendor: {user?.vendor?.partnerName || user?.vendor?.name || user?.partnerName || user?.vendor_name || (userVendorId ? getVendorName(userVendorId) : 'Gurukripa Enterprises')}</span>
             </div>
@@ -494,40 +488,23 @@ export const Tasks = () => {
         )}
       </div>
 
-      {/* Task Stat Cards Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+      <div className="filter-row">
         {[
-          { key: 'ALL', title: 'All Tasks', count: (isAdmin && activeVendorFilter === 'ALL') ? totalAllCount : vendorScopedTasks.length, icon: LucideCheckSquare, color: '#3b82f6' },
-          { key: 'GP_SURVEY', title: 'GP Survey', count: (isAdmin && activeVendorFilter === 'ALL' && typeCounts?.GP_SURVEY !== undefined) ? typeCounts.GP_SURVEY : vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('GP')).length, icon: LucideMapPin, color: '#10b981' },
-          { key: 'OTDR_SURVEY', title: 'OTDR Survey', count: (isAdmin && activeVendorFilter === 'ALL' && typeCounts?.OTDR_SURVEY !== undefined) ? typeCounts.OTDR_SURVEY : vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('OTDR')).length, icon: LucideLayers, color: '#8b5cf6' },
-          { key: 'FIBER_SURVEY', title: 'Fiber Survey', count: (isAdmin && activeVendorFilter === 'ALL' && typeCounts?.FIBER_SURVEY !== undefined) ? typeCounts.FIBER_SURVEY : vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('FIBER')).length, icon: LucideGlobe, color: '#06b6d4' },
-          { key: 'FIBER_TRENCHING_DUCTING_TASK', title: 'Trenching / Ducting', count: (isAdmin && activeVendorFilter === 'ALL' && typeCounts?.FIBER_TRENCHING_DUCTING_TASK !== undefined) ? typeCounts.FIBER_TRENCHING_DUCTING_TASK : vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('TRENCH')).length, icon: LucideGitCommit, color: '#f59e0b' }
-        ].map(card => {
-          const IconComp = card.icon;
-          const isSelected = selectedTaskType === card.key;
-          return (
-            <div
-              key={card.key}
-              className="ui-card"
-              onClick={() => setSelectedTaskType(card.key)}
-              style={{
-                padding: '14px',
-                cursor: 'pointer',
-                border: isSelected ? `2px solid ${card.color}` : '1px solid #e5e7eb',
-                background: isSelected ? `${card.color}0a` : '#ffffff',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: '#6b7280' }}>{card.title}</span>
-                <IconComp size={18} color={card.color} />
-              </div>
-              <div style={{ fontSize: '1.4rem', fontWeight: '800', color: '#111827', marginTop: '6px' }}>
-                {card.count}
-              </div>
-            </div>
-          );
-        })}
+          { key: 'ALL', title: 'All', count: (isAdmin && activeVendorFilter === 'ALL') ? totalAllCount : vendorScopedTasks.length },
+          { key: 'GP_SURVEY', title: 'GP Survey', count: (isAdmin && activeVendorFilter === 'ALL' && typeCounts?.GP_SURVEY !== undefined) ? typeCounts.GP_SURVEY : vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('GP')).length },
+          { key: 'OTDR_SURVEY', title: 'OTDR', count: (isAdmin && activeVendorFilter === 'ALL' && typeCounts?.OTDR_SURVEY !== undefined) ? typeCounts.OTDR_SURVEY : vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('OTDR')).length },
+          { key: 'FIBER_SURVEY', title: 'Fiber Survey', count: (isAdmin && activeVendorFilter === 'ALL' && typeCounts?.FIBER_SURVEY !== undefined) ? typeCounts.FIBER_SURVEY : vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('FIBER')).length },
+          { key: 'FIBER_TRENCHING_DUCTING_TASK', title: 'Trenching', count: (isAdmin && activeVendorFilter === 'ALL' && typeCounts?.FIBER_TRENCHING_DUCTING_TASK !== undefined) ? typeCounts.FIBER_TRENCHING_DUCTING_TASK : vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('TRENCH')).length }
+        ].map(card => (
+          <button
+            key={card.key}
+            type="button"
+            className={`filter-chip ${selectedTaskType === card.key ? 'active' : ''}`}
+            onClick={() => setSelectedTaskType(card.key)}
+          >
+            {card.title} {card.count}
+          </button>
+        ))}
       </div>
 
       {/* Task List Table */}
@@ -542,8 +519,8 @@ export const Tasks = () => {
           </p>
         </div>
       ) : (
-        <div className="app-card" style={{ padding: 0, overflowX: 'auto' }}>
-          <table className="ui-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
+        <div className="table-container">
+          <table className="data-table">
             <thead>
               <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb', color: '#374151' }}>
                 <th style={{ padding: '12px 16px' }}>Task Code & Hierarchy</th>
@@ -558,7 +535,7 @@ export const Tasks = () => {
             <tbody>
               {filteredTasks.map(t => {
                 const isCompleted = t.status === 'COMPLETED';
-                const pct = t.progress_percent || t.pct || 0;
+                const pct = formatPct(t.progress_percent || t.pct || 0);
                 const levelStr = (t.routeSnapshot?.level || (t.depth === 0 ? 'BLOCK' : (t.depth === 1 ? 'RING' : 'SEGMENT'))).toUpperCase();
 
                 return (
@@ -567,22 +544,16 @@ export const Tasks = () => {
                       onClick={() => handleInspectTask(t)}
                       style={{ padding: '12px 16px', cursor: 'pointer' }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ fontWeight: '700', color: '#0284c7', textDecoration: 'underline' }}>{t.taskCode || t.title}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
+                        <span style={{ fontWeight: '700', color: '#0284c7', textDecoration: 'underline', whiteSpace: 'nowrap' }}>{t.taskCode || t.title}</span>
                         {levelStr === 'BLOCK' && (
-                          <span style={{ fontSize: '0.68rem', background: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
-                            🏢 BLOCK
-                          </span>
+                          <span className="badge-pill badge-idle">BLOCK</span>
                         )}
                         {levelStr === 'RING' && (
-                          <span style={{ fontSize: '0.68rem', background: '#f3e8ff', color: '#6b21a8', border: '1px solid #e9d5ff', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
-                            ⭕ RING
-                          </span>
+                          <span className="badge-pill badge-purple">RING</span>
                         )}
                         {levelStr === 'SEGMENT' && (
-                          <span style={{ fontSize: '0.68rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '1px 6px', borderRadius: '4px', fontWeight: '800' }}>
-                            🔗 SEGMENT
-                          </span>
+                          <span className="badge-pill badge-running">SEGMENT</span>
                         )}
                       </div>
                       <div style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: '2px' }}>{t.displayName || t.taskType}</div>
@@ -590,24 +561,26 @@ export const Tasks = () => {
                     <td style={{ padding: '12px 16px', color: '#4b5563' }}>
                       {t.locationStr || (t.locationSnapshot?.blockName ? `${t.locationSnapshot.blockName}${t.locationSnapshot.district ? `, ${t.locationSnapshot.district}` : ''}` : (t.location?.blockName ? `${t.location.blockName}${t.location.district ? `, ${t.location.district}` : ''}` : 'N/A'))}
                     </td>
-                    <td style={{ padding: '12px 16px', fontWeight: '600', color: '#0a2d23' }}>
+                    <td style={{ padding: '12px 16px', fontWeight: '600', color: '#111827' }}>
                       {getVendorName(t.vendorId, t)}
                     </td>
                     <td style={{ padding: '12px 16px', color: '#4b5563' }}>
                       {t.assigneeName || t.assigneeSnapshot?.name || 'Field Supervisor'}
                     </td>
-                    <td style={{ padding: '12px 16px' }}>
+                    <td style={{ padding: '12px 16px', minWidth: 160 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ flex: 1, height: '6px', background: '#e5e7eb', borderRadius: '3px', overflow: 'hidden' }}>
-                          <div style={{ width: `${pct}%`, height: '100%', background: '#059669' }} />
+                        <div className="progress-track" style={{ flex: 1 }}>
+                          <div className="progress-fill" style={{ width: `${pct}%` }} />
                         </div>
                         <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#374151' }}>{pct}%</span>
                       </div>
-                      <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: '2px' }}>{t.coveredScopeStr || `${t.coveredLengthKm || 0} km`}</div>
+                      <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: '2px' }}>
+                        {formatScopeStr(t.coveredScopeStr, t.coveredLengthKm)}
+                      </div>
                     </td>
-                    <td style={{ padding: '12px 16px' }}>
+                    <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }}>
                       <span className={`badge-pill ${isCompleted ? 'badge-running' : 'badge-idle'}`}>
-                        • {t.status || 'IN_PROGRESS'}
+                        {t.status || 'IN_PROGRESS'}
                       </span>
                     </td>
                     <td style={{ padding: '12px 16px', textAlign: 'right' }}>
@@ -674,58 +647,40 @@ export const Tasks = () => {
                 Showing <strong>{totalElements > 0 ? page * pageSize + 1 : 0}–{Math.min(totalElements, (page + 1) * pageSize)}</strong> of <strong>{totalElements}</strong> tasks
               </div>
 
-              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                 <button
+                  type="button"
+                  className="btn-secondary"
                   onClick={() => fetchMyTasks(page - 1)}
                   disabled={page === 0}
-                  style={{
-                    padding: '6px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid #d1d5db',
-                    background: page === 0 ? '#f3f4f6' : '#ffffff',
-                    color: page === 0 ? '#9ca3af' : '#374151',
-                    cursor: page === 0 ? 'not-allowed' : 'pointer',
-                    fontWeight: '600',
-                    fontSize: '0.78rem'
-                  }}
                 >
-                  ← Previous
+                  Previous
                 </button>
-
-                {Array.from({ length: totalPages }, (_, i) => (
-                  <button
-                    key={i}
-                    onClick={() => fetchMyTasks(i)}
-                    style={{
-                      padding: '6px 10px',
-                      borderRadius: '6px',
-                      border: i === page ? '1px solid #059669' : '1px solid #d1d5db',
-                      background: i === page ? '#059669' : '#ffffff',
-                      color: i === page ? '#ffffff' : '#374151',
-                      cursor: 'pointer',
-                      fontWeight: i === page ? '700' : '600',
-                      fontSize: '0.78rem'
-                    }}
-                  >
-                    {i + 1}
-                  </button>
-                ))}
-
+                {(() => {
+                  const last = Math.max(0, (Number(totalPages) || 1) - 1);
+                  const start = Math.max(0, page - 2);
+                  const end = Math.min(last, page + 2);
+                  const items = [];
+                  for (let i = start; i <= end; i += 1) items.push(i);
+                  return items.map((i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className={i === page ? 'btn-primary' : 'btn-secondary'}
+                      onClick={() => fetchMyTasks(i)}
+                    >
+                      {i + 1}
+                    </button>
+                  ));
+                })()}
+                <span className="page-subtitle">Page {page + 1} of {Math.max(1, Number(totalPages) || 1)}</span>
                 <button
+                  type="button"
+                  className="btn-secondary"
                   onClick={() => fetchMyTasks(page + 1)}
-                  disabled={page >= totalPages - 1}
-                  style={{
-                    padding: '6px 12px',
-                    borderRadius: '6px',
-                    border: '1px solid #d1d5db',
-                    background: page >= totalPages - 1 ? '#f3f4f6' : '#ffffff',
-                    color: page >= totalPages - 1 ? '#9ca3af' : '#374151',
-                    cursor: page >= totalPages - 1 ? 'not-allowed' : 'pointer',
-                    fontWeight: '600',
-                    fontSize: '0.78rem'
-                  }}
+                  disabled={page >= (Number(totalPages) || 1) - 1}
                 >
-                  Next →
+                  Next
                 </button>
               </div>
             </div>
@@ -756,30 +711,29 @@ export const Tasks = () => {
             width: '100%',
             maxHeight: '90vh',
             overflowY: 'auto',
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)',
+            boxShadow: 'none',
             display: 'flex',
             flexDirection: 'column'
           }}>
             {/* Modal Header */}
             <div style={{
               padding: '16px 20px',
-              background: '#0a2d23',
-              color: '#ffffff',
+              background: 'var(--bg-subtle)',
+              color: 'var(--text-primary)',
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              borderTopLeftRadius: '16px',
-              borderTopRightRadius: '16px'
+              borderBottom: '1px solid var(--border)'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <span style={{ fontSize: '0.75rem', background: '#059669', color: '#ffffff', padding: '2px 8px', borderRadius: '6px', fontWeight: '700' }}>
                   {activeModalTask.taskCode}
                 </span>
                 <div>
-                  <h3 style={{ fontSize: '1.15rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', margin: 0 }}>
+                  <h3 style={{ fontSize: '1.15rem', fontFamily: 'inherit', fontWeight: '700', margin: 0 }}>
                     {activeModalTask.displayName || activeModalTask.location?.locationName || 'Task Deep Inspection'}
                   </h3>
-                  <span style={{ fontSize: '0.72rem', color: '#6ee7b7' }}>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                     Type: {activeModalTask.taskType} • Status: {activeModalTask.status}
                   </span>
                 </div>
@@ -787,7 +741,7 @@ export const Tasks = () => {
 
               <button
                 onClick={() => setActiveModalTask(null)}
-                style={{ background: 'none', border: 'none', color: '#ffffff', cursor: 'pointer', fontSize: '1.3rem' }}
+                style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.3rem' }}
               >
                 <LucideX size={20} />
               </button>
@@ -829,7 +783,7 @@ export const Tasks = () => {
                     {/* Arrow Indicator */}
                     <div style={{ textAlign: 'center', color: '#7c3aed', fontWeight: '700', fontSize: '0.85rem' }}>
                       <LucideArrowRight size={22} style={{ margin: '0 auto' }} />
-                      <div>{(activeModalTask.coveredLengthKm || 0).toFixed(2)} km Ring Fiber</div>
+                      <div>{formatKm(activeModalTask.coveredLengthKm)} Ring Fiber</div>
                     </div>
 
                     {/* Next Node */}
@@ -892,10 +846,10 @@ export const Tasks = () => {
                 <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', padding: '12px', borderRadius: '10px' }}>
                   <div style={{ fontSize: '0.72rem', color: '#0369a1', fontWeight: '700', textTransform: 'uppercase' }}>Covered Distance</div>
                   <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0284c7', marginTop: '2px' }}>
-                    {activeModalTask.coveredLengthKm ? Number(activeModalTask.coveredLengthKm).toFixed(2) : 0} km
+                    {formatKm(activeModalTask.coveredLengthKm)}
                   </div>
                   <div style={{ fontSize: '0.7rem', color: '#0284c7' }}>
-                    Total Route Scope: {activeModalTask.routeSnapshot?.lengthKm || activeModalTask.totalLengthKm || 75.77} km
+                    Total Route Scope: {formatKm(activeModalTask.routeSnapshot?.lengthKm || activeModalTask.totalLengthKm)}
                   </div>
                 </div>
 

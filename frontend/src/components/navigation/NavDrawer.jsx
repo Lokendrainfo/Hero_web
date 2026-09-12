@@ -1,6 +1,7 @@
 import React from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
+import { isNavPathActive } from '../../utils/navActive';
 import {
   LucideLayoutDashboard, LucideTruck, LucideNavigation, LucideCheckSquare, LucideUsers, LucideCalendarCheck,
   LucideDollarSign, LucideFuel, LucideRepeat, LucideFileText, LucideWrench, LucideAlertOctagon, LucideAlertTriangle,
@@ -9,15 +10,16 @@ import {
 } from 'lucide-react';
 
 export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) => {
-  const { hasPermission, roles, vendors, isAdmin } = useAuth();
+  const { hasPermission, roles, isAdmin } = useAuth();
+  const { pathname } = useLocation();
   const activeMobile = isMobileOpen !== undefined ? isMobileOpen : isOpen;
   const activeVisible = isVisible !== undefined ? isVisible : true;
-
   const isExplicitVendorRole = !isAdmin && (roles || []).some(r => (r || '').toUpperCase() === 'VENDOR');
+  const canSee = (perm) => isAdmin || !perm || hasPermission(perm);
 
   const menuSections = [
     {
-      title: 'Main',
+      title: 'Overview',
       items: [
         { label: 'Dashboard', path: '/dashboard', icon: LucideLayoutDashboard, perm: 'dashboard.view' }
       ]
@@ -27,18 +29,18 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
       items: [
         { label: 'Machines', path: '/machines', icon: LucideTruck, perm: 'machines.view' },
         { label: 'Live Tracking', path: '/tracking', icon: LucideNavigation, perm: 'tracking.view' },
-        { label: 'My Tasks', path: '/tasks', icon: LucideCheckSquare, perm: 'tasks.view' },
+        { label: 'Tasks', path: '/tasks', icon: LucideCheckSquare, perm: 'tasks.view' },
         { label: 'Map View', path: '/map-view', icon: LucideGlobe, perm: 'mapview.view' },
         { label: 'Team', path: '/team', icon: LucideUsers, perm: 'team.view' },
         { label: 'Attendance', path: '/attendance', icon: LucideCalendarCheck, perm: 'attendance.view' }
       ]
     },
     {
-      title: 'Finance & Fuel',
+      title: 'Finance',
       items: [
         { label: 'Expenses', path: '/expenses', icon: LucideDollarSign, perm: 'expenses.view' },
         { label: 'Fuel Logs', path: '/fuel', icon: LucideFuel, perm: 'fuel.view' },
-        { label: 'Refuel Records', path: '/refuel', icon: LucideRepeat, perm: 'refuel.view' },
+        { label: 'Refuel', path: '/refuel', icon: LucideRepeat, perm: 'refuel.view' },
         { label: 'Reports', path: '/reports', icon: LucideFileText, perm: 'reports.view' }
       ]
     },
@@ -46,34 +48,34 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
       title: 'Masters',
       adminOnly: true,
       items: [
-        { label: 'Category Master', path: '/expense-categories', icon: LucideLayers, perm: 'expenses.manage' },
-        { label: 'Subcategory Master', path: '/expense-subcategories', icon: LucideTag, perm: 'expenses.manage' }
+        { label: 'Expense Categories', path: '/expense-categories', icon: LucideLayers, perm: 'expenses.manage' },
+        { label: 'Subcategories', path: '/expense-subcategories', icon: LucideTag, perm: 'expenses.manage' }
       ]
     },
     {
-      title: 'Maintenance',
+      title: 'Workshop',
       items: [
         { label: 'Maintenance', path: '/maintenance', icon: LucideWrench, perm: 'maintenance.view' },
         { label: 'Breakdowns', path: '/breakdown', icon: LucideAlertOctagon, perm: 'breakdowns.view' },
-        { label: 'Alert Center', path: '/alerts', icon: LucideAlertTriangle, perm: 'alerts.view' }
+        { label: 'Alerts', path: '/alerts', icon: LucideAlertTriangle, perm: 'alerts.view' }
       ]
     },
     {
       title: 'Inventory',
       items: [
-        { label: 'Stock & Spares', path: '/stock', icon: LucidePackage, perm: 'inventory.view' }
+        { label: 'Stock', path: '/stock', icon: LucidePackage, perm: 'inventory.view' }
       ]
     },
     {
-      title: 'Management',
+      title: 'Admin',
       items: [
         { label: 'Vendors', path: '/vendors', icon: LucideBuilding, perm: 'vendors.view' },
         { label: 'Users', path: '/users', icon: LucideUserCheck, perm: 'users.view' },
-        { label: 'Roles & Permissions', path: '/roles', icon: LucideShieldCheck, perm: 'roles.view' }
+        { label: 'Roles', path: '/roles', icon: LucideShieldCheck, perm: 'roles.view' }
       ]
     },
     {
-      title: 'System',
+      title: 'Account',
       items: [
         { label: 'Notifications', path: '/notifications', icon: LucideBell, perm: 'notifications.view' },
         { label: 'Settings', path: '/settings', icon: LucideSettings, perm: 'settings.view' }
@@ -86,18 +88,23 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
       {activeMobile && <div className="drawer-backdrop" onClick={onClose} />}
 
       <aside className={`nav-sidebar-container ${activeMobile ? 'mobile-open' : ''} ${!activeVisible ? 'collapsed' : ''}`}>
-        <div style={{ padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-          <span style={{ fontFamily: 'Outfit, sans-serif', fontSize: '1.3rem', fontWeight: 'bold', letterSpacing: '0.04em' }}>HERO</span>
-          <LucideX size={20} className="mobile-close-btn" onClick={onClose} style={{ cursor: 'pointer' }} />
+        <div className="sidebar-brand">
+          <div className="sidebar-logo">
+            <div className="sidebar-mark">H</div>
+            <div className="sidebar-wordmark">HERO <span>WEB</span></div>
+          </div>
+          <button type="button" className="header-icon-btn mobile-close-btn" onClick={onClose} aria-label="Close menu">
+            <LucideX size={18} />
+          </button>
         </div>
 
-        <div style={{ flex: 1, paddingBottom: '30px', overflowY: 'auto' }}>
+        <nav className="sidebar-scroll" aria-label="Main">
           {menuSections.map(sec => {
             if (sec.adminOnly && !isAdmin && !hasPermission('expenses.manage')) return null;
 
             const visibleItems = sec.items.filter(item => {
               if (isExplicitVendorRole && item.path === '/map-view' && !hasPermission('mapview.view')) return false;
-              return isAdmin || !item.perm || hasPermission(item.perm);
+              return canSee(item.perm);
             });
             if (visibleItems.length === 0) return null;
 
@@ -110,13 +117,11 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
                     <NavLink
                       key={item.path}
                       to={item.path}
+                      end={item.path === '/dashboard'}
                       onClick={onClose}
-                      className={({ isActive }) => {
-                        const isCustomActive = isActive || (item.path === '/map-view' && window.location.pathname.startsWith('/map-view'));
-                        return `menu-item-link ${isCustomActive ? 'active' : ''}`;
-                      }}
+                      className={() => `menu-item-link ${isNavPathActive(item.path, pathname) ? 'active' : ''}`}
                     >
-                      <Icon size={18} />
+                      <Icon size={16} strokeWidth={1.75} />
                       <span>{item.label}</span>
                     </NavLink>
                   );
@@ -124,7 +129,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
               </div>
             );
           })}
-        </div>
+        </nav>
       </aside>
     </>
   );

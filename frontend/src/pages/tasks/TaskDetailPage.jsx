@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   LucideArrowLeft,
@@ -22,12 +23,12 @@ import {
   LucideActivity,
   LucideWrench,
   LucidePlay,
-  LucideVideo,
   LucideImage,
   LucideRuler,
   LucideCheckCircle2,
   LucideTruck,
-  LucideFilter
+  LucideFilter,
+  LucideX
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 import { vendorService } from '../../services/vendorService';
@@ -35,6 +36,23 @@ import { TaskRouteMap } from '../../components/tasks/TaskRouteMap';
 import { PhotoLightbox, formatImageUrl } from '../../components/common/PhotoLightbox';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { mapHddExecutionResponse, filterHddExecutionByDate, parseDateToYMD } from '../../utils/mapHddExecutionResponse';
+import { SearchableSelect } from '../../components/common/Select';
+import { PageHeader } from '../../components/common/PageHeader';
+import { formatKm } from '../../utils/formatters';
+
+const display = (value, fallback = '—') => {
+  if (value == null) return fallback;
+  const text = String(value).trim();
+  return text ? text : fallback;
+};
+
+const statusBadgeClass = (value) => {
+  const s = String(value || '').toUpperCase();
+  if (['COMPLETED', 'APPROVED', 'HEALTHY', 'ASSIGNED'].includes(s)) return 'badge-running';
+  if (['IN_PROGRESS', 'RUNNING'].includes(s)) return 'badge-idle';
+  if (['REJECTED', 'FAILED', 'CANCELLED'].includes(s)) return 'badge-breakdown';
+  return 'badge-neutral';
+};
 
 const KNOWN_VENDOR_MAP = {
   '6a852f2600cd99ac6337f4a9': 'HARPAL INFRA DEVELOPMENT',
@@ -47,6 +65,64 @@ const KNOWN_VENDOR_MAP = {
   '6a9d22c43fe4e1b061d189a9': 'Naveen Telecom Network 2',
   '6a82e6f24312cab2fd6d36cd': 'Pranjal Enterprises',
   '6a8fc284544bdedf53d4ec09': 'Raj Enterprises'
+};
+
+const DepthPointsTable = ({ points, onOpenPhoto }) => (
+  <div className="table-container">
+    <table className="data-table">
+      <thead>
+        <tr>
+          <th>Point</th>
+          <th>Depth</th>
+          <th>Temp</th>
+          <th>Offset</th>
+          <th>GPS</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {points.map((dp, dIdx) => (
+          <tr key={dIdx}>
+            <td>Point {dp.pointNo || dIdx + 1}</td>
+            <td>{dp.depth != null ? `${Number(dp.depth).toFixed(2)} m` : '—'}</td>
+            <td>{dp.temp ? `${dp.temp}°C` : '—'}</td>
+            <td>{dp.offset ? `${dp.offset} m` : '—'}</td>
+            <td>{dp.lat && dp.lng ? `${dp.lat}, ${dp.lng}` : '—'}</td>
+            <td>
+              {dp.photos && dp.photos.length > 0 ? (
+                <button type="button" className="btn-secondary" onClick={() => onOpenPhoto(dp.photos, 0)}>
+                  Photo
+                </button>
+              ) : '—'}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+);
+
+const DetailModal = ({ open, title, onClose, children }) => {
+  if (!open || typeof document === 'undefined') return null;
+  return createPortal(
+    <div className="modal-overlay" onClick={onClose} role="presentation">
+      <div
+        className="modal-card task-detail-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="page-header" style={{ padding: '16px 20px 8px' }}>
+          <h2 className="page-title" style={{ fontSize: '1rem' }}>{title}</h2>
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            <LucideX size={14} /> Close
+          </button>
+        </div>
+        <div className="task-detail-modal-body">{children}</div>
+      </div>
+    </div>,
+    document.body
+  );
 };
 
 export const TaskDetailPage = () => {
@@ -70,6 +146,7 @@ export const TaskDetailPage = () => {
   // Lightbox State
   const [lightboxPhotos, setLightboxPhotos] = useState(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [depthModal, setDepthModal] = useState(null);
 
   // Batch resolve S3 Presigned URLs via POST /api/survey/photo-urls
   const resolvePhotoUrlsForExecution = async (normalized) => {
@@ -335,17 +412,13 @@ export const TaskDetailPage = () => {
   if (error || !task) {
     return (
       <div style={{ padding: '40px', maxWidth: '800px', margin: '0 auto' }}>
-        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px', padding: '24px', textAlign: 'center' }}>
-          <LucideAlertCircle size={36} color="#dc2626" style={{ margin: '0 auto 12px auto' }} />
-          <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#991b1b', margin: 0 }}>Task Load Error</h3>
-          <p style={{ fontSize: '0.85rem', color: '#7f1d1d', marginTop: '6px' }}>{error || 'Unable to display requested task.'}</p>
-          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '16px' }}>
-            <button onClick={() => navigate('/tasks')} className="btn-primary" style={{ padding: '8px 16px', fontSize: '0.82rem' }}>
-              ← Back to My Tasks
-            </button>
-            <button onClick={fetchTaskDetails} style={{ padding: '8px 16px', fontSize: '0.82rem', background: '#ffffff', border: '1px solid #d1d5db', borderRadius: '6px', cursor: 'pointer', fontWeight: '600' }}>
-              Retry
-            </button>
+        <div className="app-card" style={{ padding: 24, textAlign: 'center' }}>
+          <LucideAlertCircle size={28} color="var(--text-muted)" style={{ margin: '0 auto 12px auto' }} />
+          <h3 className="page-title" style={{ fontSize: '1rem' }}>Could not load task</h3>
+          <p className="page-subtitle" style={{ marginTop: 6 }}>{error || 'Unable to display requested task.'}</p>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 16 }}>
+            <button type="button" onClick={() => navigate('/tasks')} className="btn-secondary">Back to tasks</button>
+            <button type="button" onClick={fetchTaskDetails} className="btn-primary">Retry</button>
           </div>
         </div>
       </div>
@@ -471,9 +544,8 @@ export const TaskDetailPage = () => {
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', boxSizing: 'border-box' }}>
+    <div className="screen-container">
 
-      {/* Lightbox Modal */}
       {lightboxPhotos && (
         <PhotoLightbox
           photos={lightboxPhotos}
@@ -481,194 +553,123 @@ export const TaskDetailPage = () => {
           onClose={() => setLightboxPhotos(null)}
         />
       )}
+      <DetailModal
+        open={Boolean(depthModal)}
+        title={depthModal?.title || 'Depth captures'}
+        onClose={() => setDepthModal(null)}
+      >
+        <DepthPointsTable points={depthModal?.points || []} onOpenPhoto={openLightbox} />
+      </DetailModal>
 
-      {/* Top Breadcrumb & Refresh Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button
-            onClick={() => navigate('/tasks')}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '6px 12px',
-              background: '#ffffff',
-              border: '1px solid #d1d5db',
-              borderRadius: '8px',
-              fontSize: '0.82rem',
-              fontWeight: '600',
-              color: '#374151',
-              cursor: 'pointer'
-            }}
-          >
-            <LucideArrowLeft size={16} /> Back to My Tasks
-          </button>
+      <PageHeader
+        title={name}
+        subtitle={`${display(locBlock)}, ${display(locDistrict)} · ${display(locCode)}`}
+        actions={
+          <>
+            <button type="button" className="btn-secondary" onClick={() => navigate('/tasks')}>
+              <LucideArrowLeft size={14} /> Back
+            </button>
+            <a className="btn-primary" href={`/map-view/${taskId}`} target="_blank" rel="noopener noreferrer">
+              <LucideExternalLink size={14} /> Open map
+            </a>
+            <button type="button" className="btn-secondary" onClick={fetchTaskDetails}>
+              <LucideRefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
+            </button>
+          </>
+        }
+      />
 
-          <span style={{ fontSize: '0.82rem', color: '#9ca3af' }}>/</span>
-          <span style={{ fontSize: '0.85rem', color: '#6b7280', fontWeight: '500' }}>Task Detail</span>
-          <span style={{ fontSize: '0.82rem', color: '#9ca3af' }}>/</span>
-          <span style={{ fontSize: '0.85rem', color: '#059669', fontWeight: '700' }}>{code}</span>
+      <div className="app-card" style={{ padding: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <span className="badge-pill badge-neutral">{code}</span>
+            <span className="badge-pill badge-neutral">{typeStr}</span>
+            {routeSnapshot.level ? <span className="badge-pill badge-neutral">{routeSnapshot.level}</span> : null}
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <span className={`badge-pill ${statusBadgeClass(statusStr)}`}>{statusStr}</span>
+            <span className={`badge-pill ${statusBadgeClass(approvalStr)}`}>Approval {approvalStr}</span>
+            <span className="badge-pill badge-neutral">Stage {stageStr}</span>
+          </div>
         </div>
 
-        <button
-          onClick={fetchTaskDetails}
-          className="app-card"
-          style={{ padding: '6px 14px', display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}
-        >
-          <LucideRefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh Data
-        </button>
+        <dl className="vendor-dl" style={{ marginTop: 16 }}>
+          <div>
+            <dt>Vendor</dt>
+            <dd>{display(vendorName)}</dd>
+          </div>
+          <div>
+            <dt>Assignee</dt>
+            <dd>
+              {display(assigneeName)}{assigneeMobile ? ` · ${assigneeMobile}` : ''}
+              {assigneeRole ? <div className="page-subtitle" style={{ marginTop: 2 }}>{assigneeRole}</div> : null}
+            </dd>
+          </div>
+          <div>
+            <dt>Approver</dt>
+            <dd>
+              {display(approverName)}{approverRole ? ` · ${approverRole}` : ''}
+              <div className="page-subtitle" style={{ marginTop: 2 }}>
+                Created by {display(createdBy)}{task.createdAt ? ` · ${new Date(task.createdAt).toLocaleDateString()}` : ''}
+              </div>
+            </dd>
+          </div>
+        </dl>
       </div>
 
-      {/* 1. Header Banner & Task Title Card */}
-      <div className="app-card" style={{ padding: '20px', background: 'linear-gradient(135deg, #0a2d23 0%, #114b3a 100%)', color: '#ffffff', borderRadius: '16px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-              <span style={{ fontSize: '0.75rem', background: '#059669', color: '#ffffff', padding: '3px 10px', borderRadius: '6px', fontWeight: '800', letterSpacing: '0.5px' }}>
-                {code}
-              </span>
-              <span style={{ fontSize: '0.72rem', background: 'rgba(255, 255, 255, 0.15)', color: '#6ee7b7', padding: '3px 10px', borderRadius: '12px', fontWeight: '700' }}>
-                {typeStr}
-              </span>
-              {routeSnapshot.level && (
-                <span style={{ fontSize: '0.72rem', background: '#7c3aed', color: '#ffffff', padding: '3px 10px', borderRadius: '12px', fontWeight: '800' }}>
-                  LEVEL: {routeSnapshot.level}
-                </span>
-              )}
-            </div>
-
-            <h1 style={{ fontSize: '1.45rem', fontFamily: 'Outfit, sans-serif', fontWeight: '800', margin: 0, color: '#ffffff' }}>
-              {name}
-            </h1>
-            <div style={{ fontSize: '0.82rem', color: '#a7f3d0', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <LucideMapPin size={14} color="#34d399" />
-              <span>{locBlock}, {locDistrict}, {locCircle}</span>
-              <span style={{ opacity: 0.5 }}>•</span>
-              <span>Location Code: <strong>{locCode}</strong></span>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.78rem', background: statusStr === 'COMPLETED' ? '#059669' : '#0284c7', color: '#ffffff', padding: '4px 12px', borderRadius: '8px', fontWeight: '700' }}>
-              ● {statusStr}
-            </span>
-            <span style={{ fontSize: '0.78rem', background: 'rgba(255, 255, 255, 0.2)', color: '#ffffff', padding: '4px 12px', borderRadius: '8px', fontWeight: '700' }}>
-              Approval: {approvalStr}
-            </span>
-            <span style={{ fontSize: '0.78rem', background: 'rgba(255, 255, 255, 0.1)', color: '#e2e8f0', padding: '4px 12px', borderRadius: '8px', fontWeight: '600' }}>
-              Stage: {stageStr}
-            </span>
-          </div>
+      <div className="kpi-strip">
+        <div className="kpi-cell kpi-cell-static">
+          <div className="kpi-label">Planned</div>
+          <div className="kpi-value">{formatKm(plannedScopeKm)}</div>
+          <div className="kpi-sub">Covered {formatKm(coveredKm)} ({pct}%)</div>
         </div>
-
-        <hr style={{ border: 'none', borderTop: '1px solid rgba(255, 255, 255, 0.15)', margin: '16px 0' }} />
-
-        {/* Vendor Company & Stakeholders */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', fontSize: '0.82rem' }}>
-          <div>
-            <div style={{ fontSize: '0.72rem', color: '#93c5fd', fontWeight: '600', textTransform: 'uppercase' }}>Vendor Firm / Partner</div>
-            <div style={{ fontWeight: '800', fontSize: '0.98rem', color: '#ffffff', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <LucideBuilding2 size={16} color="#60a5fa" />
-              <span>{vendorName}</span>
-            </div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: '0.72rem', color: '#a7f3d0', fontWeight: '600', textTransform: 'uppercase' }}>Assignee (Project Manager)</div>
-            <div style={{ fontWeight: '800', fontSize: '0.98rem', color: '#ffffff', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <LucideUser size={16} color="#34d399" />
-              <span>{assigneeName} {assigneeMobile ? `(${assigneeMobile})` : ''}</span>
-            </div>
-            <div style={{ fontSize: '0.7rem', color: '#a7f3d0', marginTop: '1px' }}>{assigneeRole}</div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: '0.72rem', color: '#fef08a', fontWeight: '600', textTransform: 'uppercase' }}>Approver & Creator</div>
-            <div style={{ fontWeight: '700', color: '#ffffff', marginTop: '2px' }}>
-              Approver: {approverName} ({approverRole})
-            </div>
-            <div style={{ fontSize: '0.7rem', color: '#cbd5e1', marginTop: '1px' }}>
-              Created By: {createdBy} • {task.createdAt ? new Date(task.createdAt).toLocaleDateString() : 'N/A'}
-            </div>
-          </div>
+        <div className="kpi-cell kpi-cell-static">
+          <div className="kpi-label">Remaining</div>
+          <div className="kpi-value">{formatKm(remainingKm)}</div>
+          <div className="kpi-sub">Target {task.dailyTaskTarget != null ? formatKm(task.dailyTaskTarget) : '—'} / day</div>
         </div>
-      </div>
-
-      {/* 2. Summary Metrics Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px' }}>
-        <div className="app-card" style={{ padding: '14px', background: '#f0f9ff', border: '1px solid #bae6fd' }}>
-          <div style={{ fontSize: '0.72rem', color: '#0369a1', fontWeight: '700', textTransform: 'uppercase' }}>Total Planned Scope</div>
-          <div style={{ fontSize: '1.35rem', fontWeight: '800', color: '#0284c7', marginTop: '4px' }}>
-            {plannedScopeKm.toFixed(2)} km
-          </div>
-          <div style={{ fontSize: '0.72rem', color: '#0369a1', marginTop: '2px', fontWeight: '600' }}>
-            Covered: {coveredKm.toFixed(2)} km ({pct}%)
-          </div>
+        <div className="kpi-cell kpi-cell-static">
+          <div className="kpi-label">Routes</div>
+          <div className="kpi-value">{childRoutes.length > 0 ? childRoutes.length : (segmentSnapshots.length || 0)}</div>
+          <div className="kpi-sub">Completed {task.completedSegments || 0}</div>
         </div>
-
-        <div className="app-card" style={{ padding: '14px', background: '#ecfdf5', border: '1px solid #a7f3d0' }}>
-          <div style={{ fontSize: '0.72rem', color: '#047857', fontWeight: '700', textTransform: 'uppercase' }}>Remaining Scope</div>
-          <div style={{ fontSize: '1.35rem', fontWeight: '800', color: '#059669', marginTop: '4px' }}>
-            {remainingKm.toFixed(2)} km
-          </div>
-          <div style={{ fontSize: '0.72rem', color: '#047857', marginTop: '2px', fontWeight: '600' }}>
-            Target per Day: {task.dailyTaskTarget || 'N/A'} km
-          </div>
-        </div>
-
-        <div className="app-card" style={{ padding: '14px', background: '#f5f3ff', border: '1px solid #ddd6fe' }}>
-          <div style={{ fontSize: '0.72rem', color: '#6d28d9', fontWeight: '700', textTransform: 'uppercase' }}>Routes / Segments</div>
-          <div style={{ fontSize: '1.35rem', fontWeight: '800', color: '#7c3aed', marginTop: '4px' }}>
-            {childRoutes.length > 0 ? `${childRoutes.length} Routes` : `${segmentSnapshots.length || 1} Segments`}
-          </div>
-          <div style={{ fontSize: '0.72rem', color: '#6d28d9', marginTop: '2px', fontWeight: '600' }}>
-            Completed: {task.completedSegments || 0}
-          </div>
-        </div>
-
-        <div className="app-card" style={{ padding: '14px', background: '#fffbeb', border: '1px solid #fde68a' }}>
-          <div style={{ fontSize: '0.72rem', color: '#b45309', fontWeight: '700', textTransform: 'uppercase' }}>Pits & Telemetry Summary</div>
-          <div style={{ fontSize: '1.35rem', fontWeight: '800', color: '#d97706', marginTop: '4px' }}>
-            {executionData?.statistics?.totalPits ?? activePits.length} Pits
-          </div>
-          <div style={{ fontSize: '0.72rem', color: '#b45309', marginTop: '2px', fontWeight: '600' }}>
-            Mode: {executionData?.workExecutionMode || fieldData?.workExecutionMode || (trenching ? 'HDD / TRENCHING' : 'HDD')}
-          </div>
+        <div className="kpi-cell kpi-cell-static">
+          <div className="kpi-label">Pits</div>
+          <div className="kpi-value">{executionData?.statistics?.totalPits ?? activePits.length}</div>
+          <div className="kpi-sub">{display(executionData?.workExecutionMode || fieldData?.workExecutionMode || (trenching ? 'HDD' : null))}</div>
         </div>
       </div>
 
       {/* 3. Block Planned Route Hierarchy Panel */}
       {(isBlockLevel || childRoutes.length > 0 || childrenTasks.length > 0) && (
-        <div className="app-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-            <div style={{ fontSize: '1rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <LucideLayers size={20} color="#7c3aed" />
-              <span>Block Route Hierarchy & Planned Topology ({childRoutes.length || childrenTasks.length} Child Routes)</span>
+        <div className="app-card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+            <div>
+              <div className="vendor-section-title" style={{ marginBottom: 0 }}>Route hierarchy</div>
+              <div className="page-subtitle">{childRoutes.length || childrenTasks.length} child routes</div>
             </div>
-            <span style={{ fontSize: '0.75rem', background: '#f3e8ff', color: '#7c3aed', padding: '3px 10px', borderRadius: '12px', fontWeight: '800' }}>
-              LEVEL: {routeSnapshot.level || 'BLOCK'}
-            </span>
+            <span className="badge-pill badge-neutral">{routeSnapshot.level || 'BLOCK'}</span>
           </div>
 
-          <div style={{ background: 'linear-gradient(90deg, #f8fafc 0%, #f1f5f9 100%)', padding: '14px 18px', borderRadius: '12px', border: '1px solid #cbd5e1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-            <div>
-              <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Parent Block Scope</div>
-              <div style={{ fontWeight: '800', fontSize: '1.1rem', color: '#0f172a', marginTop: '2px' }}>
-                📂 {name} ({code})
+          <div className="vendor-section">
+            <dl className="vendor-dl">
+              <div>
+                <dt>Parent block</dt>
+                <dd>{name} · {code}</dd>
               </div>
-              <div style={{ fontSize: '0.75rem', color: '#475569', marginTop: '2px' }}>
-                Location Code: <strong>{locCode}</strong> | OLT IP: <strong>{locOltIp}</strong> | District: <strong>{locDistrict}</strong>
+              <div>
+                <dt>Location</dt>
+                <dd>{display(locCode)} · {display(locDistrict)}</dd>
               </div>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Total Planned Scope</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#7c3aed' }}>
-                {plannedScopeKm.toFixed(2)} km
+              <div>
+                <dt>OLT</dt>
+                <dd>{display(locOltIp)}</dd>
               </div>
-              <div style={{ fontSize: '0.72rem', color: '#059669', fontWeight: '700' }}>
-                Covered: {coveredKm.toFixed(2)} km ({pct}%)
+              <div>
+                <dt>Planned</dt>
+                <dd>{formatKm(plannedScopeKm)} · covered {formatKm(coveredKm)} ({pct}%)</dd>
               </div>
-            </div>
+            </dl>
           </div>
 
           {/* Child Routes List */}
@@ -685,103 +686,54 @@ export const TaskDetailPage = () => {
                 return (
                   <div
                     key={rIdx}
+                    className={`task-route-card${isSelected ? ' is-selected' : ''}`}
                     onClick={() => setSelectedRouteIndex(isSelected ? null : rIdx)}
-                    style={{
-                      background: isSelected ? '#faf5ff' : '#ffffff',
-                      border: isSelected ? '2px solid #7c3aed' : '1px solid #e2e8f0',
-                      borderRadius: '12px',
-                      padding: '14px 16px',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      boxShadow: isSelected ? '0 4px 12px rgba(124, 58, 237, 0.12)' : '0 1px 3px rgba(0,0,0,0.03)'
-                    }}
                   >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span
-                          style={{
-                            background: route.color || '#7c3aed',
-                            color: '#ffffff',
-                            padding: '4px 12px',
-                            borderRadius: '8px',
-                            fontWeight: '800',
-                            fontSize: '0.82rem'
-                          }}
-                        >
-                          {route.routeName}
-                        </span>
-                        <div>
-                          <div style={{ fontWeight: '700', fontSize: '0.92rem', color: '#1e293b' }}>
-                            {route.routeName} ({route.routeCode})
-                          </div>
-                          <div style={{ fontSize: '0.73rem', color: '#64748b', marginTop: '2px' }}>
-                            Topology: <strong>{route.topologyType || 'RING'}</strong> | Level: <strong>{route.level || 'RING'}</strong>
-                            {matchedChildTask && (
-                              <span style={{ marginLeft: '8px', color: '#2563eb', fontWeight: '700' }}>
-                                • Task Code: {matchedChildTask.taskCode}
-                              </span>
-                            )}
-                          </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                      <div>
+                        <div style={{ fontWeight: 650 }}>{route.routeName} · {display(route.routeCode)}</div>
+                        <div className="page-subtitle" style={{ marginTop: 2 }}>
+                          {display(route.topologyType)} · {display(route.level)}
+                          {matchedChildTask ? ` · ${matchedChildTask.taskCode}` : ''}
                         </div>
                       </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontWeight: '800', fontSize: '1.05rem', color: '#0284c7' }}>
-                            {Number(route.lengthKm || 0).toFixed(2)} km
-                          </div>
-                          <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
-                            {matchedChildTask ? `Segments: ${matchedChildTask.totalSegments || 'N/A'}` : 'Planned Scope'}
+                          <div style={{ fontWeight: 650 }}>{formatKm(route.lengthKm)}</div>
+                          <div className="page-subtitle">
+                            {matchedChildTask ? `${matchedChildTask.totalSegments || 0} segments` : 'Planned'}
                           </div>
                         </div>
-
                         {matchedChildTask && (
                           <button
+                            type="button"
+                            className="btn-secondary"
                             onClick={(e) => {
                               e.stopPropagation();
                               navigate(`/tasks/${matchedChildTask.id}`);
                             }}
-                            style={{
-                              padding: '6px 12px',
-                              background: '#059669',
-                              color: '#ffffff',
-                              border: 'none',
-                              borderRadius: '8px',
-                              fontSize: '0.75rem',
-                              fontWeight: '700',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
                           >
-                            Inspect Task <LucideExternalLink size={12} />
+                            Inspect
                           </button>
                         )}
                       </div>
                     </div>
-
-                    <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px', fontSize: '0.78rem' }}>
+                    <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
                       {route.currentNode && (
-                        <div style={{ background: '#ecfdf5', padding: '8px 12px', borderRadius: '8px', border: '1px solid #a7f3d0' }}>
-                          <div style={{ fontSize: '0.68rem', color: '#047857', fontWeight: '800', textTransform: 'uppercase' }}>🟢 Start Node (Current GP)</div>
-                          <div style={{ fontWeight: '700', color: '#065f46', marginTop: '2px' }}>
-                            {route.currentNode.name} ({route.currentNode.code})
-                          </div>
-                          <div style={{ fontSize: '0.7rem', color: '#047857', marginTop: '2px', fontFamily: 'monospace' }}>
-                            📍 Lat: {route.currentNode.lat}, Lng: {route.currentNode.lng}
+                        <div className="task-node">
+                          <div className="vendor-section-title">Start</div>
+                          <div style={{ fontWeight: 650 }}>{route.currentNode.name} · {display(route.currentNode.code)}</div>
+                          <div className="page-subtitle" style={{ marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+                            {route.currentNode.lat}, {route.currentNode.lng}
                           </div>
                         </div>
                       )}
-
                       {route.nextNode && (
-                        <div style={{ background: '#fef2f2', padding: '8px 12px', borderRadius: '8px', border: '1px solid #fecaca' }}>
-                          <div style={{ fontSize: '0.68rem', color: '#b91c1c', fontWeight: '800', textTransform: 'uppercase' }}>🔴 Target Node (Next GP)</div>
-                          <div style={{ fontWeight: '700', color: '#991b1b', marginTop: '2px' }}>
-                            {route.nextNode.name} ({route.nextNode.code})
-                          </div>
-                          <div style={{ fontSize: '0.7rem', color: '#b91c1c', marginTop: '2px', fontFamily: 'monospace' }}>
-                            📍 Lat: {route.nextNode.lat}, Lng: {route.nextNode.lng}
+                        <div className="task-node">
+                          <div className="vendor-section-title">End</div>
+                          <div style={{ fontWeight: 650 }}>{route.nextNode.name} · {display(route.nextNode.code)}</div>
+                          <div className="page-subtitle" style={{ marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+                            {route.nextNode.lat}, {route.nextNode.lng}
                           </div>
                         </div>
                       )}
@@ -791,39 +743,30 @@ export const TaskDetailPage = () => {
               })}
             </div>
           ) : childrenTasks.length > 0 ? (
-            <div style={{ overflowX: 'auto' }}>
-              <table className="ui-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.8rem' }}>
+            <div className="table-container">
+              <table className="data-table">
                 <thead>
-                  <tr style={{ background: '#f8fafc', color: '#475569', borderBottom: '1px solid #e2e8f0' }}>
-                    <th style={{ padding: '8px 12px' }}>Task Code</th>
-                    <th style={{ padding: '8px 12px' }}>Route Name</th>
-                    <th style={{ padding: '8px 12px' }}>Assignee</th>
-                    <th style={{ padding: '8px 12px' }}>Start → End Node</th>
-                    <th style={{ padding: '8px 12px' }}>Length (km)</th>
-                    <th style={{ padding: '8px 12px' }}>Total Segments</th>
-                    <th style={{ padding: '8px 12px' }}>Action</th>
+                  <tr>
+                    <th>Task</th>
+                    <th>Route</th>
+                    <th>Assignee</th>
+                    <th>Start → End</th>
+                    <th>Length</th>
+                    <th>Segments</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {childrenTasks.map((ct, idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontWeight: '700', color: '#2563eb' }}>{ct.taskCode}</td>
-                      <td style={{ padding: '8px 12px', fontWeight: '700', color: '#1e293b' }}>{ct.displayName}</td>
-                      <td style={{ padding: '8px 12px', color: '#475569' }}>{ct.assigneeSnapshot?.name || ct.assigneeName || 'VASU'}</td>
-                      <td style={{ padding: '8px 12px', fontSize: '0.75rem', color: '#475569' }}>
-                        {ct.routeSnapshot?.currentNode?.name || 'Start'} → {ct.routeSnapshot?.nextNode?.name || 'End'}
-                      </td>
-                      <td style={{ padding: '8px 12px', fontWeight: '700', color: '#0284c7' }}>
-                        {ct.routeSnapshot?.lengthKm ? Number(ct.routeSnapshot.lengthKm).toFixed(2) : 'N/A'} km
-                      </td>
-                      <td style={{ padding: '8px 12px', fontWeight: '600' }}>{ct.totalSegments || 0}</td>
-                      <td style={{ padding: '8px 12px' }}>
-                        <button
-                          onClick={() => navigate(`/tasks/${ct.id}`)}
-                          style={{ padding: '4px 10px', background: '#059669', color: '#ffffff', border: 'none', borderRadius: '6px', fontSize: '0.72rem', fontWeight: '700', cursor: 'pointer' }}
-                        >
-                          Inspect
-                        </button>
+                    <tr key={idx}>
+                      <td>{display(ct.taskCode)}</td>
+                      <td>{display(ct.displayName)}</td>
+                      <td>{display(ct.assigneeSnapshot?.name || ct.assigneeName)}</td>
+                      <td>{display(ct.routeSnapshot?.currentNode?.name)} → {display(ct.routeSnapshot?.nextNode?.name)}</td>
+                      <td>{ct.routeSnapshot?.lengthKm != null ? formatKm(ct.routeSnapshot.lengthKm) : '—'}</td>
+                      <td>{ct.totalSegments || 0}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button type="button" className="btn-ghost" onClick={() => navigate(`/tasks/${ct.id}`)}>Inspect</button>
                       </td>
                     </tr>
                   ))}
@@ -834,207 +777,159 @@ export const TaskDetailPage = () => {
         </div>
       )}
 
-      {/* 4. Interactive Route Map & Route Specs */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
-        <div style={{ flex: 1 }}>
-          <TaskRouteMap
-            routeNodes={routeNodes}
-            currentNode={currentNode}
-            nextNode={nextNode}
-            segmentSnapshots={segmentSnapshots}
-            childRoutes={childRoutes}
-            selectedRouteIndex={selectedRouteIndex}
-            pits={activePits.length > 0 ? activePits : (trenching?.pitDetails || [])}
-            depthCaptures={activeDepthPoints.length > 0 ? activeDepthPoints : (trenching?.hddShot?.[0]?.depthCapture || [])}
-            height="460px"
-            title="Interactive Block Route Topology & Execution Map"
-            onOpenPhotos={openLightbox}
-          />
-        </div>
+      <TaskRouteMap
+        routeNodes={routeNodes}
+        currentNode={currentNode}
+        nextNode={nextNode}
+        segmentSnapshots={segmentSnapshots}
+        childRoutes={childRoutes}
+        selectedRouteIndex={selectedRouteIndex}
+        pits={activePits.length > 0 ? activePits : (trenching?.pitDetails || [])}
+        depthCaptures={activeDepthPoints.length > 0 ? activeDepthPoints : (trenching?.hddShot?.[0]?.depthCapture || [])}
+        height="560px"
+        title="Route map"
+        onOpenPhotos={openLightbox}
+      />
 
-        <div className="app-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <LucideGitCommit size={18} color="#7c3aed" />
-            <span>Route Topology & Node Specs</span>
-          </div>
+      <div className="app-card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="vendor-section-title" style={{ marginBottom: 0 }}>Route specs</div>
 
           {selectedRouteIndex !== null && childRoutes[selectedRouteIndex] ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.8rem' }}>
-              <div style={{ background: '#faf5ff', padding: '10px', borderRadius: '8px', border: '1px solid #e9d5ff' }}>
-                <div style={{ fontSize: '0.7rem', color: '#7c3aed', textTransform: 'uppercase', fontWeight: '800' }}>Selected Child Route</div>
-                <div style={{ fontWeight: '800', fontSize: '1rem', color: '#581c87', marginTop: '2px' }}>
-                  {childRoutes[selectedRouteIndex].routeName} ({childRoutes[selectedRouteIndex].routeCode})
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="task-node">
+                <div className="vendor-section-title">Selected route</div>
+                <div style={{ fontWeight: 650 }}>
+                  {childRoutes[selectedRouteIndex].routeName} · {display(childRoutes[selectedRouteIndex].routeCode)}
                 </div>
-                <div style={{ fontSize: '0.72rem', color: '#7c3aed', marginTop: '2px', fontWeight: '600' }}>
-                  Topology: {childRoutes[selectedRouteIndex].topologyType || 'RING'} • Length: {Number(childRoutes[selectedRouteIndex].lengthKm || 0).toFixed(2)} km
+                <div className="page-subtitle" style={{ marginTop: 2 }}>
+                  {display(childRoutes[selectedRouteIndex].topologyType)} · {formatKm(childRoutes[selectedRouteIndex].lengthKm)}
                 </div>
               </div>
-
               {childRoutes[selectedRouteIndex].currentNode && (
-                <div style={{ background: '#ecfdf5', padding: '10px', borderRadius: '8px', border: '1px solid #a7f3d0' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#047857', textTransform: 'uppercase', fontWeight: '700' }}>Start Node (Current GP)</div>
-                  <div style={{ fontWeight: '700', color: '#065f46', fontSize: '0.9rem', marginTop: '2px' }}>
-                    {childRoutes[selectedRouteIndex].currentNode.name} ({childRoutes[selectedRouteIndex].currentNode.code})
+                <div className="task-node">
+                  <div className="vendor-section-title">Start</div>
+                  <div style={{ fontWeight: 650 }}>
+                    {childRoutes[selectedRouteIndex].currentNode.name} · {display(childRoutes[selectedRouteIndex].currentNode.code)}
                   </div>
-                  <div style={{ fontSize: '0.7rem', color: '#047857', marginTop: '2px', fontFamily: 'monospace' }}>
-                    📍 Lat: {childRoutes[selectedRouteIndex].currentNode.lat}, Lng: {childRoutes[selectedRouteIndex].currentNode.lng}
+                  <div className="page-subtitle" style={{ marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+                    {childRoutes[selectedRouteIndex].currentNode.lat}, {childRoutes[selectedRouteIndex].currentNode.lng}
                   </div>
                 </div>
               )}
-
               {childRoutes[selectedRouteIndex].nextNode && (
-                <div style={{ background: '#fef2f2', padding: '10px', borderRadius: '8px', border: '1px solid #fecaca' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#b91c1c', textTransform: 'uppercase', fontWeight: '700' }}>End Node (Next Target GP)</div>
-                  <div style={{ fontWeight: '700', color: '#991b1b', fontSize: '0.9rem', marginTop: '2px' }}>
-                    {childRoutes[selectedRouteIndex].nextNode.name} ({childRoutes[selectedRouteIndex].nextNode.code})
+                <div className="task-node">
+                  <div className="vendor-section-title">End</div>
+                  <div style={{ fontWeight: 650 }}>
+                    {childRoutes[selectedRouteIndex].nextNode.name} · {display(childRoutes[selectedRouteIndex].nextNode.code)}
                   </div>
-                  <div style={{ fontSize: '0.7rem', color: '#b91c1c', marginTop: '2px', fontFamily: 'monospace' }}>
-                    📍 Lat: {childRoutes[selectedRouteIndex].nextNode.lat}, Lng: {childRoutes[selectedRouteIndex].nextNode.lng}
+                  <div className="page-subtitle" style={{ marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+                    {childRoutes[selectedRouteIndex].nextNode.lat}, {childRoutes[selectedRouteIndex].nextNode.lng}
                   </div>
                 </div>
               )}
             </div>
           ) : routeSnapshot && (routeSnapshot.routeName || currentNode || nextNode) ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.8rem' }}>
-              <div style={{ background: '#f8fafc', padding: '10px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '700' }}>Route Code & Name</div>
-                <div style={{ fontWeight: '700', fontSize: '0.95rem', color: '#1e293b', marginTop: '2px' }}>
-                  {routeSnapshot.routeName || name} ({routeSnapshot.routeCode || code})
-                </div>
-                <div style={{ fontSize: '0.72rem', color: '#7c3aed', marginTop: '2px', fontWeight: '600' }}>
-                  Level: {routeSnapshot.level || 'BLOCK'} • Routes Count: {childRoutes.length}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="task-node">
+                <div className="vendor-section-title">Route</div>
+                <div style={{ fontWeight: 650 }}>{routeSnapshot.routeName || name} · {routeSnapshot.routeCode || code}</div>
+                <div className="page-subtitle" style={{ marginTop: 2 }}>
+                  {display(routeSnapshot.level)} · {childRoutes.length} routes
                 </div>
               </div>
-
               {currentNode && (
-                <div style={{ background: '#ecfdf5', padding: '10px', borderRadius: '8px', border: '1px solid #a7f3d0' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#047857', textTransform: 'uppercase', fontWeight: '700' }}>Start Node (Current GP)</div>
-                  <div style={{ fontWeight: '700', color: '#065f46', fontSize: '0.9rem', marginTop: '2px' }}>
-                    {currentNode.name} ({currentNode.code})
-                  </div>
-                  <div style={{ fontSize: '0.7rem', color: '#047857', marginTop: '2px', fontFamily: 'monospace' }}>
-                    📍 Lat: {currentNode.lat}, Lng: {currentNode.lng}
+                <div className="task-node">
+                  <div className="vendor-section-title">Start</div>
+                  <div style={{ fontWeight: 650 }}>{currentNode.name} · {display(currentNode.code)}</div>
+                  <div className="page-subtitle" style={{ marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+                    {currentNode.lat}, {currentNode.lng}
                   </div>
                 </div>
               )}
-
               {nextNode && (
-                <div style={{ background: '#fef2f2', padding: '10px', borderRadius: '8px', border: '1px solid #fecaca' }}>
-                  <div style={{ fontSize: '0.7rem', color: '#b91c1c', textTransform: 'uppercase', fontWeight: '700' }}>End Node (Next Target GP)</div>
-                  <div style={{ fontWeight: '700', color: '#991b1b', fontSize: '0.9rem', marginTop: '2px' }}>
-                    {nextNode.name} ({nextNode.code})
-                  </div>
-                  <div style={{ fontSize: '0.7rem', color: '#b91c1c', marginTop: '2px', fontFamily: 'monospace' }}>
-                    📍 Lat: {nextNode.lat}, Lng: {nextNode.lng}
+                <div className="task-node">
+                  <div className="vendor-section-title">End</div>
+                  <div style={{ fontWeight: 650 }}>{nextNode.name} · {display(nextNode.code)}</div>
+                  <div className="page-subtitle" style={{ marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+                    {nextNode.lat}, {nextNode.lng}
                   </div>
                 </div>
               )}
             </div>
           ) : (
-            <div style={{ padding: '20px', color: '#64748b', textAlign: 'center', fontSize: '0.82rem' }}>
-              Select a child route from the hierarchy panel to view detailed node specifications.
-            </div>
+            <div className="task-empty">Select a child route to see node specs.</div>
           )}
-        </div>
       </div>
 
       {/* 5. Location & Network Attributes */}
-      <div className="app-card" style={{ padding: '16px' }}>
-        <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <LucideGlobe size={18} color="#0284c7" />
-          <span>Location & Network Attributes</span>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', fontSize: '0.82rem' }}>
-          <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Company & Phase</div>
-            <div style={{ fontWeight: '700', color: '#1e293b', marginTop: '2px' }}>
-              {locCompany}
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#0284c7', marginTop: '2px', fontWeight: '600' }}>
-              Phase: {locPhase}
-            </div>
+      <div className="app-card" style={{ padding: 16 }}>
+        <div className="vendor-section-title">Location</div>
+        <dl className="vendor-dl">
+          <div>
+            <dt>Company</dt>
+            <dd>{display(locCompany)}</dd>
           </div>
-
-          <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>District & Circle</div>
-            <div style={{ fontWeight: '700', color: '#1e293b', marginTop: '2px' }}>
-              {locDistrict}
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: '2px' }}>
-              Circle: {locCircle}
-            </div>
+          <div>
+            <dt>Phase</dt>
+            <dd>{display(locPhase)}</dd>
           </div>
-
-          <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Block & Location Code</div>
-            <div style={{ fontWeight: '700', color: '#1e293b', marginTop: '2px' }}>
-              {locBlock} ({locName})
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: '2px' }}>
-              Code: {locCode}
-            </div>
+          <div>
+            <dt>District</dt>
+            <dd>{display(locDistrict)}</dd>
           </div>
-
-          <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>OLT IP & BA/CMP</div>
-            <div style={{ fontWeight: '700', color: '#0284c7', marginTop: '2px' }}>
-              OLT: {locOltIp}
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#475569', marginTop: '2px' }}>
-              BA: {locBaCmp}
-            </div>
+          <div>
+            <dt>Circle</dt>
+            <dd>{display(locCircle)}</dd>
           </div>
-
-          <div style={{ background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-            <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700', textTransform: 'uppercase' }}>Base GPS Coordinates</div>
-            <div style={{ fontWeight: '700', color: '#0f172a', marginTop: '2px', fontFamily: 'monospace' }}>
-              📍 {locLat}, {locLng}
-            </div>
+          <div>
+            <dt>Block</dt>
+            <dd>{display(locBlock)}{locName ? ` · ${locName}` : ''}</dd>
           </div>
-        </div>
+          <div>
+            <dt>Code</dt>
+            <dd>{display(locCode)}</dd>
+          </div>
+          <div>
+            <dt>OLT</dt>
+            <dd>{display(locOltIp)}</dd>
+          </div>
+          <div>
+            <dt>BA</dt>
+            <dd>{display(locBaCmp)}</dd>
+          </div>
+          <div>
+            <dt>GPS</dt>
+            <dd style={{ fontFamily: 'var(--font-mono)' }}>{display(locLat)}, {display(locLng)}</dd>
+          </div>
+        </dl>
       </div>
 
       {/* 6. Segment Information Table */}
       {segmentSnapshots.length > 0 && (
-        <div className="app-card" style={{ padding: '16px' }}>
-          <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <LucideLayers size={18} color="#059669" />
-            <span>Assigned Ring Segments ({segmentSnapshots.length})</span>
-          </div>
-
-          <div style={{ overflowX: 'auto' }}>
-            <table className="ui-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.8rem' }}>
+        <div className="app-card" style={{ padding: 16 }}>
+          <div className="vendor-section-title">Segments ({segmentSnapshots.length})</div>
+          <div className="table-container">
+            <table className="data-table">
               <thead>
-                <tr style={{ background: '#f8fafc', color: '#475569', borderBottom: '1px solid #e2e8f0' }}>
-                  <th style={{ padding: '8px 12px' }}># Order</th>
-                  <th style={{ padding: '8px 12px' }}>Segment Code</th>
-                  <th style={{ padding: '8px 12px' }}>Segment Name</th>
-                  <th style={{ padding: '8px 12px' }}>Start Node → End Node</th>
-                  <th style={{ padding: '8px 12px' }}>Length (km)</th>
-                  <th style={{ padding: '8px 12px' }}>Status</th>
+                <tr>
+                  <th>#</th>
+                  <th>Code</th>
+                  <th>Name</th>
+                  <th>Start → End</th>
+                  <th>Length</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
                 {segmentSnapshots.map((seg, idx) => (
-                  <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '8px 12px', fontWeight: '700' }}>#{idx + 1}</td>
-                    <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontWeight: '700', color: '#7c3aed' }}>
-                      {seg.segmentCode || `SEG-${idx + 1}`}
-                    </td>
-                    <td style={{ padding: '8px 12px', fontWeight: '600', color: '#1e293b' }}>
-                      {seg.name || seg.segmentName || 'Joint Segment'}
-                    </td>
-                    <td style={{ padding: '8px 12px', color: '#475569' }}>
-                      {seg.startNodeName || 'JC0092'} → {seg.endNodeName || 'JC0111'}
-                    </td>
-                    <td style={{ padding: '8px 12px', fontWeight: '700', color: '#0284c7' }}>
-                      {seg.lengthKm ? Number(seg.lengthKm).toFixed(3) : '1.800'} km
-                    </td>
-                    <td style={{ padding: '8px 12px' }}>
-                      <span style={{ background: '#ecfdf5', color: '#059669', border: '1px solid #a7f3d0', padding: '2px 8px', borderRadius: '10px', fontSize: '0.72rem', fontWeight: '700' }}>
-                        {seg.status || 'ASSIGNED'}
-                      </span>
+                  <tr key={idx}>
+                    <td>{idx + 1}</td>
+                    <td>{display(seg.segmentCode)}</td>
+                    <td>{display(seg.name || seg.segmentName)}</td>
+                    <td>{display(seg.startNodeName)} → {display(seg.endNodeName)}</td>
+                    <td>{seg.lengthKm != null ? formatKm(seg.lengthKm) : '—'}</td>
+                    <td>
+                      <span className={`badge-pill ${statusBadgeClass(seg.status)}`}>{display(seg.status)}</span>
                     </td>
                   </tr>
                 ))}
@@ -1047,236 +942,72 @@ export const TaskDetailPage = () => {
       {/* ================================================== */}
       {/* 7. EXECUTION DETAILS SECTION (REAL BACKEND DATA)   */}
       {/* ================================================== */}
-      <div className="app-card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-        {/* Section Header & Date Filter Controls */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+      <div className="app-card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div>
-            <div style={{ fontSize: '1.1rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <LucideActivity size={22} color="#059669" />
-              <span>Execution Details & Live Field Logs</span>
-            </div>
-            <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '2px' }}>
-              Real execution status, pits, trenches, depth captures, photos, and videos from backend field records
-            </div>
+            <div className="vendor-section-title" style={{ marginBottom: 0 }}>Execution</div>
+            <div className="page-subtitle">Pits, trenches, depth, and field media</div>
           </div>
-
-          {/* Date Selector Filter */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f8fafc', border: '1px solid #cbd5e1', padding: '4px 10px', borderRadius: '8px', fontSize: '0.8rem' }}>
-              <LucideCalendar size={15} color="#0284c7" />
-              <span style={{ fontWeight: '600', color: '#475569' }}>Execution Date:</span>
-              <select
-                value={selectedDate}
-                onChange={(e) => handleDateChange(e.target.value)}
-                style={{ background: 'transparent', border: 'none', fontWeight: '700', color: '#0f172a', cursor: 'pointer', outline: 'none', fontSize: '0.8rem' }}
-              >
-                <option value="ALL">All Dates ({availableDates.length} recorded)</option>
-                {availableDates.map(d => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
-              </select>
-            </div>
+          <div style={{ minWidth: 220 }}>
+            <SearchableSelect value={selectedDate} onChange={(e) => handleDateChange(e.target.value)}>
+              <option value="ALL">All dates ({availableDates.length})</option>
+              {availableDates.map((d) => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </SearchableSelect>
           </div>
         </div>
 
-        {/* EXECUTION STATUS CARDS GRID */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
-
-          {/* Trenching Card */}
-          <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', padding: '14px', borderRadius: '10px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.7rem', color: '#166534', fontWeight: '800', textTransform: 'uppercase' }}>Trenching</span>
-              <span style={{ background: '#dcfce7', color: '#15803d', fontSize: '0.68rem', fontWeight: '800', padding: '2px 6px', borderRadius: '6px' }}>
-                {activeShots.length > 0 ? 'COMPLETED' : 'PENDING'}
-              </span>
-            </div>
-            <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#15803d', marginTop: '6px' }}>
-              {executionData?.statistics?.totalShots ?? activeShots.length} Trenches
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#166534', marginTop: '2px', fontWeight: '600' }}>
-              Length: {executionData?.statistics?.formattedDistance || '0 m'}
-            </div>
+        <div className="kpi-strip kpi-strip-6">
+          <div className="kpi-cell kpi-cell-static">
+            <div className="kpi-label">Trenches</div>
+            <div className="kpi-value">{executionData?.statistics?.totalShots ?? activeShots.length}</div>
+            <div className="kpi-sub">{executionData?.statistics?.formattedDistance || '0 m'}</div>
           </div>
-
-          {/* Pits Card */}
-          <div style={{ background: '#fffbeb', border: '1px solid #fde68a', padding: '14px', borderRadius: '10px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.7rem', color: '#92400e', fontWeight: '800', textTransform: 'uppercase' }}>Pits</span>
-              <span style={{ background: '#fef3c7', color: '#b45309', fontSize: '0.68rem', fontWeight: '800', padding: '2px 6px', borderRadius: '6px' }}>
-                {activePits.length > 0 ? 'COMPLETED' : 'PENDING'}
-              </span>
-            </div>
-            <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#b45309', marginTop: '6px' }}>
-              {executionData?.statistics?.totalPits ?? activePits.length} Pits
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#92400e', marginTop: '2px', fontWeight: '600' }}>
-              Start & End Coupling Pits
-            </div>
+          <div className="kpi-cell kpi-cell-static">
+            <div className="kpi-label">Pits</div>
+            <div className="kpi-value">{executionData?.statistics?.totalPits ?? activePits.length}</div>
+            <div className="kpi-sub">{activePits.length > 0 ? 'Recorded' : 'None'}</div>
           </div>
-
-          {/* Depth Captures Card */}
-          <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', padding: '14px', borderRadius: '10px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.7rem', color: '#075985', fontWeight: '800', textTransform: 'uppercase' }}>Depth Measurements</span>
-              <span style={{ background: '#e0f2fe', color: '#0369a1', fontSize: '0.68rem', fontWeight: '800', padding: '2px 6px', borderRadius: '6px' }}>
-                {activeDepthPoints.length > 0 ? 'COMPLETED' : 'PENDING'}
-              </span>
-            </div>
-            <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0284c7', marginTop: '6px' }}>
-              {executionData?.statistics?.totalDepthReadings ?? activeDepthPoints.length} Points
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#075985', marginTop: '2px', fontWeight: '600' }}>
-              Range: {executionData?.statistics?.depthRange || 'N/A'}
-            </div>
+          <div className="kpi-cell kpi-cell-static">
+            <div className="kpi-label">Depth points</div>
+            <div className="kpi-value">{executionData?.statistics?.totalDepthReadings ?? activeDepthPoints.length}</div>
+            <div className="kpi-sub">{display(executionData?.statistics?.depthRange)}</div>
           </div>
-
-          {/* Ducting Card */}
-          <div style={{ background: '#faf5ff', border: '1px solid #e9d5ff', padding: '14px', borderRadius: '10px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.7rem', color: '#6b21a8', fontWeight: '800', textTransform: 'uppercase' }}>Ducting</span>
-              <span style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: '0.68rem', fontWeight: '800', padding: '2px 6px', borderRadius: '6px' }}>
-                RUNNING
-              </span>
-            </div>
-            <div style={{ fontSize: '1.1rem', fontWeight: '800', color: '#7c3aed', marginTop: '6px' }}>
-              {activeShots.length > 0 ? `${activeShots.length} Shots Ducting` : '1 Shot Awaiting Ducting'}
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#6b21a8', marginTop: '2px', fontWeight: '600' }}>
-              HDPE Duct Laying
-            </div>
+          <div className="kpi-cell kpi-cell-static">
+            <div className="kpi-label">Ducting</div>
+            <div className="kpi-value">{activeShots.length}</div>
+            <div className="kpi-sub">{activeShots.length > 0 ? 'Shots' : 'None'}</div>
           </div>
-
-          {/* Photos Card */}
-          <div style={{ background: '#fdf2f8', border: '1px solid #fbcfe8', padding: '14px', borderRadius: '10px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.7rem', color: '#9d174d', fontWeight: '800', textTransform: 'uppercase' }}>Photos</span>
-              <span style={{ background: '#fce7f3', color: '#be185d', fontSize: '0.68rem', fontWeight: '800', padding: '2px 6px', borderRadius: '6px' }}>
-                Available
-              </span>
-            </div>
-            <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#be185d', marginTop: '6px' }}>
-              {totalPhotos} Photos
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#9d174d', marginTop: '2px', fontWeight: '600' }}>
-              Trench, Pit & Depth Captures
-            </div>
+          <div className="kpi-cell kpi-cell-static">
+            <div className="kpi-label">Photos</div>
+            <div className="kpi-value">{totalPhotos}</div>
+            <div className="kpi-sub">Field captures</div>
           </div>
-
-          {/* Video Card */}
-          <div style={{ background: '#fff7ed', border: '1px solid #ffedd5', padding: '14px', borderRadius: '10px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '0.7rem', color: '#9a3412', fontWeight: '800', textTransform: 'uppercase' }}>Video</span>
-              <span style={{ background: '#ffedd5', color: '#c2410c', fontSize: '0.68rem', fontWeight: '800', padding: '2px 6px', borderRadius: '6px' }}>
-                {totalVideos > 0 ? 'Available' : 'N/A'}
-              </span>
-            </div>
-            <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#c2410c', marginTop: '6px' }}>
-              {totalVideos} Videos
-            </div>
-            <div style={{ fontSize: '0.72rem', color: '#9a3412', marginTop: '2px', fontWeight: '600' }}>
-              Pit-to-Pit Video Recording
-            </div>
+          <div className="kpi-cell kpi-cell-static">
+            <div className="kpi-label">Videos</div>
+            <div className="kpi-value">{totalVideos}</div>
+            <div className="kpi-sub">Pit to pit</div>
           </div>
-
         </div>
 
-        {/* EXECUTION TAB NAVIGATION */}
-        <div style={{ display: 'flex', gap: '8px', borderBottom: '2px solid #e2e8f0', paddingBottom: '2px', flexWrap: 'wrap' }}>
-          <button
-            onClick={() => setActiveExecutionTab('trenches')}
-            style={{
-              padding: '8px 16px',
-              border: 'none',
-              background: 'none',
-              borderBottom: activeExecutionTab === 'trenches' ? '3px solid #059669' : '3px solid transparent',
-              color: activeExecutionTab === 'trenches' ? '#059669' : '#64748b',
-              fontWeight: '800',
-              fontSize: '0.85rem',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <LucideWrench size={16} /> Trenches ({activeShots.length})
-          </button>
-
-          <button
-            onClick={() => setActiveExecutionTab('pits')}
-            style={{
-              padding: '8px 16px',
-              border: 'none',
-              background: 'none',
-              borderBottom: activeExecutionTab === 'pits' ? '3px solid #059669' : '3px solid transparent',
-              color: activeExecutionTab === 'pits' ? '#059669' : '#64748b',
-              fontWeight: '800',
-              fontSize: '0.85rem',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <LucideMapPin size={16} /> Pits ({activePits.length})
-          </button>
-
-          <button
-            onClick={() => setActiveExecutionTab('depth')}
-            style={{
-              padding: '8px 16px',
-              border: 'none',
-              background: 'none',
-              borderBottom: activeExecutionTab === 'depth' ? '3px solid #059669' : '3px solid transparent',
-              color: activeExecutionTab === 'depth' ? '#059669' : '#64748b',
-              fontWeight: '800',
-              fontSize: '0.85rem',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <LucideRuler size={16} /> Depth Captures ({activeDepthPoints.length})
-          </button>
-
-          <button
-            onClick={() => setActiveExecutionTab('telemetry')}
-            style={{
-              padding: '8px 16px',
-              border: 'none',
-              background: 'none',
-              borderBottom: activeExecutionTab === 'telemetry' ? '3px solid #059669' : '3px solid transparent',
-              color: activeExecutionTab === 'telemetry' ? '#059669' : '#64748b',
-              fontWeight: '800',
-              fontSize: '0.85rem',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <LucideTruck size={16} /> Telemetry & Machine Specs
-          </button>
-
-          <button
-            onClick={() => setActiveExecutionTab('media')}
-            style={{
-              padding: '8px 16px',
-              border: 'none',
-              background: 'none',
-              borderBottom: activeExecutionTab === 'media' ? '3px solid #059669' : '3px solid transparent',
-              color: activeExecutionTab === 'media' ? '#059669' : '#64748b',
-              fontWeight: '800',
-              fontSize: '0.85rem',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <LucideCamera size={16} /> All Media Gallery ({allMediaList.length})
-          </button>
+        <div className="tab-bar" style={{ flexWrap: 'wrap' }}>
+          {[
+            ['trenches', `Trenches (${activeShots.length})`],
+            ['pits', `Pits (${activePits.length})`],
+            ['depth', `Depth (${activeDepthPoints.length})`],
+            ['telemetry', 'Telemetry'],
+            ['media', `Media (${allMediaList.length})`],
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={`tab-item${activeExecutionTab === key ? ' active' : ''}`}
+              onClick={() => setActiveExecutionTab(key)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         {/* TAB CONTENTS */}
@@ -1293,141 +1024,74 @@ export const TaskDetailPage = () => {
                 const dps = trench.depthReadings || [];
 
                 return (
-                  <div
-                    key={sIdx}
-                    style={{
-                      background: '#ffffff',
-                      border: '1px solid #cbd5e1',
-                      borderRadius: '12px',
-                      padding: '16px',
-                      boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '12px'
-                    }}
-                  >
-                    {/* Trench Header */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span style={{ background: '#059669', color: '#ffffff', padding: '4px 10px', borderRadius: '6px', fontWeight: '800', fontSize: '0.82rem' }}>
-                          Trench {sIdx + 1}
-                        </span>
-                        <div>
-                          <div style={{ fontWeight: '800', fontSize: '1rem', color: '#0f172a' }}>
-                            {startPitName} → {endPitName}
-                          </div>
-                          <div style={{ fontSize: '0.73rem', color: '#64748b', marginTop: '1px' }}>
-                            Serial No: <strong>{trench.serialNo}</strong> | Cable: <strong>{trench.cableType}</strong> | Strata: <strong>{trench.strataType}</strong>
-                          </div>
+                  <div key={sIdx} className="vendor-section" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+                      <div>
+                        <div style={{ fontWeight: 650 }}>Trench {sIdx + 1} · {startPitName} → {endPitName}</div>
+                        <div className="page-subtitle" style={{ marginTop: 2 }}>
+                          {display(trench.serialNo)} · {display(trench.cableType)} · {display(trench.strataType)}
                         </div>
                       </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontWeight: '800', fontSize: '1.15rem', color: '#0284c7' }}>
-                            {trench.formattedLength || `${trench.lengthMeters} m`}
-                          </div>
-                          <div style={{ fontSize: '0.7rem', color: '#059669', fontWeight: '700' }}>
-                            Avg Depth: {trench.depth} m ({dps.length} pts)
-                          </div>
-                        </div>
-
-                        <span style={{ background: '#ecfdf5', color: '#059669', border: '1px solid #a7f3d0', padding: '4px 10px', borderRadius: '8px', fontSize: '0.75rem', fontWeight: '700' }}>
-                          Completed
-                        </span>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 650 }}>{trench.formattedLength || (trench.lengthMeters != null ? `${trench.lengthMeters} m` : '—')}</div>
+                        <div className="page-subtitle">{trench.depth != null ? `Avg ${trench.depth} m` : '—'} · {dps.length} pts</div>
                       </div>
                     </div>
 
-                    {/* Pit to Pit Video (if available) */}
                     {videoMedia && (
-                      <div style={{ background: '#090d16', padding: '12px', borderRadius: '10px', marginTop: '4px' }}>
-                        <div style={{ fontSize: '0.75rem', color: '#38bdf8', fontWeight: '700', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <LucideVideo size={16} color="#38bdf8" />
-                          <span>Pit-to-Pit Video Recording ({startPitName} → {endPitName})</span>
-                        </div>
-                        <video
-                          controls
-                          src={formatImageUrl(videoMedia.photoUrl || videoMedia.url)}
-                          style={{ width: '100%', maxHeight: '320px', borderRadius: '8px', objectFit: 'contain', background: '#000000' }}
-                        >
-                          Your browser does not support HTML5 video player.
-                        </video>
-                      </div>
+                      <button
+                        type="button"
+                        className="task-video-tile"
+                        onClick={() => openLightbox([videoMedia], 0)}
+                      >
+                        <LucidePlay size={28} />
+                        <strong>Play trench video</strong>
+                        <span>{startPitName} → {endPitName}</span>
+                      </button>
                     )}
 
-                    {/* Trench Start Photo */}
                     {photoMedia.length > 0 && (
                       <div>
-                        <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '700', marginBottom: '6px' }}>
-                          📷 Trench Execution Photos ({photoMedia.length})
-                        </div>
-                        <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
-                          {photoMedia.map((ph, pIdx) => (
-                            <div key={pIdx} style={{ position: 'relative' }}>
-                              <img
-                                src={formatImageUrl(ph.photoUrl || ph.url)}
-                                alt={ph.label || `Trench ${sIdx + 1} Photo`}
-                                onClick={() => openLightbox(photoMedia, pIdx)}
-                                style={{ width: '80px', height: '80px', borderRadius: '8px', objectFit: 'cover', border: '1px solid #cbd5e1', cursor: 'pointer' }}
-                                onError={(e) => { e.target.style.display = 'none'; }}
-                              />
-                            </div>
+                        <div className="page-subtitle" style={{ marginBottom: 6 }}>Photos ({photoMedia.length})</div>
+                        <div className="task-media-thumbs">
+                          {photoMedia.slice(0, 4).map((ph, pIdx) => (
+                            <img
+                              key={pIdx}
+                              src={formatImageUrl(ph.photoUrl || ph.url)}
+                              alt={ph.label || `Trench ${sIdx + 1} Photo`}
+                              onClick={() => openLightbox(photoMedia, pIdx)}
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
                           ))}
+                          {photoMedia.length > 4 && (
+                            <button type="button" className="task-media-more" onClick={() => openLightbox(photoMedia, 4)}>
+                              +{photoMedia.length - 4}
+                            </button>
+                          )}
                         </div>
                       </div>
                     )}
 
-                    {/* Trench Depth Captures Table */}
                     {dps.length > 0 && (
-                      <div style={{ marginTop: '6px' }}>
-                        <div style={{ fontSize: '0.78rem', fontWeight: '700', color: '#334155', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <LucideRuler size={14} color="#059669" />
-                          <span>Depth Captures in Trench {sIdx + 1} ({dps.length} Points Recorded)</span>
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                          <div className="page-subtitle">{dps.length} depth points</div>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => setDepthModal({ title: `Trench ${sIdx + 1} depth captures`, points: dps })}
+                          >
+                            View all
+                          </button>
                         </div>
-                        <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
-                          <table className="ui-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.73rem' }}>
-                            <thead>
-                              <tr style={{ background: '#f8fafc', color: '#475569', borderBottom: '1px solid #e2e8f0', position: 'sticky', top: 0, zIndex: 5 }}>
-                                <th style={{ padding: '5px 8px' }}># Point</th>
-                                <th style={{ padding: '5px 8px' }}>Depth (m)</th>
-                                <th style={{ padding: '5px 8px' }}>Temp (°C)</th>
-                                <th style={{ padding: '5px 8px' }}>Road Offset</th>
-                                <th style={{ padding: '5px 8px' }}>Latitude, Longitude</th>
-                                <th style={{ padding: '5px 8px' }}>Photo</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {dps.map((dp, dIdx) => (
-                                <tr key={dIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                  <td style={{ padding: '4px 8px', fontWeight: '700' }}>Point {dp.pointNo || dIdx + 1}</td>
-                                  <td style={{ padding: '4px 8px', fontWeight: '700', color: '#059669' }}>{dp.depth} m</td>
-                                  <td style={{ padding: '4px 8px' }}>{dp.temp ? `${dp.temp}°C` : 'N/A'}</td>
-                                  <td style={{ padding: '4px 8px' }}>{dp.offset ? `${dp.offset} m` : 'N/A'}</td>
-                                  <td style={{ padding: '4px 8px', fontFamily: 'monospace', fontSize: '0.7rem' }}>📍 {dp.lat}, {dp.lng}</td>
-                                  <td style={{ padding: '4px 8px' }}>
-                                    {dp.photos && dp.photos.length > 0 && (
-                                      <button
-                                        onClick={() => openLightbox(dp.photos, 0)}
-                                        style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: '4px', padding: '2px 6px', fontSize: '0.68rem', cursor: 'pointer', fontWeight: '600' }}
-                                      >
-                                        📷 View Photo
-                                      </button>
-                                    )}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
+                        <DepthPointsTable points={dps.slice(0, 3)} onOpenPhoto={openLightbox} />
                       </div>
                     )}
                   </div>
                 );
               })
             ) : (
-              <div style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: '12px', padding: '24px', textAlign: 'center', color: '#64748b' }}>
-                No trenching records available for the selected filter date.
-              </div>
+              <div className="task-empty">No trenches for this date.</div>
             )}
           </div>
         )}
@@ -1442,52 +1106,48 @@ export const TaskDetailPage = () => {
                   const pitPhotos = pit.photos || [];
 
                   return (
-                    <div
-                      key={pIdx}
-                      style={{
-                        background: '#ffffff',
-                        border: '1px solid #cbd5e1',
-                        borderRadius: '10px',
-                        padding: '14px',
-                        boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '8px'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ fontWeight: '800', fontSize: '0.95rem', color: '#b45309' }}>
-                          🚜 {pit.id} ({pit.name})
+                    <div key={pIdx} className="vendor-section" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontWeight: 650 }}>{display(pit.id)}{pit.name ? ` · ${pit.name}` : ''}</div>
+                        <span className="badge-pill badge-neutral">{roleLabel}</span>
+                      </div>
+                      <dl className="vendor-dl">
+                        <div>
+                          <dt>GPS</dt>
+                          <dd style={{ fontFamily: 'var(--font-mono)' }}>{display(pit.lat)}, {display(pit.lng)}</dd>
                         </div>
-                        <span style={{ background: '#ecfdf5', color: '#059669', border: '1px solid #a7f3d0', padding: '2px 8px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: '800' }}>
-                          {roleLabel}
-                        </span>
-                      </div>
-
-                      <div style={{ fontSize: '0.78rem', color: '#334155', lineHeight: 1.5 }}>
-                        Latitude: <strong style={{ fontFamily: 'monospace' }}>{pit.lat}</strong><br />
-                        Longitude: <strong style={{ fontFamily: 'monospace' }}>{pit.lng}</strong><br />
-                        Depth: <strong style={{ color: '#059669' }}>{pit.depth ? `${pit.depth} m` : 'N/A'}</strong> | Width: <strong>{pit.width ? `${pit.width} m` : 'N/A'}</strong><br />
-                        Side: <strong>{pit.side || 'LHS'}</strong> | Type: <strong>{pit.type}</strong><br />
-                        Digging Time: <strong>{pit.diggingTime || 'N/A'}</strong>
-                      </div>
+                        <div>
+                          <dt>Depth / width</dt>
+                          <dd>{pit.depth != null ? `${pit.depth} m` : '—'} · {pit.width != null ? `${pit.width} m` : '—'}</dd>
+                        </div>
+                        <div>
+                          <dt>Type</dt>
+                          <dd>{display(pit.type)}{pit.side ? ` · ${pit.side}` : ''}</dd>
+                        </div>
+                        <div>
+                          <dt>Digging</dt>
+                          <dd>{display(pit.diggingTime)}</dd>
+                        </div>
+                      </dl>
 
                       {pitPhotos.length > 0 && (
                         <div style={{ marginTop: '4px' }}>
-                          <div style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700', marginBottom: '4px' }}>
-                            📷 Pit Photos ({pitPhotos.length})
-                          </div>
-                          <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
-                            {pitPhotos.map((ph, phIdx) => (
+                          <div className="page-subtitle" style={{ marginBottom: 4 }}>Photos ({pitPhotos.length})</div>
+                          <div className="task-media-thumbs">
+                            {pitPhotos.slice(0, 4).map((ph, phIdx) => (
                               <img
                                 key={phIdx}
                                 src={formatImageUrl(ph.photoUrl || ph.url)}
                                 alt={ph.label || `Pit Photo ${phIdx + 1}`}
                                 onClick={() => openLightbox(pitPhotos, phIdx)}
-                                style={{ width: '56px', height: '56px', borderRadius: '6px', objectFit: 'cover', border: '1px solid #cbd5e1', cursor: 'pointer', flexShrink: 0 }}
                                 onError={(e) => { e.target.style.display = 'none'; }}
                               />
                             ))}
+                            {pitPhotos.length > 4 && (
+                              <button type="button" className="task-media-more" onClick={() => openLightbox(pitPhotos, 4)}>
+                                +{pitPhotos.length - 4}
+                              </button>
+                            )}
                           </div>
                         </div>
                       )}
@@ -1496,9 +1156,7 @@ export const TaskDetailPage = () => {
                 })}
               </div>
             ) : (
-              <div style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: '12px', padding: '24px', textAlign: 'center', color: '#64748b' }}>
-                No pit records available for the selected date.
-              </div>
+              <div className="task-empty">No pits for this date.</div>
             )}
           </div>
         )}
@@ -1506,63 +1164,34 @@ export const TaskDetailPage = () => {
         {/* TAB 3: COMPLETE DEPTH CAPTURES LOG */}
         {activeExecutionTab === 'depth' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ background: '#f0f9ff', padding: '12px 16px', borderRadius: '10px', border: '1px solid #bae6fd', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-              <div>
-                <div style={{ fontSize: '0.75rem', color: '#0369a1', fontWeight: '800', textTransform: 'uppercase' }}>Depth Capture Summary</div>
-                <div style={{ fontWeight: '800', fontSize: '1.1rem', color: '#0284c7', marginTop: '2px' }}>
-                  {activeDepthPoints.length} Recorded Depth Points
+            <div className="vendor-section">
+              <dl className="vendor-dl">
+                <div>
+                  <dt>Points</dt>
+                  <dd>{activeDepthPoints.length}</dd>
                 </div>
-              </div>
-              <div>
-                <div style={{ fontSize: '0.75rem', color: '#0369a1', fontWeight: '800', textTransform: 'uppercase' }}>Minimum – Maximum Range</div>
-                <div style={{ fontWeight: '800', fontSize: '1.1rem', color: '#059669', marginTop: '2px' }}>
-                  {executionData?.statistics?.depthRange || 'N/A'}
+                <div>
+                  <dt>Range</dt>
+                  <dd>{display(executionData?.statistics?.depthRange)}</dd>
                 </div>
-              </div>
+              </dl>
             </div>
 
             {activeDepthPoints.length > 0 ? (
-              <div style={{ maxHeight: '420px', overflowY: 'auto', border: '1px solid #cbd5e1', borderRadius: '10px' }}>
-                <table className="ui-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.78rem' }}>
-                  <thead>
-                    <tr style={{ background: '#f8fafc', color: '#475569', borderBottom: '1px solid #e2e8f0', position: 'sticky', top: 0, zIndex: 5 }}>
-                      <th style={{ padding: '8px 12px' }}># Point</th>
-                      <th style={{ padding: '8px 12px' }}>Depth (m)</th>
-                      <th style={{ padding: '8px 12px' }}>Temp (°C)</th>
-                      <th style={{ padding: '8px 12px' }}>Road Offset (m)</th>
-                      <th style={{ padding: '8px 12px' }}>Exact GPS Coordinates</th>
-                      <th style={{ padding: '8px 12px' }}>Capture Date/Time</th>
-                      <th style={{ padding: '8px 12px' }}>Photo</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeDepthPoints.map((dp, idx) => (
-                      <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                        <td style={{ padding: '7px 12px', fontWeight: '700' }}>Point {dp.pointNo || idx + 1}</td>
-                        <td style={{ padding: '7px 12px', fontWeight: '800', color: '#059669' }}>{dp.depth} m</td>
-                        <td style={{ padding: '7px 12px' }}>{dp.temp ? `${dp.temp}°C` : 'N/A'}</td>
-                        <td style={{ padding: '7px 12px' }}>{dp.offset ? `${dp.offset} m` : 'N/A'}</td>
-                        <td style={{ padding: '7px 12px', fontFamily: 'monospace', color: '#0284c7' }}>📍 {dp.lat}, {dp.lng}</td>
-                        <td style={{ padding: '7px 12px', color: '#64748b' }}>{dp.capturedAt || 'N/A'}</td>
-                        <td style={{ padding: '7px 12px' }}>
-                          {dp.photos && dp.photos.length > 0 && (
-                            <button
-                              onClick={() => openLightbox(dp.photos, 0)}
-                              style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: '4px', padding: '3px 8px', fontSize: '0.7rem', cursor: 'pointer', fontWeight: '600' }}
-                            >
-                              📷 View Photo
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setDepthModal({ title: 'All depth captures', points: activeDepthPoints })}
+                  >
+                    View all {activeDepthPoints.length} points
+                  </button>
+                </div>
+                <DepthPointsTable points={activeDepthPoints.slice(0, 8)} onOpenPhoto={openLightbox} />
               </div>
             ) : (
-              <div style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: '12px', padding: '24px', textAlign: 'center', color: '#64748b' }}>
-                No depth capture points recorded for the selected date.
-              </div>
+              <div className="task-empty">No depth points for this date.</div>
             )}
           </div>
         )}
@@ -1571,110 +1200,116 @@ export const TaskDetailPage = () => {
         {activeExecutionTab === 'telemetry' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {(machineDetails || operatorDetails || locatorDetails) ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px', background: '#f8fafc', padding: '16px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '0.82rem' }}>
-                {machineDetails && (
-                  <div>
-                    <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Machine & Rig Details</div>
-                    <div style={{ fontWeight: '800', color: '#0f172a', marginTop: '3px', fontSize: '0.95rem' }}>
-                      Machine ID: {machineDetails.machineId}
-                    </div>
-                    <div style={{ fontSize: '0.75rem', color: '#475569', marginTop: '2px' }}>
-                      Vendor: <strong>{machineDetails.vendorName || vendorName}</strong><br />
-                      Cable: <strong>{machineDetails.cableType || '24F OFC'}</strong><br />
-                      RoW: <strong>{machineDetails.rowArea || 'Village Road'}</strong>
-                    </div>
-                    {machineDetails.machineImage?.photoUrl && (
-                      <button
-                        onClick={() => openLightbox([machineDetails.machineImage], 0)}
-                        style={{ marginTop: '8px', fontSize: '0.75rem', color: '#0284c7', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', fontWeight: '700' }}
-                      >
-                        📷 View Machine Photo
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {operatorDetails && (
-                  <div>
-                    <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>HDD Operator</div>
-                    <div style={{ fontWeight: '800', color: '#0f172a', marginTop: '3px', fontSize: '0.95rem' }}>
-                      {operatorDetails.name}
-                    </div>
-                    <div style={{ fontSize: '0.75rem', color: '#475569', marginTop: '2px' }}>
-                      Mobile: <strong>{operatorDetails.mobileNumber}</strong>
-                    </div>
-                    {operatorDetails.operatorPhoto?.photoUrl && (
-                      <button
-                        onClick={() => openLightbox([operatorDetails.operatorPhoto], 0)}
-                        style={{ marginTop: '8px', fontSize: '0.75rem', color: '#0284c7', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', fontWeight: '700' }}
-                      >
-                        📷 View Operator Selfie
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {locatorDetails && (
-                  <div>
-                    <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '800', textTransform: 'uppercase' }}>Locator Pilot</div>
-                    <div style={{ fontWeight: '800', color: '#0f172a', marginTop: '3px', fontSize: '0.95rem' }}>
-                      {locatorDetails.name}
-                    </div>
-                    <div style={{ fontSize: '0.75rem', color: '#475569', marginTop: '2px' }}>
-                      Mobile: <strong>{locatorDetails.mobileNumber}</strong>
-                    </div>
-                    {locatorDetails.photo?.photoUrl && (
-                      <button
-                        onClick={() => openLightbox([locatorDetails.photo], 0)}
-                        style={{ marginTop: '8px', fontSize: '0.75rem', color: '#0284c7', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline', fontWeight: '700' }}
-                      >
-                        📷 View Locator Selfie
-                      </button>
-                    )}
-                  </div>
-                )}
+              <div className="vendor-section">
+                <dl className="vendor-dl">
+                  {machineDetails && (
+                    <>
+                      <div>
+                        <dt>Machine</dt>
+                        <dd>{display(machineDetails.machineId)}</dd>
+                      </div>
+                      <div>
+                        <dt>Vendor</dt>
+                        <dd>{display(machineDetails.vendorName || vendorName)}</dd>
+                      </div>
+                      <div>
+                        <dt>Cable</dt>
+                        <dd>{display(machineDetails.cableType)}</dd>
+                      </div>
+                      <div>
+                        <dt>RoW</dt>
+                        <dd>{display(machineDetails.rowArea)}</dd>
+                      </div>
+                      {machineDetails.machineImage?.photoUrl && (
+                        <div>
+                          <dt>Photo</dt>
+                          <dd>
+                            <button type="button" className="btn-ghost" onClick={() => openLightbox([machineDetails.machineImage], 0)}>
+                              View machine
+                            </button>
+                          </dd>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {operatorDetails && (
+                    <>
+                      <div>
+                        <dt>Operator</dt>
+                        <dd>{display(operatorDetails.name)}</dd>
+                      </div>
+                      <div>
+                        <dt>Operator mobile</dt>
+                        <dd>{display(operatorDetails.mobileNumber)}</dd>
+                      </div>
+                      {operatorDetails.operatorPhoto?.photoUrl && (
+                        <div>
+                          <dt>Photo</dt>
+                          <dd>
+                            <button type="button" className="btn-ghost" onClick={() => openLightbox([operatorDetails.operatorPhoto], 0)}>
+                              View operator
+                            </button>
+                          </dd>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {locatorDetails && (
+                    <>
+                      <div>
+                        <dt>Locator</dt>
+                        <dd>{display(locatorDetails.name)}</dd>
+                      </div>
+                      <div>
+                        <dt>Locator mobile</dt>
+                        <dd>{display(locatorDetails.mobileNumber)}</dd>
+                      </div>
+                      {locatorDetails.photo?.photoUrl && (
+                        <div>
+                          <dt>Photo</dt>
+                          <dd>
+                            <button type="button" className="btn-ghost" onClick={() => openLightbox([locatorDetails.photo], 0)}>
+                              View locator
+                            </button>
+                          </dd>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </dl>
               </div>
             ) : null}
 
             {/* OTDR / Fiber Core Survey Trace Table */}
             {fiberHealthTable.length > 0 && (
               <div>
-                <div style={{ fontSize: '0.9rem', fontWeight: '800', color: '#0f172a', marginBottom: '8px' }}>
-                  📊 OTDR Core Health & Fiber Loss Table ({fiberHealthTable.length} Cores)
-                </div>
-                <div style={{ overflowX: 'auto', border: '1px solid #cbd5e1', borderRadius: '8px' }}>
-                  <table className="ui-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.78rem' }}>
+                <div className="vendor-section-title">OTDR cores ({fiberHealthTable.length})</div>
+                <div className="table-container">
+                  <table className="data-table">
                     <thead>
-                      <tr style={{ background: '#f8fafc', color: '#475569', borderBottom: '1px solid #e2e8f0' }}>
-                        <th style={{ padding: '6px 10px' }}>Core #</th>
-                        <th style={{ padding: '6px 10px' }}>Start GP → End Target</th>
-                        <th style={{ padding: '6px 10px' }}>Status</th>
-                        <th style={{ padding: '6px 10px' }}>OTDR Length (m)</th>
-                        <th style={{ padding: '6px 10px' }}>Avg Loss (dB)</th>
-                        <th style={{ padding: '6px 10px' }}>Events</th>
-                        <th style={{ padding: '6px 10px' }}>OTDR Trace Photo</th>
+                      <tr>
+                        <th>Core</th>
+                        <th>Start → End</th>
+                        <th>Status</th>
+                        <th>Length</th>
+                        <th>Loss</th>
+                        <th>Events</th>
+                        <th></th>
                       </tr>
                     </thead>
                     <tbody>
                       {fiberHealthTable.map((fh, fIdx) => (
-                        <tr key={fIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                          <td style={{ padding: '6px 10px', fontWeight: '800', color: '#7c3aed' }}>Core {fh.fiberCoreNo || fIdx + 1}</td>
-                          <td style={{ padding: '6px 10px' }}>{fh.startGpName} → {fh.endBlockAndGpName}</td>
-                          <td style={{ padding: '6px 10px' }}>
-                            <span style={{ background: fh.status === 'HEALTHY' ? '#ecfdf5' : '#fef2f2', color: fh.status === 'HEALTHY' ? '#059669' : '#dc2626', padding: '2px 8px', borderRadius: '6px', fontWeight: '700' }}>
-                              {fh.status}
-                            </span>
-                          </td>
-                          <td style={{ padding: '6px 10px', fontWeight: '700', color: '#0284c7' }}>{fh.otdrLengthMtr} m</td>
-                          <td style={{ padding: '6px 10px' }}>{fh.avgLossDb} dB</td>
-                          <td style={{ padding: '6px 10px' }}>{fh.noOfEvents}</td>
-                          <td style={{ padding: '6px 10px' }}>
+                        <tr key={fIdx}>
+                          <td>Core {fh.fiberCoreNo || fIdx + 1}</td>
+                          <td>{display(fh.startGpName)} → {display(fh.endBlockAndGpName)}</td>
+                          <td><span className={`badge-pill ${statusBadgeClass(fh.status)}`}>{display(fh.status)}</span></td>
+                          <td>{fh.otdrLengthMtr != null ? `${fh.otdrLengthMtr} m` : '—'}</td>
+                          <td>{fh.avgLossDb != null ? `${fh.avgLossDb} dB` : '—'}</td>
+                          <td>{display(fh.noOfEvents)}</td>
+                          <td>
                             {fh.otdrScreenPhoto?.photoUrl && (
-                              <button
-                                onClick={() => openLightbox([fh.otdrScreenPhoto], 0)}
-                                style={{ background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: '4px', padding: '2px 8px', fontSize: '0.72rem', cursor: 'pointer', fontWeight: '600' }}
-                              >
-                                📷 View Trace Photo
+                              <button type="button" className="btn-ghost" onClick={() => openLightbox([fh.otdrScreenPhoto], 0)}>
+                                Trace
                               </button>
                             )}
                           </td>
@@ -1727,9 +1362,7 @@ export const TaskDetailPage = () => {
                 ))}
               </div>
             ) : (
-              <div style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: '12px', padding: '24px', textAlign: 'center', color: '#64748b' }}>
-                No execution photos or videos recorded.
-              </div>
+              <div className="task-empty">No photos or videos recorded.</div>
             )}
           </div>
         )}
@@ -1737,23 +1370,28 @@ export const TaskDetailPage = () => {
       </div>
 
       {/* 8. Approval Chain & Audit Log */}
-      <div className="app-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <LucideShieldCheck size={18} color="#059669" />
-          <span>Approval Chain & Audit Log</span>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', fontSize: '0.78rem', color: '#475569' }}>
-          <div>Created At: <strong>{task.createdAt ? new Date(task.createdAt).toLocaleString() : 'N/A'}</strong></div>
-          <div>Updated At: <strong>{task.updatedAt ? new Date(task.updatedAt).toLocaleString() : 'N/A'}</strong></div>
-          <div>Submitted At: <strong>{task.submittedAt ? new Date(task.submittedAt).toLocaleString() : 'N/A'}</strong></div>
-          <div>Completed At: <strong>{task.completedAt ? new Date(task.completedAt).toLocaleString() : 'N/A'}</strong></div>
-        </div>
-
-        {task.rejectionReason && (
-          <div style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '10px', borderRadius: '8px', fontSize: '0.8rem' }}>
-            Rejection Reason: {task.rejectionReason}
+      <div className="app-card" style={{ padding: 16 }}>
+        <div className="vendor-section-title">Audit</div>
+        <dl className="vendor-dl">
+          <div>
+            <dt>Created</dt>
+            <dd>{task.createdAt ? new Date(task.createdAt).toLocaleString() : '—'}</dd>
           </div>
+          <div>
+            <dt>Updated</dt>
+            <dd>{task.updatedAt ? new Date(task.updatedAt).toLocaleString() : '—'}</dd>
+          </div>
+          <div>
+            <dt>Submitted</dt>
+            <dd>{task.submittedAt ? new Date(task.submittedAt).toLocaleString() : '—'}</dd>
+          </div>
+          <div>
+            <dt>Completed</dt>
+            <dd>{task.completedAt ? new Date(task.completedAt).toLocaleString() : '—'}</dd>
+          </div>
+        </dl>
+        {task.rejectionReason && (
+          <p className="page-subtitle" style={{ marginTop: 12 }}>Rejection: {task.rejectionReason}</p>
         )}
       </div>
 

@@ -44,9 +44,7 @@ export const MachineCard = ({ machine }) => {
       {/* Top Header: Model & Status */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <div style={{ fontSize: '0.68rem', color: '#6ee7b7', background: '#0a2d23', padding: '2px 8px', borderRadius: '4px', display: 'inline-block', fontWeight: '700', letterSpacing: '0.04em' }}>
-            {modelCode}
-          </div>
+          <span className="badge-pill badge-neutral">{modelCode}</span>
           <h3 style={{ fontSize: '1rem', fontWeight: '700', color: '#111827', marginTop: '4px' }}>
             {modelName}
           </h3>

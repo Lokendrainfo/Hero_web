@@ -10,6 +10,9 @@ class FuelCard(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def __str__(self):
+        return f"{self.card_number} ({self.card_holder})"
+
 class FuelLog(models.Model):
     machine = models.ForeignKey(Machine, on_delete=models.CASCADE, related_name='fuel_logs')
     liters = models.DecimalField(max_digits=10, decimal_places=2)
@@ -17,3 +20,6 @@ class FuelLog(models.Model):
     fuel_date = models.DateField()
     remarks = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.machine} — {self.liters} L on {self.fuel_date}"

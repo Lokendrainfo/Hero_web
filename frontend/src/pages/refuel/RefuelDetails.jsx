@@ -23,18 +23,18 @@ export const RefuelDetails = () => {
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
         <span onClick={() => navigate(-1)} style={{ fontSize: '1.4rem', cursor: 'pointer', fontWeight: 'bold' }}>←</span>
-        <h2 style={{ fontSize: '1.25rem', fontFamily: 'Outfit', fontWeight: 'bold' }}>Refuel Details</h2>
+        <h2 style={{ fontSize: '1.25rem', fontFamily: 'inherit', fontWeight: 'bold' }}>Refuel Details</h2>
       </div>
 
       {/* Main Refuel Badge Card */}
-      <div className="app-card" style={{ background: '#0a2d23', color: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px' }}>
+      <div className="app-card" style={{ background: 'var(--bg-subtle)', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px' }}>
         <div>
-          <div style={{ fontSize: '0.85rem', color: '#6ee7b7' }}>{recordDate}</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 'bold', marginTop: '4px', color: '#10b981' }}>
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{recordDate}</div>
+          <div style={{ fontSize: '1.8rem', fontWeight: 'bold', marginTop: '4px', color: 'var(--live)' }}>
             +{detail?.quantity_liters || 40} L
           </div>
         </div>
-        <LucideFileText size={36} color="#10b981" />
+        <LucideFileText size={36} color="var(--live)" />
       </div>
 
       {/* Information Table Card */}

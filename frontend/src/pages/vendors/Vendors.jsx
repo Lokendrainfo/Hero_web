@@ -1,16 +1,33 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { vendorService } from '../../services/vendorService';
 import { useAuth } from '../../hooks/useAuth';
 import { useVendorContext } from '../../context/VendorContext';
 import { NoVendorBanner } from '../../components/common/NoVendorBanner';
-import { LucideBuilding, LucideSearch, LucideRefreshCw, LucideMail, LucidePhone, LucideTruck, LucideUser, LucideFileText, LucideCreditCard, LucideX, LucideChevronLeft, LucideChevronRight, LucideCheckCircle } from 'lucide-react';
-import '../../styles/screens.css';
+import { PageHeader } from '../../components/common/PageHeader';
+import { EmptyState } from '../../components/common/EmptyState';
+import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { LucideRefreshCw, LucideSearch, LucideX } from 'lucide-react';
+
+const display = (value) => {
+  if (value == null) return '—';
+  const text = String(value).trim();
+  return text ? text : '—';
+};
+
+const hasValue = (...values) => values.some((v) => v != null && String(v).trim() !== '');
+
+const Field = ({ label, children }) => (
+  <div>
+    <dt>{label}</dt>
+    <dd>{children}</dd>
+  </div>
+);
 
 export const Vendors = () => {
-  const { user, isAdmin, hasNoVendors, selectedVendorId, vendors: authVendors } = useAuth();
+  const { isAdmin, hasNoVendors, selectedVendorId, vendors: authVendors } = useAuth();
   const { activeVendor, vendorMachines, vendorUsers, loadingVendor, refreshVendor } = useVendorContext();
   const [vendors, setVendors] = useState([]);
-  const [pagination, setPagination] = useState({ page: 0, size: 10, total: 0, total_pages: 1 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedVendor, setSelectedVendor] = useState(null);
@@ -29,7 +46,19 @@ export const Vendors = () => {
       })
     : vendors;
 
-  const fetchVendors = (page = 0, searchQuery = search) => {
+  const filteredVendors = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return displayVendors;
+    return displayVendors.filter((v) => {
+      const hay = [
+        v.partnerName, v.name, v.contactName, v.contact_person,
+        v.email, v.phoneNumber, v.phone, v.legalEntityType,
+      ].map((x) => String(x || '').toLowerCase()).join(' ');
+      return hay.includes(q);
+    });
+  }, [displayVendors, search]);
+
+  const fetchVendors = (searchQuery = search) => {
     if (hasNoVendors) {
       setVendors([]);
       setLoading(false);
@@ -48,13 +77,11 @@ export const Vendors = () => {
         const list = payload.results || payload.content || (Array.isArray(payload) ? payload : (payload.vendors || []));
         if (list.length > 0) {
           setVendors(list);
-          setPagination({ page: 0, size: list.length, total: list.length, total_pages: 1 });
         } else {
           return vendorService.getVendors({ page: 0, size: 100, search: searchQuery }).then(dbRes => {
             const dbPayload = dbRes.data?.data || dbRes.data || {};
             const dbList = dbPayload.results || dbPayload.vendors || (Array.isArray(dbPayload) ? dbPayload : []);
             setVendors(dbList);
-            setPagination({ page: 0, size: dbList.length, total: dbList.length, total_pages: 1 });
           });
         }
       })
@@ -65,238 +92,264 @@ export const Vendors = () => {
   };
 
   useEffect(() => {
-    fetchVendors(0, search);
+    fetchVendors(search);
   }, [hasNoVendors, selectedVendorId]);
 
-  const renderVendorDetailSections = (v) => {
+  const renderVendorDetail = (v, extras = {}) => {
     if (!v) return null;
-    const machinesList = v.machines || v.assigned_machines || vendorMachines || [];
-    const usersList = v.users || vendorUsers || [];
+    const machinesList = v.machines || v.assigned_machines || extras.machines || [];
+    const usersList = v.users || extras.users || [];
     const bank = v.bankAccount || {};
-    const turnOver = v.turnOverList || [];
     const serviceAreas = v.serviceAreas || [];
+    const isActive = v.isActive ?? v.is_active ?? v.active;
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', fontSize: '0.85rem' }}>
-        <div style={{ background: '#f9fafb', padding: '16px', borderRadius: '10px', border: '1px solid #e5e7eb' }}>
-          <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#111827', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.03em', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <LucideBuilding size={16} color="#059669" /> A. Basic Information
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
-            <div><span style={{ color: '#6b7280' }}>Partner Name:</span> <strong style={{ color: '#111827' }}>{v.partnerName || v.name || 'N/A'}</strong></div>
-            <div><span style={{ color: '#6b7280' }}>Contact Name:</span> <strong>{v.contactName || v.contact_person || 'N/A'}</strong></div>
-            <div><span style={{ color: '#6b7280' }}>Designation:</span> <strong>{v.designation || 'Vendor'}</strong></div>
-            <div><span style={{ color: '#6b7280' }}>Legal Entity Type:</span> <strong>{v.legalEntityType || 'COMPANY'}</strong></div>
-            <div><span style={{ color: '#6b7280' }}>Business Unit:</span> <strong>{v.businessUnit || 'PROJECT_WORK'}</strong></div>
-            <div><span style={{ color: '#6b7280' }}>Phone Number:</span> <strong>{v.phoneNumber || v.phone || 'N/A'}</strong></div>
-            <div><span style={{ color: '#6b7280' }}>Email:</span> <strong>{v.email || 'N/A'}</strong></div>
-            <div><span style={{ color: '#6b7280' }}>Active Status:</span> <span style={{ background: '#dcfce7', color: '#166534', padding: '2px 8px', borderRadius: '10px', fontWeight: '700', fontSize: '0.75rem' }}>● ACTIVE</span></div>
-            <div><span style={{ color: '#6b7280' }}>HDD Hero:</span> <strong>{v.hddHero ? 'YES' : 'NO'}</strong></div>
-          </div>
-        </div>
+      <div>
+        <section className="vendor-section">
+          <div className="vendor-section-title">Basic information</div>
+          <dl className="vendor-dl">
+            <Field label="Partner">{display(v.partnerName || v.name)}</Field>
+            {hasValue(v.contactName || v.contact_person) && (
+              <Field label="Contact">{display(v.contactName || v.contact_person)}</Field>
+            )}
+            {hasValue(v.designation) && <Field label="Designation">{display(v.designation)}</Field>}
+            {hasValue(v.legalEntityType) && <Field label="Legal entity">{display(v.legalEntityType)}</Field>}
+            {hasValue(v.businessUnit) && <Field label="Business unit">{display(v.businessUnit)}</Field>}
+            {hasValue(v.phoneNumber || v.phone) && <Field label="Phone">{display(v.phoneNumber || v.phone)}</Field>}
+            {hasValue(v.email) && <Field label="Email">{display(v.email)}</Field>}
+            {isActive != null && (
+              <Field label="Status">
+                <span className={`badge-pill ${isActive ? 'badge-running' : 'badge-neutral'}`}>
+                  {isActive ? 'Active' : 'Inactive'}
+                </span>
+              </Field>
+            )}
+            {v.hddHero != null && <Field label="HDD Hero">{v.hddHero ? 'Yes' : 'No'}</Field>}
+          </dl>
+        </section>
 
-        <div style={{ background: '#ffffff', padding: '16px', borderRadius: '10px', border: '1px solid #e5e7eb' }}>
-          <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#111827', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
-            📍 B. Address Information
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '10px' }}>
-            <div><span style={{ color: '#6b7280' }}>Registered Address:</span> <br/><strong>{v.registeredAddress?.trim() || 'Sujangarh Site'}</strong></div>
-            <div><span style={{ color: '#6b7280' }}>Communication Address:</span> <br/><strong>{v.communicationAddress?.trim() || v.registeredAddress?.trim() || 'Sujangarh Site'}</strong></div>
-            <div><span style={{ color: '#6b7280' }}>PIN Code:</span> <br/><strong>{v.pinCode || '302019'}</strong></div>
-          </div>
-        </div>
+        {hasValue(v.registeredAddress, v.communicationAddress, v.pinCode) && (
+          <section className="vendor-section">
+            <div className="vendor-section-title">Address</div>
+            <dl className="vendor-dl">
+              <Field label="Registered">{display(v.registeredAddress)}</Field>
+              <Field label="Communication">{display(v.communicationAddress || v.registeredAddress)}</Field>
+              <Field label="PIN">{display(v.pinCode)}</Field>
+            </dl>
+          </section>
+        )}
 
-        <div style={{ background: '#faf5ff', padding: '16px', borderRadius: '10px', border: '1px solid #e9d5ff' }}>
-          <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#6b21a8', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.03em', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <LucideCreditCard size={16} color="#9333ea" /> C. Bank Account Details
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
-            <div><span style={{ color: '#7e22ce' }}>Account Holder Name:</span> <br/><strong>{bank.accountHolderName || v.partnerName || 'N/A'}</strong></div>
-            <div><span style={{ color: '#7e22ce' }}>Bank Name:</span> <br/><strong>{bank.bankName || 'AU Small Finance Bank'}</strong></div>
-            <div><span style={{ color: '#7e22ce' }}>Account Number:</span> <br/><code>{bank.accountNumber || '2121218033061250'}</code></div>
-            <div><span style={{ color: '#7e22ce' }}>IFSC Code:</span> <br/><code>{bank.ifscCode || 'AUBL0002180'}</code></div>
-          </div>
-        </div>
+        {hasValue(bank.accountHolderName, bank.bankName, bank.accountNumber, bank.ifscCode) && (
+          <section className="vendor-section">
+            <div className="vendor-section-title">Bank</div>
+            <dl className="vendor-dl">
+              <Field label="Account holder">{display(bank.accountHolderName)}</Field>
+              <Field label="Bank">{display(bank.bankName)}</Field>
+              <Field label="Account number">{display(bank.accountNumber)}</Field>
+              <Field label="IFSC">{display(bank.ifscCode)}</Field>
+            </dl>
+          </section>
+        )}
 
-        <div style={{ background: '#fff7ed', padding: '16px', borderRadius: '10px', border: '1px solid #fed7aa' }}>
-          <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#9a3412', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.03em', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <LucideFileText size={16} color="#ea580c" /> D. Tax & Registration Details
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px' }}>
-            <div><span style={{ color: '#c2410c' }}>PAN Card:</span> <br/><strong>{v.panCard || 'NEEDED TO REPLACE'}</strong></div>
-            <div><span style={{ color: '#c2410c' }}>GST Number:</span> <br/><strong>{v.gstNumber || 'N/A'}</strong></div>
-            <div><span style={{ color: '#c2410c' }}>GST Registered:</span> <br/><strong>{v.gstDocUrl || v.gstNumber ? 'YES' : 'NO'}</strong></div>
-            <div><span style={{ color: '#c2410c' }}>MSME Number:</span> <br/><strong>{v.msmeNumber || 'N/A'}</strong></div>
-            <div><span style={{ color: '#c2410c' }}>TDS Amount:</span> <br/><strong>{v.tdsAmount || '₹0'}</strong></div>
-            <div><span style={{ color: '#c2410c' }}>Low TDS Certificate:</span> <br/><strong>{v.lowTdsCertificateUrl ? 'AVAILABLE' : 'N/A'}</strong></div>
-          </div>
-        </div>
+        {hasValue(v.panCard, v.gstNumber, v.gstDocUrl, v.msmeNumber, v.tdsAmount, v.lowTdsCertificateUrl) && (
+          <section className="vendor-section">
+            <div className="vendor-section-title">Tax & registration</div>
+            <dl className="vendor-dl">
+              <Field label="PAN">{display(v.panCard)}</Field>
+              <Field label="GST">{display(v.gstNumber)}</Field>
+              <Field label="GST registered">{v.gstDocUrl || v.gstNumber ? 'Yes' : '—'}</Field>
+              <Field label="MSME">{display(v.msmeNumber)}</Field>
+              <Field label="TDS">{display(v.tdsAmount)}</Field>
+              <Field label="Low TDS certificate">{v.lowTdsCertificateUrl ? 'Available' : '—'}</Field>
+            </dl>
+          </section>
+        )}
 
-        <div style={{ background: '#ecfeff', padding: '14px 16px', borderRadius: '10px', border: '1px solid #a5f3fc' }}>
-          <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#0e7490', marginBottom: '6px', textTransform: 'uppercase' }}>
-            🌐 E. Service Areas
-          </div>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {(serviceAreas.length > 0 ? serviceAreas : [{ serviceAreaType: 'FIBER' }]).map((sa, idx) => (
-              <span key={idx} style={{ background: '#0891b2', color: '#ffffff', padding: '4px 12px', borderRadius: '6px', fontWeight: '700', fontSize: '0.78rem' }}>
-                {sa.serviceAreaType || sa}
-              </span>
+        {serviceAreas.length > 0 && (
+          <section className="vendor-section">
+            <div className="vendor-section-title">Service areas</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {serviceAreas.map((sa, idx) => (
+                <span key={idx} className="vendor-chip">{sa.serviceAreaType || sa}</span>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {machinesList.length > 0 && (
+          <section className="vendor-section">
+            <div className="vendor-section-title">Machines ({machinesList.length})</div>
+            {machinesList.map((m, idx) => {
+              const code = m.code || m.model_code;
+              const engine = m.engineNo || m.engine_no;
+              return (
+                <div key={m.id || idx} className="vendor-item">
+                  <div>
+                    <div style={{ fontWeight: 650 }}>{display(m.machineNo || m.machine_no || m.name)}</div>
+                    {(code || engine) && (
+                      <div className="page-subtitle" style={{ marginTop: 2 }}>
+                        {[code, engine ? `Engine ${engine}` : null].filter(Boolean).join(' · ')}
+                      </div>
+                    )}
+                  </div>
+                  {m.status ? <span className="badge-pill badge-neutral">{m.status}</span> : null}
+                </div>
+              );
+            })}
+          </section>
+        )}
+
+        {usersList.length > 0 && (
+          <section className="vendor-section">
+            <div className="vendor-section-title">Users ({usersList.length})</div>
+            {usersList.map((u, idx) => (
+              <div key={u.id || idx} className="vendor-item">
+                <div>
+                  <div style={{ fontWeight: 650 }}>{display(u.name)}</div>
+                  {hasValue(u.email) && <div className="page-subtitle" style={{ marginTop: 2 }}>{u.email}</div>}
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  {u.designation ? <span className="badge-pill badge-neutral">{u.designation}</span> : null}
+                  {hasValue(u.mobile) && <div className="page-subtitle" style={{ marginTop: 4 }}>{u.mobile}</div>}
+                </div>
+              </div>
             ))}
-          </div>
-        </div>
-
-        <div style={{ background: '#f0f9ff', padding: '16px', borderRadius: '10px', border: '1px solid #bae6fd' }}>
-          <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#0369a1', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <LucideTruck size={16} color="#0284c7" /> F. Assigned Machines ({machinesList.length})
-          </div>
-          {machinesList.length === 0 ? (
-            <div style={{ padding: '16px', textAlign: 'center', color: '#6b7280', fontSize: '0.85rem', background: '#ffffff', borderRadius: '8px', border: '1px dashed #cbd5e1' }}>
-              No machines assigned
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {machinesList.map((m, idx) => (
-                <div key={idx} style={{ background: '#ffffff', padding: '12px 14px', borderRadius: '8px', border: '1px solid #e0f2fe', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                  <div>
-                    <div style={{ fontWeight: '800', color: '#0c4a6e', fontSize: '0.92rem' }}>
-                      Machine No: {m.machineNo || m.machine_no || m.name} ({m.code || m.model_code || 'A600'})
-                    </div>
-                    <div style={{ fontSize: '0.78rem', color: '#0369a1', marginTop: '2px' }}>
-                      Engine No: <strong>{m.engineNo || m.engine_no || 'TPHM106451'}</strong> | ID: <code>{m.id}</code>
-                    </div>
-                  </div>
-                  <span style={{ fontSize: '0.72rem', background: '#0284c7', color: '#ffffff', padding: '3px 10px', borderRadius: '6px', fontWeight: '700' }}>
-                    {m.status || 'COMMISSIONED'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div style={{ background: '#ecfdf5', padding: '16px', borderRadius: '10px', border: '1px solid #a7f3d0' }}>
-          <div style={{ fontSize: '0.82rem', fontWeight: '800', color: '#047857', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <LucideUser size={16} color="#059669" /> G. Vendor Users & Operators ({usersList.length})
-          </div>
-          {usersList.length === 0 ? (
-            <div style={{ padding: '16px', textAlign: 'center', color: '#6b7280', fontSize: '0.85rem', background: '#ffffff', borderRadius: '8px', border: '1px dashed #cbd5e1' }}>
-              No users found
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {usersList.map((u, idx) => (
-                <div key={idx} style={{ background: '#ffffff', padding: '10px 14px', borderRadius: '8px', border: '1px solid #d1fae5', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <strong style={{ fontSize: '0.9rem', color: '#064e3b' }}>{u.name}</strong>
-                    <div style={{ fontSize: '0.78rem', color: '#047857', marginTop: '2px' }}>📧 {u.email || 'N/A'}</div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <span style={{ fontSize: '0.7rem', background: '#047857', color: '#ffffff', padding: '2px 8px', borderRadius: '6px', fontWeight: '700' }}>
-                      {u.designation || 'OPERATOR'}
-                    </span>
-                    <div style={{ fontSize: '0.78rem', color: '#047857', marginTop: '2px', fontWeight: '600' }}>📞 {u.mobile}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+          </section>
+        )}
       </div>
     );
   };
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', boxSizing: 'border-box' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <h1 style={{ fontSize: '1.4rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', color: '#111827' }}>
-              Vendor & Partner Management
-            </h1>
-            <span style={{ fontSize: '0.72rem', background: '#0a2d23', color: '#6ee7b7', padding: '2px 8px', borderRadius: '12px', fontWeight: '600' }}>
-              ● Django ILYNC Proxy (/api/vendor)
-            </span>
+  const inspectModal = selectedVendor && typeof document !== 'undefined'
+    ? createPortal(
+      <div className="modal-overlay" onClick={() => setSelectedVendor(null)} role="presentation">
+        <div
+          className="modal-card task-detail-modal"
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="vendor-inspect-title"
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+            <div>
+              <h2 id="vendor-inspect-title" className="page-title" style={{ fontSize: '1rem' }}>
+                {display(selectedVendor.partnerName || selectedVendor.name)}
+              </h2>
+              <p className="page-subtitle" style={{ marginTop: 2 }}>
+                {display(selectedVendor.legalEntityType)}
+                {selectedVendor.contactName || selectedVendor.contact_person
+                  ? ` · ${selectedVendor.contactName || selectedVendor.contact_person}`
+                  : ''}
+              </p>
+            </div>
+            <button type="button" className="header-icon-btn" onClick={() => setSelectedVendor(null)} aria-label="Close">
+              <LucideX size={18} />
+            </button>
           </div>
-          <p style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-            Authenticated server-side vendor data scope (https://ilync.tech/api/vendor)
-          </p>
+          <div className="task-detail-modal-body">
+            {renderVendorDetail(selectedVendor)}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px 16px', borderTop: '1px solid var(--border)' }}>
+            <button type="button" className="btn-secondary" onClick={() => setSelectedVendor(null)}>Close</button>
+          </div>
         </div>
+      </div>,
+      document.body
+    )
+    : null;
 
-        <button onClick={() => { refreshVendor(); fetchVendors(0, search); }} className="app-card" style={{ padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer' }}>
-          <LucideRefreshCw size={14} className={loading || loadingVendor ? 'animate-spin' : ''} /> Refresh Vendor Data
-        </button>
-      </div>
+  return (
+    <div className="screen-container">
+      <PageHeader
+        title="Vendors"
+        subtitle="Contractor and partner organizations"
+        actions={
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => { refreshVendor(); fetchVendors(search); }}
+          >
+            <LucideRefreshCw size={14} className={loading || loadingVendor ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+        }
+      />
 
       {hasNoVendors && <NoVendorBanner />}
 
       {!isAdmin ? (
-        <div className="app-card" style={{ padding: '20px' }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#111827', marginBottom: '16px' }}>
-            🏢 My Authorized Vendor Profile
-          </h2>
-          {renderVendorDetailSections(activeVendor)}
-        </div>
+        loadingVendor && !activeVendor ? (
+          <LoadingSpinner title="Loading vendor" subtitle="Fetching your partner profile" />
+        ) : (
+          <div className="app-card" style={{ padding: 16 }}>
+            {renderVendorDetail(activeVendor, { machines: vendorMachines, users: vendorUsers })}
+          </div>
+        )
       ) : (
         <>
-          <div className="app-card" style={{ padding: '14px', display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <form onSubmit={(e) => { e.preventDefault(); fetchVendors(0, search); }} style={{ position: 'relative', flex: 1 }}>
+          <form
+            className="page-toolbar"
+            onSubmit={(e) => { e.preventDefault(); fetchVendors(search); }}
+          >
+            <div style={{ position: 'relative', flex: 1, minWidth: 220 }}>
+              <LucideSearch size={15} color="#9ca3af" style={{ position: 'absolute', left: 10, top: 10 }} />
               <input
-                type="text"
-                placeholder="Search vendor by partner name, code, contact person..."
+                className="field-input"
+                type="search"
+                placeholder="Search name, contact, phone, or email"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                style={{ width: '100%', padding: '8px 12px 8px 34px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '0.82rem', outline: 'none', boxSizing: 'border-box' }}
+                style={{ width: '100%', paddingLeft: 32 }}
               />
-              <LucideSearch size={16} color="#9ca3af" style={{ position: 'absolute', left: '10px', top: '10px' }} />
-            </form>
-          </div>
+            </div>
+          </form>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
-            {displayVendors.map(v => (
-              <div key={v.id} className="app-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <span style={{ fontSize: '0.68rem', background: '#0a2d23', color: '#6ee7b7', padding: '2px 6px', borderRadius: '4px', fontWeight: '700' }}>
-                      {v.legalEntityType || 'COMPANY'}
-                    </span>
-                    <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#111827', marginTop: '4px' }}>
-                      {v.partnerName || v.name}
-                    </h3>
-                  </div>
-                  <button onClick={() => setSelectedVendor(v)} style={{ padding: '4px 10px', fontSize: '0.75rem', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: '6px', fontWeight: '700', cursor: 'pointer' }}>
-                    Inspect
-                  </button>
-                </div>
-                <div style={{ fontSize: '0.78rem', color: '#4b5563', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <div>👤 Contact: <strong>{v.contactName || v.contact_person || 'Sh Sukhram'}</strong> ({v.designation || 'Vendor'})</div>
-                  <div>📞 Phone: <strong>{v.phoneNumber || v.phone || 'N/A'}</strong></div>
-                  <div>📧 Email: <strong>{v.email || 'N/A'}</strong></div>
-                  <div>🚜 Assigned Machines: <strong>{v.machines?.length || v.assigned_machines?.length || 0}</strong></div>
-                </div>
-              </div>
-            ))}
-          </div>
+          {loading ? (
+            <LoadingSpinner title="Loading vendors" subtitle="Fetching partner organizations" />
+          ) : filteredVendors.length === 0 ? (
+            <EmptyState title="No vendors found" subtitle="Try a different search, or refresh the list." />
+          ) : (
+            <div className="table-container">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Partner</th>
+                    <th>Contact</th>
+                    <th>Phone</th>
+                    <th>Email</th>
+                    <th>Machines</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredVendors.map((v) => (
+                    <tr key={v.id || v.external_vendor_id || v.partnerName}>
+                      <td>
+                        <div style={{ fontWeight: 650 }}>{display(v.partnerName || v.name)}</div>
+                        {v.legalEntityType ? <div className="page-subtitle">{v.legalEntityType}</div> : null}
+                      </td>
+                      <td>
+                        <div>{display(v.contactName || v.contact_person)}</div>
+                        {v.designation ? <div className="page-subtitle">{v.designation}</div> : null}
+                      </td>
+                      <td>{display(v.phoneNumber || v.phone)}</td>
+                      <td>{display(v.email)}</td>
+                      <td>{v.machines?.length || v.assigned_machines?.length || 0}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button type="button" className="btn-ghost" onClick={() => setSelectedVendor(v)}>
+                          Inspect
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
 
-      {selectedVendor && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div className="app-card" style={{ width: '100%', maxWidth: '680px', maxHeight: '88vh', overflowY: 'auto', position: 'relative', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #e5e7eb', paddingBottom: '12px' }}>
-              <h2 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#111827' }}>
-                🏢 {selectedVendor.partnerName || selectedVendor.name} - Vendor Details
-              </h2>
-              <LucideX size={22} onClick={() => setSelectedVendor(null)} style={{ cursor: 'pointer', color: '#6b7280' }} />
-            </div>
-
-            {renderVendorDetailSections(selectedVendor)}
-
-            <button onClick={() => setSelectedVendor(null)} className="btn-primary" style={{ width: '100%', marginTop: '20px' }}>
-              Close Details
-            </button>
-          </div>
-        </div>
-      )}
+      {inspectModal}
     </div>
   );
 };

@@ -1,28 +1,36 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  LucideGlobe,
   LucideRefreshCw,
-  LucideMapPin,
-  LucideBuilding2,
-  LucideUser,
   LucideChevronDown,
   LucideChevronRight,
-  LucideExternalLink,
-  LucideClock,
-  LucideDownload,
-  LucideLayers,
-  LucideAlertCircle,
   LucideArrowLeft
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 import { useAuth } from '../../hooks/useAuth';
 import { mapHddExecutionResponse } from '../../utils/mapHddExecutionResponse';
+import { PageHeader } from '../../components/common/PageHeader';
+import { SearchableSelect } from '../../components/common/Select';
+import { EmptyState } from '../../components/common/EmptyState';
+import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { DateField } from '../../components/common/DateField';
+
+const compactWhen = (value) => {
+  if (!value || value === 'N/A') return '—';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+};
 
 export const TrenchingMapViewPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { selectedVendorId, roles, vendors, isAdmin, hasPermission } = useAuth();
+  const { selectedVendorId, roles, isAdmin, hasPermission } = useAuth();
 
   const isVendorAccount = !isAdmin && (roles || []).some(r => (r || '').toUpperCase() === 'VENDOR') && !hasPermission('mapview.view');
 
@@ -129,17 +137,15 @@ export const TrenchingMapViewPage = () => {
 
   if (isVendorAccount) {
     return (
-      <div style={{ padding: '60px 20px', maxWidth: '600px', margin: '0 auto', textAlign: 'center' }}>
-        <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '12px', padding: '32px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
-          <LucideAlertCircle size={44} color="#dc2626" style={{ margin: '0 auto 12px auto' }} />
-          <h3 style={{ fontSize: '1.2rem', fontWeight: '800', color: '#991b1b', margin: 0 }}>Access Denied</h3>
-          <p style={{ fontSize: '0.88rem', color: '#7f1d1d', marginTop: '8px' }}>
-            Map View is restricted and not accessible for Vendor accounts.
-          </p>
-          <button onClick={() => navigate('/tasks')} className="btn-primary" style={{ marginTop: '16px', padding: '8px 18px', fontSize: '0.84rem' }}>
-            ← Go to My Tasks
+      <div className="screen-container">
+        <EmptyState
+          title="Map view is not available"
+          subtitle="This module is not available on vendor accounts."
+        >
+          <button type="button" className="btn-primary" onClick={() => navigate('/tasks')}>
+            Back to tasks
           </button>
-        </div>
+        </EmptyState>
       </div>
     );
   }
@@ -170,7 +176,7 @@ export const TrenchingMapViewPage = () => {
   }, [normalizedExecutions, selectedState, selectedDistrict]);
 
   // Memoized summary counts and grouping by District -> Block
-  const { districtsSet, blocksSet, usersSet, groupedByDistrict } = useMemo(() => {
+  const { districtsSet, blocksSet, usersSet, groupedByDistrict, executionCount } = useMemo(() => {
     const dSet = new Set();
     const bSet = new Set();
     const uSet = new Set();
@@ -196,7 +202,8 @@ export const TrenchingMapViewPage = () => {
       districtsSet: dSet,
       blocksSet: bSet,
       usersSet: uSet,
-      groupedByDistrict: grouped
+      groupedByDistrict: grouped,
+      executionCount: filteredExecutions.length,
     };
   }, [filteredExecutions]);
 
@@ -210,436 +217,212 @@ export const TrenchingMapViewPage = () => {
 
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', boxSizing: 'border-box' }}>
+    <div className="screen-container">
+      <PageHeader
+        title="Trenching map"
+        subtitle="District → block → field user. Maps open in a new full-screen window."
+        actions={
+          <button type="button" className="btn-secondary" onClick={() => navigate('/map-view')}>
+            <LucideArrowLeft size={16} /> Modules
+          </button>
+        }
+      />
 
-      {/* 1. Header Banner & Top Controls */}
-      <div className="app-card" style={{ padding: '16px 20px', background: 'linear-gradient(135deg, #0a2d23 0%, #114b3a 100%)', color: '#ffffff', borderRadius: '14px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
-
-          {/* Left: Back Button & Title */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <button
-              onClick={() => navigate('/map-view')}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 12px',
-                background: 'rgba(255, 255, 255, 0.15)',
-                border: '1px solid rgba(255, 255, 255, 0.3)',
-                borderRadius: '8px',
-                color: '#ffffff',
-                fontSize: '0.82rem',
-                fontWeight: '700',
-                cursor: 'pointer'
-              }}
-              title="Back to Module Selection"
-            >
-              <LucideArrowLeft size={16} /> Back
-            </button>
-
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <LucideGlobe size={20} color="#34d399" />
-                <h1 style={{ fontSize: '1.3rem', fontFamily: 'Outfit, sans-serif', fontWeight: '800', margin: 0, color: '#ffffff' }}>
-                  ilync-Live
-                </h1>
-              </div>
-              <div style={{ fontSize: '0.75rem', color: '#a7f3d0', marginTop: '2px', fontWeight: '600' }}>
-                HDD / Trenching Execution Progress
-              </div>
-            </div>
-          </div>
-
-          {/* Right Top Controls */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-
-            {/* State Select */}
-            <select
+      <div className="panel" style={{ padding: '12px 16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <SearchableSelect
               value={selectedState}
               onChange={e => {
                 setSelectedState(e.target.value);
                 setSelectedDistrict('ALL');
               }}
-              style={{
-                padding: '7px 12px',
-                background: 'rgba(255, 255, 255, 0.15)',
-                border: '1px solid rgba(255, 255, 255, 0.3)',
-                borderRadius: '16px',
-                color: '#ffffff',
-                fontSize: '0.8rem',
-                fontWeight: '700',
-                outline: 'none',
-                cursor: 'pointer'
-              }}
+              className="vendor-switcher"
+              style={{ height: 36, minWidth: 140 }}
             >
-              <option value="ALL" style={{ color: '#000' }}>State: All States</option>
-              <option value="RAJASTHAN" style={{ color: '#000' }}>State: RAJASTHAN</option>
-              <option value="HARYANA" style={{ color: '#000' }}>State: HARYANA</option>
-              <option value="ASSAM" style={{ color: '#000' }}>State: ASSAM</option>
-            </select>
+              <option value="ALL">All states</option>
+              <option value="RAJASTHAN">Rajasthan</option>
+              <option value="HARYANA">Haryana</option>
+              <option value="ASSAM">Assam</option>
+            </SearchableSelect>
 
-            {/* District Select */}
-            <select
+            <SearchableSelect
               value={selectedDistrict}
               onChange={e => setSelectedDistrict(e.target.value)}
-              style={{
-                padding: '7px 12px',
-                background: 'rgba(255, 255, 255, 0.15)',
-                border: '1px solid rgba(255, 255, 255, 0.3)',
-                borderRadius: '16px',
-                color: '#ffffff',
-                fontSize: '0.8rem',
-                fontWeight: '700',
-                outline: 'none',
-                cursor: 'pointer'
-              }}
+              className="vendor-switcher"
+              style={{ height: 36, minWidth: 160 }}
             >
-              <option value="ALL" style={{ color: '#000' }}>District: All Districts</option>
+              <option value="ALL">All districts</option>
               {availableDistricts.map(dist => (
-                <option key={dist} value={dist} style={{ color: '#000' }}>
-                  District: {dist}
-                </option>
+                <option key={dist} value={dist}>{dist}</option>
               ))}
-            </select>
+            </SearchableSelect>
 
-            {/* Date Select */}
-            <input
-              type="date"
+            <DateField
+              required
               value={selectedDate}
-              onChange={e => setSelectedDate(e.target.value)}
-              style={{
-                padding: '6px 10px',
-                background: 'rgba(255, 255, 255, 0.15)',
-                border: '1px solid rgba(255, 255, 255, 0.3)',
-                borderRadius: '16px',
-                color: '#ffffff',
-                fontSize: '0.8rem',
-                fontWeight: '700',
-                outline: 'none',
-                cursor: 'pointer'
-              }}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              aria-label="Execution date"
             />
-
-            <button
-              onClick={fetchHddData}
-              disabled={loading || isBackgroundLoading}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '7px 16px',
-                background: '#059669',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '20px',
-                fontSize: '0.8rem',
-                fontWeight: '800',
-                cursor: 'pointer'
-              }}
-            >
-              <LucideRefreshCw size={13} className={(loading || isBackgroundLoading) ? 'animate-spin' : ''} />
-              <span>{isBackgroundLoading ? 'Syncing...' : 'Fetch Data'}</span>
-            </button>
           </div>
-        </div>
-      </div>
-
-      {/* 2. Hierarchy Sub-Header Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.95rem', fontWeight: '800', color: '#0f172a' }}>
-          <LucideLayers size={18} color="#059669" />
-          <span>Execution Progress Data</span>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{
-            background: '#06b6d4',
-            color: '#ffffff',
-            padding: '5px 14px',
-            borderRadius: '8px',
-            fontSize: '0.82rem',
-            fontWeight: '800'
-          }}>
-            {districtsSet.size} Districts, {blocksSet.size} Blocks, {usersSet.size} Users
-          </span>
 
           <button
-            onClick={() => alert('Exporting HDD Execution data to Excel...')}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '6px 12px',
-              background: '#059669',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: '0.78rem',
-              fontWeight: '700',
-              cursor: 'pointer'
-            }}
+            type="button"
+            className="btn-secondary"
+            onClick={fetchHddData}
+            disabled={loading || isBackgroundLoading}
           >
-            <LucideDownload size={13} />
-            <span>Export to Excel</span>
+            <LucideRefreshCw size={13} className={(loading || isBackgroundLoading) ? 'animate-spin' : ''} />
+            <span>{isBackgroundLoading ? 'Syncing…' : 'Refresh'}</span>
           </button>
         </div>
       </div>
 
-      {/* 3. District Cards Grid (Collapsible District -> Block -> User) */}
-      {loading ? (
-        <div style={{ padding: '60px 20px', textAlign: 'center', color: '#475569', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-          <style>{`
-            @keyframes gis-ring-spin {
-              0% { transform: rotate(0deg); }
-              100% { transform: rotate(360deg); }
-            }
-            @keyframes gis-dot-pulse {
-              0%, 100% { transform: scale(0.8); opacity: 0.5; }
-              50% { transform: scale(1.2); opacity: 1; }
-            }
-          `}</style>
-          <div style={{ position: 'relative', width: '48px', height: '48px', marginBottom: '14px' }}>
-            <div style={{
-              position: 'absolute',
-              inset: 0,
-              borderRadius: '50%',
-              border: '3px solid #e2e8f0',
-              borderTopColor: '#059669',
-              borderRightColor: '#34d399',
-              animation: 'gis-ring-spin 0.9s linear infinite'
-            }} />
-            <div style={{
-              position: 'absolute',
-              inset: '7px',
-              borderRadius: '50%',
-              border: '2px solid transparent',
-              borderBottomColor: '#0284c7',
-              borderLeftColor: '#38bdf8',
-              animation: 'gis-ring-spin 0.6s linear infinite reverse'
-            }} />
-            <div style={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              marginTop: '-5px',
-              marginLeft: '-5px',
-              width: '10px',
-              height: '10px',
-              borderRadius: '50%',
-              background: '#059669',
-              boxShadow: '0 0 6px #059669',
-              animation: 'gis-dot-pulse 1.2s ease-in-out infinite'
-            }} />
+      <div className="kpi-strip">
+        <div className="kpi-cell kpi-cell-static">
+          <div className="kpi-label">Districts</div>
+          <div className="kpi-value">{districtsSet.size}</div>
+        </div>
+        <div className="kpi-cell kpi-cell-static">
+          <div className="kpi-label">Blocks</div>
+          <div className="kpi-value">{blocksSet.size}</div>
+        </div>
+        <div className="kpi-cell kpi-cell-static">
+          <div className="kpi-label">Users</div>
+          <div className="kpi-value">{usersSet.size}</div>
+        </div>
+        <div className="kpi-cell kpi-cell-static">
+          <div className="kpi-label">Crews</div>
+          <div className="kpi-value">{executionCount}</div>
+        </div>
+      </div>
+
+      <div className="panel" style={{ padding: 0 }}>
+        <div className="panel-header" style={{ padding: '14px 16px', marginBottom: 0, borderBottom: '1px solid var(--border)' }}>
+          <div>
+            <div className="panel-title">Execution progress</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>
+              District → block → field user
+            </div>
           </div>
-          <div style={{ fontWeight: '800', fontSize: '1rem', color: '#0f172a' }}>Loading...</div>
         </div>
-      ) : error ? (
-        <div style={{ padding: '20px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px', color: '#991b1b', fontSize: '0.85rem' }}>
-          {error}
-        </div>
-      ) : Object.keys(groupedByDistrict).length === 0 ? (
-        <div style={{ padding: '30px', textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: '12px', border: '1px dashed #cbd5e1' }}>
-          No execution data available for selected state/date filter.
-        </div>
-      ) : (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-          gap: '12px',
-          alignItems: 'start'
-        }}>
-          {Object.keys(groupedByDistrict).map((dName) => {
-            const blocksDict = groupedByDistrict[dName];
-            const isDistrictExpanded = Boolean(expandedDistricts[dName]);
-            const blockNames = Object.keys(blocksDict);
-            const districtUsersCount = new Set(
-              blockNames.flatMap(b => blocksDict[b].map(ex => ex.user))
-            ).size;
 
-            return (
-              <div
-                key={dName}
-                style={{
-                  background: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '10px',
-                  overflow: 'hidden',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
-                }}
-              >
-                {/* District Card Header Bar */}
-                <div
-                  onClick={() => toggleDistrict(dName)}
-                  style={{
-                    padding: '12px 14px',
-                    background: isDistrictExpanded ? '#f0fdf4' : '#ffffff',
-                    borderBottom: isDistrictExpanded ? '1px solid #cbd5e1' : 'none',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    userSelect: 'none'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {isDistrictExpanded ? (
-                      <LucideChevronDown size={18} color="#059669" />
-                    ) : (
-                      <LucideChevronRight size={18} color="#64748b" />
-                    )}
-                    <span style={{ fontSize: '0.95rem', fontWeight: '800', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <LucideMapPin size={16} color="#0284c7" />
-                      {dName}
+        {loading ? (
+          <LoadingSpinner title="Loading…" subtitle="Fetching execution crews" />
+        ) : error ? (
+          <EmptyState title="Could not load execution data" subtitle={error} />
+        ) : Object.keys(groupedByDistrict).length === 0 ? (
+          <EmptyState
+            title="No execution data"
+            subtitle="Nothing matches the selected state or district."
+          />
+        ) : (
+          <div className="exec-tree" style={{ border: 'none', borderRadius: 0 }}>
+            {Object.keys(groupedByDistrict).sort().map((dName) => {
+              const blocksDict = groupedByDistrict[dName];
+              const isDistrictExpanded = Boolean(expandedDistricts[dName]);
+              const blockNames = Object.keys(blocksDict).sort();
+              const districtUsersCount = new Set(
+                blockNames.flatMap((b) => blocksDict[b].map((ex) => ex.user))
+              ).size;
+
+              return (
+                <div key={dName} className="exec-tree-district">
+                  <button
+                    type="button"
+                    className={`exec-tree-toggle${isDistrictExpanded ? ' is-open' : ''}`}
+                    onClick={() => toggleDistrict(dName)}
+                    aria-expanded={isDistrictExpanded}
+                  >
+                    {isDistrictExpanded ? <LucideChevronDown size={16} /> : <LucideChevronRight size={16} />}
+                    <span className="exec-tree-name">{dName}</span>
+                    <span className="exec-tree-meta">
+                      {blockNames.length} {blockNames.length === 1 ? 'block' : 'blocks'}
+                      {' · '}
+                      {districtUsersCount} {districtUsersCount === 1 ? 'user' : 'users'}
                     </span>
-                    <span style={{
-                      fontSize: '0.72rem',
-                      background: '#06b6d4',
-                      color: '#ffffff',
-                      padding: '2px 8px',
-                      borderRadius: '10px',
-                      fontWeight: '800'
-                    }}>
-                      {blockNames.length} blocks, {districtUsersCount} users
-                    </span>
-                  </div>
+                  </button>
 
-                  <span style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '500' }}>
-                    {isDistrictExpanded ? 'Collapse' : 'Expand'}
-                  </span>
-                </div>
+                  {isDistrictExpanded && (
+                    <div className="exec-tree-body">
+                      {blockNames.map((bName) => {
+                        const bKey = `${dName}_${bName}`;
+                        const execList = blocksDict[bName];
+                        const isBlockExpanded = blockNames.length === 1 || Boolean(expandedBlocks[bKey]);
 
-                {/* Expanded District Blocks */}
-                {isDistrictExpanded && (
-                  <div style={{ padding: '10px', display: 'flex', flexDirection: 'column', gap: '10px', background: '#fafafa' }}>
-                    {blockNames.map((bName) => {
-                      const bKey = `${dName}_${bName}`;
-                      const isBlockExpanded = Boolean(expandedBlocks[bKey]);
-                      const execList = blocksDict[bName];
-                      const blockUsersCount = new Set(execList.map(ex => ex.user)).size;
+                        return (
+                          <div key={bName} className="exec-tree-block">
+                            {blockNames.length > 1 && (
+                              <button
+                                type="button"
+                                className={`exec-tree-toggle exec-tree-toggle--block${isBlockExpanded ? ' is-open' : ''}`}
+                                onClick={() => toggleBlock(bKey)}
+                                aria-expanded={isBlockExpanded}
+                              >
+                                {isBlockExpanded ? <LucideChevronDown size={15} /> : <LucideChevronRight size={15} />}
+                                <span className="exec-tree-name">{bName}</span>
+                                <span className="exec-tree-meta">
+                                  {execList.length} {execList.length === 1 ? 'user' : 'users'}
+                                </span>
+                              </button>
+                            )}
 
-                      return (
-                        <div
-                          key={bName}
-                          style={{
-                            background: '#ffffff',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '8px',
-                            padding: '10px 12px',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '8px'
-                          }}
-                        >
-                          {/* Block Header */}
-                          <div
-                            onClick={() => toggleBlock(bKey)}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              cursor: 'pointer',
-                              userSelect: 'none'
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              {isBlockExpanded ? (
-                                <LucideChevronDown size={16} color="#059669" />
-                              ) : (
-                                <LucideChevronRight size={16} color="#64748b" />
-                              )}
-                              <LucideBuilding2 size={16} color="#059669" />
-                              <span style={{ fontWeight: '800', fontSize: '0.9rem', color: '#0f172a' }}>
-                                {bName}
-                              </span>
-                              <span style={{
-                                fontSize: '0.7rem',
-                                background: '#10b981',
-                                color: '#ffffff',
-                                padding: '2px 8px',
-                                borderRadius: '10px',
-                                fontWeight: '800'
-                              }}>
-                                {blockUsersCount} users
-                              </span>
-                            </div>
-                            <span style={{ fontSize: '0.68rem', color: '#64748b' }}>
-                              {isBlockExpanded ? 'Hide' : 'Show'}
-                            </span>
+                            {isBlockExpanded && (
+                              <div className="exec-tree-users">
+                                {blockNames.length === 1 && bName && bName !== 'OTHER' && (
+                                  <div className="exec-tree-meta" style={{ padding: '8px 12px 0' }}>{bName}</div>
+                                )}
+                                <table className="data-table">
+                                  <thead>
+                                    <tr>
+                                      <th>User</th>
+                                      <th>Mode</th>
+                                      <th>Last modified</th>
+                                      <th />
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {execList.map((ex) => (
+                                      <tr key={ex.id}>
+                                        <td><strong>{ex.user || '—'}</strong></td>
+                                        <td>
+                                          {ex.workExecutionMode && ex.workExecutionMode !== 'N/A' ? (
+                                            <span className="badge-pill badge-neutral">{ex.workExecutionMode}</span>
+                                          ) : (
+                                            <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                          )}
+                                        </td>
+                                        <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                          {compactWhen(ex.updatedAt || ex.lastModified)}
+                                        </td>
+                                        <td style={{ textAlign: 'right' }}>
+                                          <a
+                                            className="exec-tree-map"
+                                            href={`/map-view/${ex.id}${selectedDate ? `?date=${selectedDate}` : ''}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            Open map
+                                          </a>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
                           </div>
-
-                          {/* Inside Block: Field User Item List */}
-                          {isBlockExpanded && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-                              {execList.map((ex) => (
-                                <div
-                                  key={ex.id}
-                                  style={{
-                                    background: '#f8fafc',
-                                    border: '1px solid #cbd5e1',
-                                    borderRadius: '6px',
-                                    padding: '8px 10px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between',
-                                    fontSize: '0.78rem'
-                                  }}
-                                >
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                      <LucideUser size={14} color="#334155" />
-                                      <strong style={{ color: '#0f172a' }}>{ex.user}</strong>
-                                      <span style={{
-                                        fontSize: '0.65rem',
-                                        background: '#0284c7',
-                                        color: '#ffffff',
-                                        padding: '1px 6px',
-                                        borderRadius: '4px',
-                                        fontWeight: '800'
-                                      }}>
-                                        {ex.workExecutionMode || 'HDD'}
-                                      </span>
-                                    </div>
-
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#64748b', fontSize: '0.7rem' }}>
-                                      <LucideClock size={12} />
-                                      <span>Last Modified: {ex.lastModified}</span>
-                                    </div>
-                                  </div>
-
-                                  {/* Open GIS Map Popout Button */}
-                                  <button
-                                    onClick={() => navigate(`/map-view/${ex.id}${selectedDate ? `?date=${selectedDate}` : ''}`)}
-                                    title="Open GIS Map View"
-                                    style={{
-                                      background: '#ffffff',
-                                      border: '1px solid #cbd5e1',
-                                      borderRadius: '6px',
-                                      padding: '5px 8px',
-                                      color: '#059669',
-                                      cursor: 'pointer',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
-                                    }}
-                                  >
-                                    <LucideExternalLink size={16} />
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
     </div>
   );

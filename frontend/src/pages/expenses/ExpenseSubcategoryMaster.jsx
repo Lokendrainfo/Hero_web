@@ -8,6 +8,7 @@ import {
   LucideX, LucideSave, LucideShieldAlert, LucideLayers, LucideFilter
 } from 'lucide-react';
 import '../../styles/components.css';
+import { SearchableSelect } from '../../components/common/Select';
 
 const ensureArray = (val) => {
   if (Array.isArray(val)) return val;
@@ -170,14 +171,14 @@ export const ExpenseSubcategoryMaster = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ width: '34px', height: '34px', borderRadius: '10px', background: '#0a2d23', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: '34px', height: '34px', borderRadius: '10px', background: '#111827', color: 'var(--live)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <LucideTag size={20} />
             </div>
-            <h1 style={{ fontSize: '1.4rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', color: '#0f172a', margin: 0 }}>
+            <h1 style={{ fontSize: '1.4rem', fontFamily: 'inherit', fontWeight: '700', color: '#0f172a', margin: 0 }}>
               Expense Subcategory Master
             </h1>
-            <span className="badge-pill badge-green" style={{ fontSize: '0.72rem', fontWeight: '700' }}>
-              Admin Master Control
+            <span className="badge-pill badge-role-admin">
+              Admin master
             </span>
           </div>
           <p style={{ fontSize: '0.82rem', color: '#64748b', marginTop: '4px', margin: 0 }}>
@@ -215,7 +216,7 @@ export const ExpenseSubcategoryMaster = () => {
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              boxShadow: '0 2px 8px rgba(10,45,35,0.25)'
+              boxShadow: 'none'
             }}
           >
             <LucidePlus size={18} /> + Add New Subcategory
@@ -230,9 +231,9 @@ export const ExpenseSubcategoryMaster = () => {
           
           {/* Dependent Category Dropdown Filter */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '260px' }}>
-            <LucideLayers size={16} color="#0a2d23" />
+            <LucideLayers size={16} color="#111827" />
             <label style={{ fontSize: '0.82rem', fontWeight: '700', color: '#334155' }}>Parent Category:</label>
-            <select
+            <SearchableSelect
               value={selectedCategoryId}
               onChange={(e) => setSelectedCategoryId(e.target.value)}
               style={{
@@ -253,7 +254,7 @@ export const ExpenseSubcategoryMaster = () => {
                   {c.name} ({c.code})
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
 
           {/* Search Bar */}
@@ -400,10 +401,10 @@ export const ExpenseSubcategoryMaster = () => {
         <div className="modal-overlay">
           <div className="modal-card" style={{ maxWidth: '480px' }}>
             
-            <div style={{ padding: '18px 22px', background: '#0a2d23', color: '#ffffff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ padding: '18px 22px', background: 'var(--bg-subtle)', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <LucideTag size={20} color="#10b981" />
-                <h3 style={{ fontSize: '1.05rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', margin: 0, color: '#ffffff' }}>
+                <LucideTag size={20} color="var(--live)" />
+                <h3 style={{ fontSize: '1.05rem', fontFamily: 'inherit', fontWeight: '700', margin: 0, color: 'var(--text-primary)' }}>
                   {editSubcategory ? 'Edit Subcategory Master' : '+ Add Dependent Subcategory'}
                 </h3>
               </div>
@@ -422,7 +423,7 @@ export const ExpenseSubcategoryMaster = () => {
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
                   Parent Expense Category <span style={{ color: '#ef4444' }}>*</span>
                 </label>
-                <select
+                <SearchableSelect
                   value={formState.category}
                   onChange={(e) => setFormState(prev => ({ ...prev, category: e.target.value }))}
                   required
@@ -444,7 +445,7 @@ export const ExpenseSubcategoryMaster = () => {
                       {c.name} ({c.code})
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
 
               <div>

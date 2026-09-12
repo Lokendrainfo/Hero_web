@@ -13,5 +13,11 @@ export const authService = {
   },
   forgotPassword: async (email) => {
     return api.post('/auth/forgot-password/', { email });
+  },
+  updateMe: async (payload) => {
+    return api.put('/auth/me/', payload);
+  },
+  changePassword: async (old_password, new_password) => {
+    return api.post('/auth/change-password/', { old_password, new_password });
   }
 };

@@ -48,10 +48,17 @@ class MeView(APIView):
                 "external_user_id": user.external_user_id or str(user.id),
                 "username": user.username,
                 "name": user.get_full_name() or user.username,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
                 "email": user.email,
+                "employee_id": user.employee_id,
+                "phone_number": user.phone_number,
                 "role": user.role,
                 "roles": user.get_role_list(),
-                "permissions": user.get_permission_codes()
+                "permissions": user.get_permission_codes(),
+                "is_superuser": user.is_superuser,
+                "is_staff": user.is_staff,
+                "is_active": user.is_active,
             },
             "vendor": primary_vendor,
             "vendors": vendors_list

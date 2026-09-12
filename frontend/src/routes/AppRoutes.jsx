@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { ProtectedRoute } from './ProtectedRoute';
 import { PublicRoute } from './PublicRoute';
 import { DashboardLayout } from '../layouts/DashboardLayout';
+import { MapViewerLayout } from '../layouts/MapViewerLayout';
 import { Login } from '../pages/authentication/Login';
 
 // Helper for dynamic loading of named exports
@@ -84,7 +85,6 @@ export const AppRoutes = () => {
             <Route path="/tasks/detail/:taskId" element={<TaskDetailPage />} />
             <Route path="/map-view" element={<MapViewPage />} />
             <Route path="/map-view/trenching" element={<TrenchingMapViewPage />} />
-            <Route path="/map-view/:executionId" element={<HddExecutionMapPage />} />
             <Route path="/team" element={<Team />} />
             <Route path="/attendance" element={<Attendance />} />
             <Route path="/expenses" element={<Expenses />} />
@@ -102,6 +102,9 @@ export const AppRoutes = () => {
             <Route path="/roles" element={<Roles />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/settings" element={<Profile />} />
+          </Route>
+          <Route element={<MapViewerLayout />}>
+            <Route path="/map-view/:executionId" element={<HddExecutionMapPage />} />
           </Route>
         </Route>
 

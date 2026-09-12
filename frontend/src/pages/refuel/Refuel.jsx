@@ -21,6 +21,7 @@ import {
   LucideFileText
 } from 'lucide-react';
 import '../../styles/components.css';
+import { SearchableSelect } from '../../components/common/Select';
 
 const ensureArray = (val) => {
   if (Array.isArray(val)) return val;
@@ -173,10 +174,10 @@ export const Refuel = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#0a2d23', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981' }}>
+            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#111827', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--live)' }}>
               <LucideFuel size={18} />
             </div>
-            <h2 style={{ fontSize: '1.35rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', color: '#0f172a', margin: 0 }}>
+            <h2 style={{ fontSize: '1.35rem', fontFamily: 'inherit', fontWeight: '700', color: '#0f172a', margin: 0 }}>
               Refuel Records & Diesel Logs
             </h2>
           </div>
@@ -199,7 +200,7 @@ export const Refuel = () => {
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+              boxShadow: 'none',
               cursor: 'pointer'
             }}
           >
@@ -217,7 +218,7 @@ export const Refuel = () => {
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              boxShadow: '0 2px 8px rgba(10,45,35,0.25)'
+              boxShadow: 'none'
             }}
           >
             <LucidePlus size={18} /> Add Refuel Record
@@ -310,7 +311,7 @@ export const Refuel = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '240px' }}>
             <LucideTruck size={16} color="#0284c7" />
             <label style={{ fontSize: '0.8rem', fontWeight: '700', color: '#334155' }}>Machine:</label>
-            <select
+            <SearchableSelect
               value={selectedMachineId}
               onChange={(e) => setSelectedMachineId(e.target.value)}
               style={{
@@ -332,7 +333,7 @@ export const Refuel = () => {
                   {m.code || m.name || `Machine #${m.id}`} ({m.model_name || m.model_code || 'HDD Rig'})
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
 
           {/* Client-side Search Input */}
@@ -498,10 +499,10 @@ export const Refuel = () => {
           <div className="modal-card" style={{ maxWidth: '480px' }}>
             
             {/* Modal Header */}
-            <div style={{ padding: '18px 22px', background: '#0a2d23', color: '#ffffff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ padding: '18px 22px', background: 'var(--bg-subtle)', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <LucideFuel size={20} color="#10b981" />
-                <h3 style={{ fontSize: '1.05rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', margin: 0, color: '#ffffff' }}>
+                <LucideFuel size={20} color="var(--live)" />
+                <h3 style={{ fontSize: '1.05rem', fontFamily: 'inherit', fontWeight: '700', margin: 0, color: 'var(--text-primary)' }}>
                   Record Machine Refueling
                 </h3>
               </div>
@@ -520,7 +521,7 @@ export const Refuel = () => {
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
                   Target Machine / HDD Rig <span style={{ color: '#ef4444' }}>*</span>
                 </label>
-                <select
+                <SearchableSelect
                   value={targetMachineId}
                   onChange={(e) => setTargetMachineId(e.target.value)}
                   required
@@ -541,7 +542,7 @@ export const Refuel = () => {
                       {m.code || m.name || `Machine #${m.id}`} ({m.model_name || m.model_code || 'HDD Rig'})
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>

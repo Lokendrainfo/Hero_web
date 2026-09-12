@@ -49,7 +49,7 @@ export const RefuelStatus = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span onClick={() => navigate(-1)} style={{ fontSize: '1.4rem', cursor: 'pointer', fontWeight: 'bold' }}>←</span>
-          <h2 style={{ fontSize: '1.25rem', fontFamily: 'Outfit', fontWeight: 'bold' }}>
+          <h2 style={{ fontSize: '1.25rem', fontFamily: 'inherit', fontWeight: 'bold' }}>
             {machine?.name || 'A600 HDD'} - Fuel Status
           </h2>
         </div>
@@ -70,7 +70,7 @@ export const RefuelStatus = () => {
           </div>
         </div>
         <div style={{ width: '64px', height: '64px', borderRadius: '50%', border: '6px solid #10b981', borderTopColor: '#e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <LucideFuel size={24} color="#10b981" />
+          <LucideFuel size={24} color="var(--live)" />
         </div>
       </div>
 

@@ -231,11 +231,12 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose }) => {
               autoPlay
               referrerPolicy="no-referrer"
               style={{
-                maxHeight: 'calc(80vh - 110px)',
+                width: 'min(100%, 860px)',
+                height: 'auto',
+                maxHeight: 'min(62vh, 480px)',
                 maxWidth: '100%',
-                borderRadius: '12px',
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
+                objectFit: 'contain',
+                borderRadius: '8px',
                 background: '#000000'
               }}
               onError={(e) => {

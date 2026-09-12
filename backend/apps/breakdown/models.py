@@ -11,3 +11,6 @@ class BreakdownReport(models.Model):
     reported_at = models.DateTimeField(auto_now_add=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
     resolution_notes = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.machine} — {self.severity} ({self.status})"

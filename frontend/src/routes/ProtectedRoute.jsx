@@ -6,7 +6,7 @@ export const ProtectedRoute = () => {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return <div style={{ padding: '40px', textAlign: 'center', color: '#fff' }}>Loading Hero Web...</div>;
+    return <div className="empty-state" style={{ margin: 40, borderStyle: 'solid' }}><p>Loading HERO…</p></div>;
   }
 
   return user ? <Outlet /> : <Navigate to="/login" replace />;

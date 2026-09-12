@@ -5,11 +5,13 @@ import { useToast } from '../../context/ToastContext';
 import {
   LucideCalendarCheck, LucideClock, LucideUserCheck, LucideSearch,
   LucideFilter, LucideSave, LucideCheckCircle, LucideXCircle,
-  LucideAlertCircle, LucideCalendar, LucideUser, LucideRefreshCw,
+  LucideAlertCircle, LucideUser, LucideRefreshCw,
   LucideBuilding2, LucideCheck, LucideList, LucideHistory, LucideCheckSquare,
   LucideMapPin, LucideCamera, LucideTruck, LucideShieldCheck, LucideEye, LucideX
 } from 'lucide-react';
 import '../../styles/components.css';
+import { SearchableSelect } from '../../components/common/Select';
+import { DateField } from '../../components/common/DateField';
 
 export const Attendance = () => {
   const { user, isAdmin, vendors } = useAuth();
@@ -284,77 +286,23 @@ export const Attendance = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', boxSizing: 'border-box' }}>
       
-      {/* Top Banner Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+      <div className="page-header">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ width: '34px', height: '34px', borderRadius: '10px', background: '#0a2d23', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <LucideCalendarCheck size={20} />
-            </div>
-            <h1 style={{ fontSize: '1.4rem', fontFamily: 'Outfit, sans-serif', fontWeight: '700', color: '#0f172a', margin: 0 }}>
-              Vendor Team & Mobile Attendance
-            </h1>
-          </div>
-          <p style={{ fontSize: '0.82rem', color: '#64748b', marginTop: '4px', margin: 0 }}>
-            Real-time GPS telemetry, mobile photo verification, equipment logs & manager approval workflow for {activeVendorName}
+          <h1 className="page-title">Attendance</h1>
+          <p className="page-subtitle">
+            Daily roster, GPS check-in, and approvals for {activeVendorName}
           </p>
         </div>
 
-        {/* Tab Switcher */}
-        <div style={{ display: 'flex', background: '#e2e8f0', padding: '4px', borderRadius: '10px', gap: '4px' }}>
-          <button
-            onClick={() => setActiveTab('daily')}
-            style={{
-              padding: '7px 16px',
-              borderRadius: '8px',
-              border: 'none',
-              fontSize: '0.82rem',
-              fontWeight: '700',
-              cursor: 'pointer',
-              background: activeTab === 'daily' ? '#0a2d23' : 'transparent',
-              color: activeTab === 'daily' ? '#ffffff' : '#475569',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <LucideCheckSquare size={15} /> Daily Roster
+        <div className="filter-row" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className={`filter-chip ${activeTab === 'daily' ? 'active' : ''}`} onClick={() => setActiveTab('daily')}>
+            <LucideCheckSquare size={14} /> Daily
           </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            style={{
-              padding: '7px 16px',
-              borderRadius: '8px',
-              border: 'none',
-              fontSize: '0.82rem',
-              fontWeight: '700',
-              cursor: 'pointer',
-              background: activeTab === 'history' ? '#0a2d23' : 'transparent',
-              color: activeTab === 'history' ? '#ffffff' : '#475569',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <LucideHistory size={15} /> Attendance History
+          <button type="button" className={`filter-chip ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>
+            <LucideHistory size={14} /> History
           </button>
-          <button
-            onClick={() => setActiveTab('pending_approvals')}
-            style={{
-              padding: '7px 16px',
-              borderRadius: '8px',
-              border: 'none',
-              fontSize: '0.82rem',
-              fontWeight: '700',
-              cursor: 'pointer',
-              background: activeTab === 'pending_approvals' ? '#0a2d23' : 'transparent',
-              color: activeTab === 'pending_approvals' ? '#ffffff' : '#475569',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <LucideShieldCheck size={15} /> Pending Approvals
+          <button type="button" className={`filter-chip ${activeTab === 'pending_approvals' ? 'active' : ''}`} onClick={() => setActiveTab('pending_approvals')}>
+            <LucideShieldCheck size={14} /> Approvals
           </button>
         </div>
       </div>
@@ -362,42 +310,31 @@ export const Attendance = () => {
       {/* TAB 1: DAILY TEAM ATTENDANCE */}
       {activeTab === 'daily' && (
         <>
-          {/* Summary Metric Cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '14px' }}>
-            <div className="app-card" style={{ padding: '14px 16px', background: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>Total Team</div>
-              <div style={{ fontSize: '1.35rem', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>{summaryStats.total}</div>
-              <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Assigned members</div>
+          <div className="kpi-strip" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
+            <div className="kpi-cell">
+              <div className="kpi-label">Team</div>
+              <div className="kpi-value">{summaryStats.total}</div>
+            </div>
+            <div className="kpi-cell">
+              <div className="kpi-label">Present</div>
+              <div className="kpi-value">{summaryStats.present}</div>
+            </div>
+            <div className="kpi-cell">
+              <div className="kpi-label">Absent</div>
+              <div className="kpi-value">{summaryStats.absent}</div>
             </div>
 
-            <div className="app-card" style={{ padding: '14px 16px', background: '#f0fdf4', borderRadius: '12px', border: '1px solid #bbf7d0' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#166534', textTransform: 'uppercase' }}>Present / Checked-In</div>
-              <div style={{ fontSize: '1.35rem', fontWeight: '800', color: '#047857', marginTop: '2px' }}>{summaryStats.present}</div>
-              <div style={{ fontSize: '0.72rem', color: '#15803d' }}>On duty today</div>
+            <div className="kpi-cell">
+              <div className="kpi-label">Half day</div>
+              <div className="kpi-value">{summaryStats.half_day}</div>
             </div>
-
-            <div className="app-card" style={{ padding: '14px 16px', background: '#fef2f2', borderRadius: '12px', border: '1px solid #fecaca' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#991b1b', textTransform: 'uppercase' }}>Absent</div>
-              <div style={{ fontSize: '1.35rem', fontWeight: '800', color: '#dc2626', marginTop: '2px' }}>{summaryStats.absent}</div>
-              <div style={{ fontSize: '0.72rem', color: '#b91c1c' }}>Not on duty</div>
+            <div className="kpi-cell">
+              <div className="kpi-label">Leave</div>
+              <div className="kpi-value">{summaryStats.leave}</div>
             </div>
-
-            <div className="app-card" style={{ padding: '14px 16px', background: '#fffbeb', borderRadius: '12px', border: '1px solid #fde68a' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#92400e', textTransform: 'uppercase' }}>Half Day</div>
-              <div style={{ fontSize: '1.35rem', fontWeight: '800', color: '#d97706', marginTop: '2px' }}>{summaryStats.half_day}</div>
-              <div style={{ fontSize: '0.72rem', color: '#b45309' }}>Partial shift</div>
-            </div>
-
-            <div className="app-card" style={{ padding: '14px 16px', background: '#f5f3ff', borderRadius: '12px', border: '1px solid #ddd6fe' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#5b21b6', textTransform: 'uppercase' }}>Leave</div>
-              <div style={{ fontSize: '1.35rem', fontWeight: '800', color: '#7c3aed', marginTop: '2px' }}>{summaryStats.leave}</div>
-              <div style={{ fontSize: '0.72rem', color: '#6d28d9' }}>Approved leave</div>
-            </div>
-
-            <div className="app-card" style={{ padding: '14px 16px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #cbd5e1' }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#475569', textTransform: 'uppercase' }}>Not Marked</div>
-              <div style={{ fontSize: '1.35rem', fontWeight: '800', color: '#334155', marginTop: '2px' }}>{summaryStats.not_marked}</div>
-              <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Pending log</div>
+            <div className="kpi-cell">
+              <div className="kpi-label">Not marked</div>
+              <div className="kpi-value">{summaryStats.not_marked}</div>
             </div>
           </div>
 
@@ -407,24 +344,12 @@ export const Attendance = () => {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', flex: 1 }}>
               
               {/* Date Selector */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#f8fafc', padding: '6px 12px', borderRadius: '10px', border: '1px solid #cbd5e1' }}>
-                <LucideCalendar size={16} color="#0a2d23" />
-                <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#334155' }}>Date:</span>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  style={{
-                    border: 'none',
-                    background: 'transparent',
-                    fontSize: '0.85rem',
-                    fontWeight: '700',
-                    color: '#0f172a',
-                    outline: 'none',
-                    cursor: 'pointer'
-                  }}
-                />
-              </div>
+              <DateField
+                required
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                aria-label="Attendance date"
+              />
 
               {/* Search Employee */}
               <div style={{ position: 'relative', minWidth: '200px', flex: 1 }}>
@@ -447,7 +372,7 @@ export const Attendance = () => {
               </div>
 
               {/* Role Filter */}
-              <select
+              <SearchableSelect
                 value={roleFilter}
                 onChange={(e) => setRoleFilter(e.target.value)}
                 style={{
@@ -466,10 +391,10 @@ export const Attendance = () => {
                 <option value="SUPERVISOR">Supervisors</option>
                 <option value="HELPER">Helpers</option>
                 <option value="VENDOR">Vendor Admins</option>
-              </select>
+              </SearchableSelect>
 
               {/* Status Filter */}
-              <select
+              <SearchableSelect
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
                 style={{
@@ -490,7 +415,7 @@ export const Attendance = () => {
                 <option value="LEAVE">LEAVE</option>
                 <option value="WEEK_OFF">WEEK OFF</option>
                 <option value="NOT_MARKED">NOT MARKED</option>
-              </select>
+              </SearchableSelect>
 
               <button
                 onClick={fetchTeamAttendance}
@@ -545,7 +470,7 @@ export const Attendance = () => {
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px',
-                  boxShadow: '0 2px 8px rgba(10,45,35,0.25)'
+                  boxShadow: 'none'
                 }}
               >
                 <LucideSave size={16} />
@@ -573,18 +498,11 @@ export const Attendance = () => {
                 {teamMembers.map(m => (
                   <tr key={m.user_id}>
                     <td style={{ paddingLeft: '20px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#0a2d23', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.78rem' }}>
-                          {(m.user_name || 'U')[0].toUpperCase()}
-                        </div>
-                        <div>
-                          <div style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.88rem' }}>
-                            {m.user_name}
-                          </div>
-                          <div style={{ fontSize: '0.72rem', color: '#2563eb', fontFamily: 'monospace', fontWeight: '700' }}>
-                            {m.employee_id || `EMP-${m.user_id}`}
-                          </div>
-                        </div>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {m.user_name}
+                      </div>
+                      <div className="page-subtitle">
+                        {m.employee_id || `EMP-${m.user_id}`}
                       </div>
                     </td>
 
@@ -788,26 +706,18 @@ export const Attendance = () => {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', flex: 1 }}>
               
               {/* Date From */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <label style={{ fontSize: '0.8rem', fontWeight: '700', color: '#334155' }}>From:</label>
-                <input
-                  type="date"
-                  value={historyDateFrom}
-                  onChange={(e) => setHistoryDateFrom(e.target.value)}
-                  style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', outline: 'none' }}
-                />
-              </div>
-
-              {/* Date To */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <label style={{ fontSize: '0.8rem', fontWeight: '700', color: '#334155' }}>To:</label>
-                <input
-                  type="date"
-                  value={historyDateTo}
-                  onChange={(e) => setHistoryDateTo(e.target.value)}
-                  style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', outline: 'none' }}
-                />
-              </div>
+              <DateField
+                value={historyDateFrom}
+                onChange={(e) => setHistoryDateFrom(e.target.value)}
+                placeholder="From date"
+                aria-label="History from date"
+              />
+              <DateField
+                value={historyDateTo}
+                onChange={(e) => setHistoryDateTo(e.target.value)}
+                placeholder="To date"
+                aria-label="History to date"
+              />
 
               {/* Search Employee */}
               <div style={{ position: 'relative', minWidth: '200px', flex: 1 }}>
@@ -830,7 +740,7 @@ export const Attendance = () => {
               </div>
 
               {/* Status Filter */}
-              <select
+              <SearchableSelect
                 value={historyStatus}
                 onChange={(e) => setHistoryStatus(e.target.value)}
                 style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600' }}
@@ -843,7 +753,7 @@ export const Attendance = () => {
                 <option value="HALF_DAY">HALF DAY</option>
                 <option value="LEAVE">LEAVE</option>
                 <option value="WEEK_OFF">WEEK OFF</option>
-              </select>
+              </SearchableSelect>
 
               <button
                 onClick={fetchHistory}
@@ -1107,10 +1017,10 @@ export const Attendance = () => {
           background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)',
           zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
         }}>
-          <div style={{ background: '#ffffff', borderRadius: '16px', maxWidth: '540px', width: '100%', overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.3)' }}>
-            <div style={{ padding: '14px 20px', background: '#0a2d23', color: '#ffffff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ background: '#ffffff', borderRadius: '16px', maxWidth: '540px', width: '100%', overflow: 'hidden', boxShadow: 'none' }}>
+            <div style={{ padding: '14px 20px', background: 'var(--bg-subtle)', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ fontWeight: '700', fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <LucideCamera size={18} color="#10b981" /> Mobile Check-In Photo Telemetry
+                <LucideCamera size={18} color="var(--live)" /> Mobile Check-In Photo Telemetry
               </div>
               <button onClick={() => setActivePhotoUrl(null)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>
                 <LucideX size={20} />
@@ -1135,7 +1045,7 @@ export const Attendance = () => {
           background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',
           zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
         }}>
-          <div style={{ background: '#ffffff', borderRadius: '16px', maxWidth: '460px', width: '100%', overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.3)' }}>
+          <div style={{ background: '#ffffff', borderRadius: '16px', maxWidth: '460px', width: '100%', overflow: 'hidden', boxShadow: 'none' }}>
             <div style={{ padding: '14px 20px', background: '#991b1b', color: '#ffffff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ fontWeight: '700', fontSize: '0.92rem' }}>Reject Attendance Record</div>
               <button onClick={() => setRejectionModal({ open: false, recordId: null, reason: '' })} style={{ background: 'transparent', border: 'none', color: '#ffffff', cursor: 'pointer' }}>
