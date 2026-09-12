@@ -1,0 +1,56 @@
+openapi: 3.0.3
+info:
+  title: Hero Web Platform REST API
+  description: Enterprise Heavy Machinery & Fleet Management REST API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local Development Server
+paths:
+  /auth/login/:
+    post:
+      summary: User Login (ID + Password)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Login Successful (JWT Tokens Issued)
+  /auth/me/:
+    get:
+      summary: Current Authenticated User Profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User Profile Object
+  /machines/:
+    get:
+      summary: List Vendor Authorized Machines
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Array of Machines
+  /tracking/machines/:
+    get:
+      summary: Real-Time Telemetry & GPS Locations
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Live Machine Locations
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

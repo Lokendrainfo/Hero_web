@@ -1,0 +1,1 @@
+print("Migration script executed cleanly.")

@@ -1,0 +1,46 @@
+from django.urls import path
+from .views import (
+    IlyncVendorListView,
+    IlyncVendorDetailView,
+    IlyncUserListView,
+    IlyncUserSyncView,
+    IlyncStockIssueSearchView,
+    IlyncStockIssueItemSearchView,
+    IlyncStockBalanceSearchView,
+    IlyncStockItemSearchView,
+    FiberForceLiveParamCatalogView,
+    FiberForceLiveTelemetryView,
+    IlyncMyTasksListView,
+    IlyncTaskTypeCountsView,
+    IlyncMyVendorView,
+    IlyncTaskDetailView,
+    IlyncTaskExecutionView,
+    IlyncTaskChildrenView,
+    IlyncSurveyPhotoUrlsView
+)
+
+urlpatterns = [
+    path('vendors/me/', IlyncMyVendorView.as_view(), name='ilync_my_vendor'),
+    path('vendors/my-vendor/', IlyncMyVendorView.as_view(), name='ilync_my_vendor_alias'),
+    path('vendors/', IlyncVendorListView.as_view(), name='ilync_vendors_list'),
+    path('vendors/<str:vendor_id>/', IlyncVendorDetailView.as_view(), name='ilync_vendor_detail'),
+    path('users/', IlyncUserListView.as_view(), name='ilync_users_list'),
+    path('users/sync/', IlyncUserSyncView.as_view(), name='ilync_users_sync'),
+    path('inventory/stock-issues/', IlyncStockIssueSearchView.as_view(), name='ilync_stock_issues_search'),
+    path('inventory/stock-issue/', IlyncStockIssueSearchView.as_view(), name='ilync_stock_issue_search_alias'),
+    path('inventory/stock-issue-items/search/', IlyncStockIssueItemSearchView.as_view(), name='ilync_stock_issue_items_search'),
+    path('inventory/stock-issue-items/', IlyncStockIssueItemSearchView.as_view(), name='ilync_stock_issue_items_alias'),
+
+    path('inventory/stock-balance/', IlyncStockBalanceSearchView.as_view(), name='ilync_stock_balance_search'),
+    path('inventory/items/', IlyncStockItemSearchView.as_view(), name='ilync_stock_items_search'),
+    path('tasks/my-tasks/', IlyncMyTasksListView.as_view(), name='ilync_my_tasks_list'),
+    path('tasks/my-tasks/type-counts/', IlyncTaskTypeCountsView.as_view(), name='ilync_task_type_counts'),
+    path('tasks/type-counts/', IlyncTaskTypeCountsView.as_view(), name='ilync_task_type_counts_alias'),
+    path('tasks/<str:task_id>/execution/', IlyncTaskExecutionView.as_view(), name='ilync_task_execution'),
+    path('tasks/<str:task_id>/children/', IlyncTaskChildrenView.as_view(), name='ilync_task_children'),
+    path('tasks/<str:task_id>/', IlyncTaskDetailView.as_view(), name='ilync_task_detail'),
+    path('survey/photo-urls/', IlyncSurveyPhotoUrlsView.as_view(), name='ilync_survey_photo_urls'),
+    path('fiberforce/live-params/', FiberForceLiveParamCatalogView.as_view(), name='fiberforce_live_params_catalog'),
+    path('fiberforce/live/', FiberForceLiveTelemetryView.as_view(), name='fiberforce_live_telemetry'),
+    path('fiberforce/machines/live/', FiberForceLiveTelemetryView.as_view(), name='fiberforce_machines_live'),
+]

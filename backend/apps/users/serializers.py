@@ -1,0 +1,1 @@
+from apps.authentication.serializers import UserSerializer
