@@ -4,6 +4,8 @@
 
 ### Local Development
 
+## MAKE SURE YOU HAVE THE .env file
+
 1. **Backend**:
    ```bash
    cd backend
