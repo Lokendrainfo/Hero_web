@@ -249,6 +249,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         record = AttendanceRecord.objects.create(
             user=user,
             vendor=target_vendor,
+            reporting_manager=user.reporting_manager,
             date=today,
             check_in=timezone.now(),
             status='CHECKED_IN',
@@ -333,6 +334,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         record = AttendanceRecord.objects.create(
             user=target_user,
             vendor=target_vendor,
+            reporting_manager=target_user.reporting_manager,
             date=today,
             check_in=timezone.now(),
             status='CHECKED_IN',
@@ -369,6 +371,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         record = AttendanceRecord.objects.create(
             user=user,
             vendor=target_vendor,
+            reporting_manager=user.reporting_manager,
             date=today,
             check_in=timezone.now(),
             status='CHECKED_IN',
