@@ -1312,13 +1312,12 @@ export const Users = () => {
                           }));
                           fetchDistrictsForEdit(cId);
                         }}
+                        options={[
+                          { value: '', label: '-- Select Circle --' },
+                          ...masterCircles.map(c => ({ value: c.id, label: c.name }))
+                        ]}
                         style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: '#fff', fontSize: '0.82rem' }}
-                      >
-                        <option value="">-- Select Circle --</option>
-                        {masterCircles.map(c => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </SearchableSelect>
+                      />
                     </div>
 
                     {(editForm.advance_scope_type === 'DISTRICT' || editForm.advance_scope_type === 'BLOCK') && (
@@ -1336,13 +1335,12 @@ export const Users = () => {
                             }));
                             fetchBlocksForEdit(dId);
                           }}
+                          options={[
+                            { value: '', label: '-- Select District --' },
+                            ...editDistricts.map(d => ({ value: d.id, label: d.name }))
+                          ]}
                           style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: !editForm.selected_circle_id ? '#f3f4f6' : '#fff', fontSize: '0.82rem' }}
-                        >
-                          <option value="">-- Select District --</option>
-                          {editDistricts.map(d => (
-                            <option key={d.id} value={d.id}>{d.name}</option>
-                          ))}
-                        </SearchableSelect>
+                        />
                       </div>
                     )}
 
@@ -1358,13 +1356,12 @@ export const Users = () => {
                               selected_block_id: e.target.value
                             }));
                           }}
+                          options={[
+                            { value: '', label: '-- Select Block --' },
+                            ...editBlocks.map(b => ({ value: b.id, label: b.name }))
+                          ]}
                           style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: !editForm.selected_district_id ? '#f3f4f6' : '#fff', fontSize: '0.82rem' }}
-                        >
-                          <option value="">-- Select Block --</option>
-                          {editBlocks.map(b => (
-                            <option key={b.id} value={b.id}>{b.name}</option>
-                          ))}
-                        </SearchableSelect>
+                        />
                       </div>
                     )}
                   </div>
@@ -1770,13 +1767,12 @@ export const Users = () => {
                           }));
                           fetchDistrictsForCreate(cId);
                         }}
+                        options={[
+                          { value: '', label: '-- Select Circle --' },
+                          ...masterCircles.map(c => ({ value: c.id, label: c.name }))
+                        ]}
                         style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
-                      >
-                        <option value="">-- Select Circle --</option>
-                        {masterCircles.map(c => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </SearchableSelect>
+                      />
                     </div>
 
                     {(createForm.advance_scope_type === 'DISTRICT' || createForm.advance_scope_type === 'BLOCK') && (
@@ -1796,13 +1792,12 @@ export const Users = () => {
                             }));
                             fetchBlocksForCreate(dId);
                           }}
+                          options={[
+                            { value: '', label: '-- Select District --' },
+                            ...createDistricts.map(d => ({ value: d.id, label: d.name }))
+                          ]}
                           style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: !createForm.selected_circle_id ? '#f3f4f6' : '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
-                        >
-                          <option value="">-- Select District --</option>
-                          {createDistricts.map(d => (
-                            <option key={d.id} value={d.id}>{d.name}</option>
-                          ))}
-                        </SearchableSelect>
+                        />
                       </div>
                     )}
 
@@ -1820,13 +1815,12 @@ export const Users = () => {
                               selected_block_id: e.target.value
                             }));
                           }}
+                          options={[
+                            { value: '', label: '-- Select Block --' },
+                            ...createBlocks.map(b => ({ value: b.id, label: b.name }))
+                          ]}
                           style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: !createForm.selected_district_id ? '#f3f4f6' : '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
-                        >
-                          <option value="">-- Select Block --</option>
-                          {createBlocks.map(b => (
-                            <option key={b.id} value={b.id}>{b.name}</option>
-                          ))}
-                        </SearchableSelect>
+                        />
                       </div>
                     )}
                   </div>
