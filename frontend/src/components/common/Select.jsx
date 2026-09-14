@@ -12,15 +12,26 @@ const textOf = (node) => {
 
 const optionsFromChildren = (children) => {
   const list = [];
-  React.Children.forEach(children, (child) => {
-    if (!React.isValidElement(child)) return;
-    if (child.type !== 'option' && child.props?.value === undefined) return;
-    list.push({
-      value: child.props.value === undefined || child.props.value === null ? '' : String(child.props.value),
-      label: textOf(child.props.children) || String(child.props.value ?? ''),
-      disabled: Boolean(child.props.disabled)
+  const walk = (nodes) => {
+    React.Children.forEach(nodes, (child) => {
+      if (!child) return;
+      if (Array.isArray(child)) {
+        walk(child);
+        return;
+      }
+      if (!React.isValidElement(child)) return;
+      if (child.type === React.Fragment && child.props?.children) {
+        walk(child.props.children);
+        return;
+      }
+      list.push({
+        value: child.props?.value === undefined || child.props?.value === null ? '' : String(child.props.value),
+        label: textOf(child.props?.children) || String(child.props?.value ?? ''),
+        disabled: Boolean(child.props?.disabled)
+      });
     });
-  });
+  };
+  walk(children);
   return list;
 };
 

@@ -211,6 +211,7 @@ export const Users = () => {
 
   useEffect(() => {
     fetchUsers(0, pagination.size);
+    fetchCircles();
   }, [selectedRoleFilter]);
 
   const handleSync = async () => {
