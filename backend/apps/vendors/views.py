@@ -84,7 +84,12 @@ class VendorViewSet(viewsets.ModelViewSet):
         ext_id = instance.external_vendor_id if (instance and instance.external_vendor_id) else pk
 
         # Fetch fresh full vendor details from live ILYNC API (/api/vendor/<id>)
-        external_res = client.get_vendor_by_id(ext_id)
+        external_res = None
+        try:
+            external_res = client.get_vendor_by_id(ext_id)
+        except Exception as exc:
+            pass
+
         external_vendor = {}
         if isinstance(external_res, dict):
             external_vendor = external_res.get('data') if external_res.get('success') else external_res

@@ -81,11 +81,20 @@ export const Users = () => {
   });
   const [statusMessage, setStatusMessage] = useState(null);
 
+  const parseList = (res) => {
+    if (!res) return [];
+    if (Array.isArray(res)) return res;
+    if (Array.isArray(res.data)) return res.data;
+    if (Array.isArray(res.results)) return res.results;
+    if (Array.isArray(res.content)) return res.content;
+    if (Array.isArray(res.data?.results)) return res.data.results;
+    return [];
+  };
+
   const fetchCircles = async () => {
     try {
       const res = await userService.getCircles();
-      const list = res.data?.data || res.data || [];
-      setMasterCircles(Array.isArray(list) ? list : []);
+      setMasterCircles(parseList(res));
     } catch (err) {
       console.error("Failed to fetch circles:", err);
     }
@@ -99,8 +108,7 @@ export const Users = () => {
     }
     try {
       const res = await userService.getDistricts(circleId);
-      const list = res.data?.data || res.data || [];
-      setCreateDistricts(Array.isArray(list) ? list : []);
+      setCreateDistricts(parseList(res));
     } catch (err) {
       console.error("Failed to fetch districts:", err);
     }
@@ -113,8 +121,7 @@ export const Users = () => {
     }
     try {
       const res = await userService.getBlocks(districtId);
-      const list = res.data?.data || res.data || [];
-      setCreateBlocks(Array.isArray(list) ? list : []);
+      setCreateBlocks(parseList(res));
     } catch (err) {
       console.error("Failed to fetch blocks:", err);
     }
@@ -128,8 +135,7 @@ export const Users = () => {
     }
     try {
       const res = await userService.getDistricts(circleId);
-      const list = res.data?.data || res.data || [];
-      setEditDistricts(Array.isArray(list) ? list : []);
+      setEditDistricts(parseList(res));
     } catch (err) {
       console.error("Failed to fetch districts for edit:", err);
     }
@@ -142,8 +148,7 @@ export const Users = () => {
     }
     try {
       const res = await userService.getBlocks(districtId);
-      const list = res.data?.data || res.data || [];
-      setEditBlocks(Array.isArray(list) ? list : []);
+      setEditBlocks(parseList(res));
     } catch (err) {
       console.error("Failed to fetch blocks for edit:", err);
     }
