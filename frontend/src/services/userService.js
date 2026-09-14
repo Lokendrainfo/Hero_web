@@ -14,4 +14,5 @@ export const userService = {
   getCircles: () => api.get('/common/geography/circles/'),
   getDistricts: (circleId) => api.get('/common/geography/districts/', { params: { circle_id: circleId } }),
   getBlocks: (districtId) => api.get('/common/geography/blocks/', { params: { district_id: districtId } }),
+  syncGeography: () => api.post('/common/geography/sync/'),
 };

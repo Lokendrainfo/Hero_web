@@ -31,3 +31,15 @@ class BlockListView(generics.ListAPIView):
         if district_id:
             qs = qs.filter(district_id=district_id)
         return qs
+
+class SyncGeographyView(generics.GenericAPIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        from .geography_sync import sync_geography_from_ilync
+        from apps.common.responses import success_response, error_response
+        res = sync_geography_from_ilync()
+        if res.get("success"):
+            return success_response(data=res, message="Geography master (Circles, Districts, Blocks) successfully synchronized from iLync API.")
+        return error_response(message=res.get("error", "Failed to sync geography from iLync API."))
+
