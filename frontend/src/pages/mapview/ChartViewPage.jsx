@@ -107,7 +107,7 @@ export const ChartViewPage = () => {
     setError(null);
     try {
       const res = await taskService.getTasks({
-        task_type: 'FIBER_TRENCHING_DUCTING_TASK',
+        task_type: 'ALL',
         size: 100
       });
 
@@ -149,7 +149,7 @@ export const ChartViewPage = () => {
       setCurrentExecution(target);
     } catch (err) {
       console.error('[ChartViewPage] Error loading tasks:', err);
-      setError('Could not load task executions. Showing sample chart data.');
+      setError('Could not load task executions for your account scope.');
     } finally {
       setLoading(false);
     }
@@ -179,9 +179,8 @@ export const ChartViewPage = () => {
     const shots = filteredExec?.shots || [];
     const depthPoints = filteredExec?.depthPoints || [];
 
-    if (depthPoints.length === 0 && (!shots || shots.length === 0)) {
-      // Use fallback demo sample HDD profile if no depth points captured yet
-      return generateSampleHddProfile();
+    if (!currentExecution && executionsList.length === 0) {
+      return { title: 'No Authorized Data', totalDistance: 0, points: [] };
     }
 
     // Extract & calculate X distance for points along shots

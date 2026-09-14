@@ -428,22 +428,25 @@ class IlyncMyVendorView(IlyncBaseView):
 class IlyncTaskDetailView(IlyncBaseView):
     def get(self, request, task_id):
         user = request.user if request.user and request.user.is_authenticated else None
-        from apps.common.task_scope import get_user_authorized_tasks
+        from apps.common.task_scope import is_task_authorized_for_user
         
-        # Verify vendor scoping
-        scoped_data = get_user_authorized_tasks(user=user, request=request)
-        results = scoped_data.get('results', []) if isinstance(scoped_data, dict) else []
+        # Verify user authorization strictly
+        if not is_task_authorized_for_user(user, task_id, request=request):
+            return Response({"success": False, "message": "Task not found or unauthorized"}, status=status.HTTP_404_NOT_FOUND)
         
         clean_id = str(task_id).replace('_route_', '').split('_')[0]
-        matched = next((t for t in results if str(t.get('id')) == str(task_id) or str(t.get('taskCode')) == str(task_id) or str(t.get('id')).startswith(clean_id)), None)
-        
         try:
-            client = IlyncClient()
+            client = IlyncClient(request=request)
             res = client.get_task_by_id(clean_id)
             if res and isinstance(res, dict) and res.get('data'):
                 return success_response(data=res.get('data'), message="Task details fetched successfully")
         except Exception:
             pass
+
+        from apps.common.task_scope import get_user_authorized_tasks
+        scoped_data = get_user_authorized_tasks(user=user, request=request)
+        results = scoped_data.get('results', []) if isinstance(scoped_data, dict) else []
+        matched = next((t for t in results if str(t.get('id')) == str(task_id) or str(t.get('taskCode')) == str(task_id) or str(t.get('id')).startswith(clean_id)), None)
 
         if matched:
             return success_response(data=matched, message="Authorized task snapshot fetched")
@@ -452,9 +455,16 @@ class IlyncTaskDetailView(IlyncBaseView):
 
 class IlyncTaskExecutionView(IlyncBaseView):
     def get(self, request, task_id):
+        user = request.user if request.user and request.user.is_authenticated else None
+        from apps.common.task_scope import is_task_authorized_for_user
+
+        # Verify user authorization strictly
+        if not is_task_authorized_for_user(user, task_id, request=request):
+            return Response({"success": False, "message": "Task execution not found or unauthorized"}, status=status.HTTP_404_NOT_FOUND)
+
         clean_id = str(task_id).replace('_route_', '').split('_')[0]
         try:
-            client = IlyncClient()
+            client = IlyncClient(request=request)
             res = client.get_task_execution(clean_id)
             if res and isinstance(res, dict) and res.get('data'):
                 return success_response(data=res.get('data'), message="Task execution details fetched successfully")
@@ -463,7 +473,7 @@ class IlyncTaskExecutionView(IlyncBaseView):
 
         # Fallback: inspect get_task_detail and check embedded taskExecution
         try:
-            client = IlyncClient()
+            client = IlyncClient(request=request)
             t_res = client.get_task_detail(clean_id)
             if t_res and isinstance(t_res, dict):
                 t_data = t_res.get('data') or t_res
@@ -476,9 +486,16 @@ class IlyncTaskExecutionView(IlyncBaseView):
 
 class IlyncTaskChildrenView(IlyncBaseView):
     def get(self, request, task_id):
+        user = request.user if request.user and request.user.is_authenticated else None
+        from apps.common.task_scope import is_task_authorized_for_user
+
+        # Verify user authorization strictly
+        if not is_task_authorized_for_user(user, task_id, request=request):
+            return Response({"success": False, "message": "Task children not found or unauthorized"}, status=status.HTTP_404_NOT_FOUND)
+
         clean_id = str(task_id).replace('_route_', '').split('_')[0]
         try:
-            client = IlyncClient()
+            client = IlyncClient(request=request)
             res = client.get_task_children(clean_id)
             if res and isinstance(res, dict) and 'data' in res:
                 return success_response(data=res.get('data'), message="Task children fetched successfully")
@@ -486,6 +503,26 @@ class IlyncTaskChildrenView(IlyncBaseView):
             print(f"[IlyncTaskChildrenView] Error fetching children for {task_id}: {e}")
 
         return Response({"success": True, "data": [], "message": "Children unavailable"}, status=status.HTTP_200_OK)
+
+class IlyncTaskExportView(IlyncBaseView):
+    def get(self, request, task_id):
+        user = request.user if request.user and request.user.is_authenticated else None
+        from apps.common.task_scope import is_task_authorized_for_user
+
+        # Verify user authorization strictly
+        if not is_task_authorized_for_user(user, task_id, request=request):
+            return Response({"success": False, "message": "Task export unauthorized or not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        fmt = (request.query_params.get('format') or 'csv').lower()
+        clean_id = str(task_id).replace('_route_', '').split('_')[0]
+
+        try:
+            client = IlyncClient(request=request)
+            t_res = client.get_task_detail(clean_id)
+            t_data = t_res.get('data') if isinstance(t_res, dict) else t_res
+            return success_response(data=t_data, message=f"Task export ({fmt}) authorized")
+        except Exception as e:
+            return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class IlyncSurveyPhotoUrlsView(IlyncBaseView):
     def post(self, request):

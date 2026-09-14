@@ -16,6 +16,7 @@ from .views import (
     IlyncTaskDetailView,
     IlyncTaskExecutionView,
     IlyncTaskChildrenView,
+    IlyncTaskExportView,
     IlyncSurveyPhotoUrlsView
 )
 
@@ -38,6 +39,7 @@ urlpatterns = [
     path('tasks/type-counts/', IlyncTaskTypeCountsView.as_view(), name='ilync_task_type_counts_alias'),
     path('tasks/<str:task_id>/execution/', IlyncTaskExecutionView.as_view(), name='ilync_task_execution'),
     path('tasks/<str:task_id>/children/', IlyncTaskChildrenView.as_view(), name='ilync_task_children'),
+    path('tasks/<str:task_id>/export/', IlyncTaskExportView.as_view(), name='ilync_task_export'),
     path('tasks/<str:task_id>/', IlyncTaskDetailView.as_view(), name='ilync_task_detail'),
     path('survey/photo-urls/', IlyncSurveyPhotoUrlsView.as_view(), name='ilync_survey_photo_urls'),
     path('fiberforce/live-params/', FiberForceLiveParamCatalogView.as_view(), name='fiberforce_live_params_catalog'),

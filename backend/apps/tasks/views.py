@@ -16,6 +16,22 @@ class TaskViewSet(viewsets.ModelViewSet):
         user = self.request.user
         qs = filter_queryset_by_vendor(Task.objects.all(), user, 'vendor_id', request=self.request)
         
+        # Advance User Geography Filter
+        if user and user.is_authenticated and getattr(user, 'user_type', None) == 'ADVANCE':
+            if user.advance_scope_type == 'CIRCLE' and user.selected_circle:
+                qs = qs.filter(circle_name__iexact=user.selected_circle.name)
+            elif user.advance_scope_type == 'DISTRICT' and user.selected_district:
+                qs = qs.filter(district_name__iexact=user.selected_district.name)
+            elif user.advance_scope_type == 'BLOCK' and user.selected_block:
+                qs = qs.filter(block_name__iexact=user.selected_block.name)
+
+        # Reporting Manager Scope Filter
+        if user and user.is_authenticated and not user.is_superuser and 'ADMIN' not in user.get_role_list():
+            from apps.common.reporting_scope import get_reporting_scope
+            reporting_scope_ids = get_reporting_scope(user)
+            if len(reporting_scope_ids) > 1:
+                qs = qs.filter(assigned_to_id__in=reporting_scope_ids)
+
         machine_id = self.request.query_params.get('machine_id') or self.request.query_params.get('machine')
         if machine_id and str(machine_id).strip() and str(machine_id).lower() != 'all':
             from django.db.models import Q

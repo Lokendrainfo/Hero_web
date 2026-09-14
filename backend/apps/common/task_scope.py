@@ -11,15 +11,15 @@ def safe_float(val, default=0.0):
 
 def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=50, extra_params=None):
     """
-    Single source of truth for authorized task visibility across My Tasks and Dashboard.
-    Strictly enforces role-based vendor scope.
-    If user has 0 assigned tasks or 0 vendor access, returns empty results ([]) and total = 0.
+    Single source of truth for authorized task visibility across My Tasks, Dashboard, Maps, and Detail views.
+    Strictly enforces role-based vendor scope, Advance User geographical scope, and Reporting Manager scope.
     """
+    req_task_type = task_type
     if not task_type or str(task_type).upper() in ['ALL', 'NONE', 'UNDEFINED']:
-        task_type = 'FIBER_TRENCHING_DUCTING_TASK'
+        req_task_type = None
 
     client = IlyncClient(request=request)
-    raw_data = client.get_my_tasks(task_type=task_type, page=page, size=size, params=extra_params)
+    raw_data = client.get_my_tasks(task_type=req_task_type, page=page, size=size, params=extra_params)
     
     # Extract base task list and pagination metadata
     base_content = []
@@ -336,4 +336,102 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         "currentPage": current_page,
         "pageSize": page_size
     }
+
+
+def is_task_authorized_for_user(user, task_id, request=None):
+    """
+    Central function to check if a specific task_id is authorized for the given authenticated user.
+    Enforces:
+    - Superuser / Admin access (always authorized)
+    - Vendor Scope matching
+    - Advance User Geographical Scope matching (Circle / District / Block)
+    - Reporting Manager Hierarchy Scope matching
+    """
+    if not user or not user.is_authenticated:
+        return False
+
+    is_admin = bool(user.is_superuser or 'ADMIN' in user.get_role_list())
+    if is_admin:
+        return True
+
+    if not task_id:
+        return False
+
+    clean_id = str(task_id).replace('_route_', '').split('_')[0].strip()
+    if not clean_id:
+        return False
+
+    # Check against authorized task scope list
+    scoped_res = get_user_authorized_tasks(user=user, request=request, task_type='ALL', page=0, size=100)
+    task_list = scoped_res.get('results', []) if isinstance(scoped_res, dict) else []
+
+    for t in task_list:
+        t_id = str(t.get('id') or t.get('taskCode') or t.get('_id') or '').strip()
+        t_clean = t_id.replace('_route_', '').split('_')[0]
+        if clean_id == t_clean or clean_id == t_id or str(task_id) == t_id:
+            return True
+
+    # Fallback check direct API item with security scope enforcement
+    try:
+        client = IlyncClient(request=request)
+        t_res = client.get_task_by_id(clean_id)
+        if t_res and isinstance(t_res, dict):
+            task_obj = t_res.get('data') or t_res
+            if isinstance(task_obj, dict) and (task_obj.get('id') or task_obj.get('taskCode')):
+                # 1. Vendor Check
+                allowed_vendor_ids = get_user_vendor_ids(user)
+                if allowed_vendor_ids is not None:
+                    v_id = str(task_obj.get('vendorId') or task_obj.get('assignedVendorId') or '').strip()
+                    if v_id and allowed_vendor_ids:
+                        from apps.vendors.models import Vendor
+                        vendor_objs = Vendor.objects.filter(id__in=allowed_vendor_ids)
+                        allowed_str_ids = [str(v.id) for v in vendor_objs] + [str(v.external_vendor_id) for v in vendor_objs if v.external_vendor_id]
+                        if v_id not in allowed_str_ids and not any(v_id == str(vid) for vid in allowed_vendor_ids):
+                            return False
+
+                # 2. Advance User Geography Check
+                if getattr(user, 'user_type', None) == 'ADVANCE':
+                    loc = task_obj.get('locationSnapshot') or task_obj.get('location') or {}
+                    t_circle = str(loc.get('circle') or loc.get('state') or task_obj.get('circle') or task_obj.get('state') or '').strip().lower()
+                    t_district = str(loc.get('district') or task_obj.get('district') or '').strip().lower()
+                    t_block = str(loc.get('blockName') or loc.get('block') or task_obj.get('blockName') or task_obj.get('block') or '').strip().lower()
+
+                    if user.advance_scope_type == 'CIRCLE' and user.selected_circle:
+                        target = user.selected_circle.name.strip().lower()
+                        if target and t_circle and target not in t_circle and t_circle not in target:
+                            return False
+                    elif user.advance_scope_type == 'DISTRICT' and user.selected_district:
+                        target_dist = user.selected_district.name.strip().lower()
+                        if target_dist and t_district and target_dist not in t_district and t_district not in target_dist:
+                            return False
+                    elif user.advance_scope_type == 'BLOCK' and user.selected_block:
+                        target_blk = user.selected_block.name.strip().lower()
+                        if target_blk and t_block and target_blk not in t_block and t_block not in target_blk:
+                            return False
+
+                # 3. Reporting Manager Hierarchy Scope Check
+                from apps.common.reporting_scope import get_reporting_scope
+                from apps.authentication.models import User
+                reporting_scope_ids = get_reporting_scope(user)
+                if len(reporting_scope_ids) > 1:
+                    sub_users = User.objects.filter(id__in=reporting_scope_ids)
+                    allowed_user_identifiers = set()
+                    for u in sub_users:
+                        allowed_user_identifiers.add(str(u.id).lower())
+                        if u.external_user_id: allowed_user_identifiers.add(str(u.external_user_id).lower())
+                        if u.employee_id: allowed_user_identifiers.add(str(u.employee_id).lower())
+                        if u.username: allowed_user_identifiers.add(str(u.username).lower())
+                        if u.email: allowed_user_identifiers.add(str(u.email).lower())
+
+                    assignee_id = str(task_obj.get('assignedToId') or task_obj.get('assigneeId') or task_obj.get('userId') or '').strip().lower()
+                    assignee_email = str(task_obj.get('assignedToEmail') or task_obj.get('assigneeEmail') or '').strip().lower()
+                    if (assignee_id or assignee_email) and (assignee_id not in allowed_user_identifiers and assignee_email not in allowed_user_identifiers):
+                        return False
+
+                return True
+    except Exception:
+        pass
+
+    return False
+
 

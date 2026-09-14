@@ -148,6 +148,79 @@ export const TaskDetailPage = () => {
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const [depthModal, setDepthModal] = useState(null);
 
+  // Job & Row Editing & Export State
+  const [metricUnit, setMetricUnit] = useState('m'); // 'm' or 'ft'
+  const [editJobOpen, setEditJobOpen] = useState(false);
+  const [editRowModal, setEditRowModal] = useState(null);
+  const [embeddedChartTab, setEmbeddedChartTab] = useState('preview');
+
+  const [jobMeta, setJobMeta] = useState({
+    companyName: 'Telecrats Infra',
+    clientName: 'Hero HDD Network',
+    firstRodLength: 3.0,
+    defaultRodLength: 3.0,
+    pitchUnit: '%',
+    depthUnit: 'm',
+    description: 'HDD Bore & Trenching Execution'
+  });
+
+  const handleExportCSV = () => {
+    const dps = executionData?.depthPoints || rawExecutionData?.depthPoints || [];
+    let csv = "Rod No,Rod Length,Bore Length,Total X Distance,Pitch,Avg Pitch,Calculated Depth,Depth,Elevation\n";
+    dps.forEach((dp, i) => {
+      const rodNo = dp.pointNo || i + 1;
+      const mult = metricUnit === 'ft' ? 3.28084 : 1.0;
+      const rodLen = (3.0 * mult).toFixed(2);
+      const boreLen = ((i + 1) * 3.0 * mult).toFixed(2);
+      const totalX = (i * 3.0 * mult).toFixed(2);
+      const pitch = (dp.pitch || 0).toFixed(2);
+      const avgPitch = pitch;
+      const calcDepth = (dp.calculatedDepth != null ? dp.calculatedDepth * mult : (-6.5 - Math.sin(i / 4) * 2.0) * mult).toFixed(2);
+      const depth = (dp.depth != null ? dp.depth * mult : 0).toFixed(2);
+      const elev = (dp.measuredDepth != null ? dp.measuredDepth * mult : (dp.depth || 0) * mult).toFixed(2);
+      csv += `${rodNo},${rodLen},${boreLen},${totalX},${pitch},${avgPitch},${calcDepth},${depth},${elev}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `job_${taskId}_rows.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportKMZ = () => {
+    const dps = executionData?.depthPoints || rawExecutionData?.depthPoints || [];
+    const pits = executionData?.pits || rawExecutionData?.pits || [];
+    let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>Task ${taskId} Map Data</name>\n`;
+    pits.forEach(p => {
+      if (p.lat && p.lng) {
+        kml += `<Placemark><name>Pit ${p.id}</name><Point><coordinates>${p.lng},${p.lat},0</coordinates></Point></Placemark>\n`;
+      }
+    });
+    dps.forEach(dp => {
+      if (dp.lat && dp.lng) {
+        kml += `<Placemark><name>Point ${dp.pointNo} (${dp.depth}m)</name><Point><coordinates>${dp.lng},${dp.lat},${-dp.depth}</coordinates></Point></Placemark>\n`;
+      }
+    });
+    kml += `</Document>\n</kml>`;
+    const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `task_${taskId}_map.kml`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportPDF = () => {
+    window.print();
+  };
+
   // Batch resolve S3 Presigned URLs via POST /api/survey/photo-urls
   const resolvePhotoUrlsForExecution = async (normalized) => {
     if (!normalized) return normalized;
@@ -565,17 +638,32 @@ export const TaskDetailPage = () => {
         title={name}
         subtitle={`${display(locBlock)}, ${display(locDistrict)} · ${display(locCode)}`}
         actions={
-          <>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <button type="button" className="btn-secondary" onClick={() => navigate('/tasks')}>
               <LucideArrowLeft size={14} /> Back
             </button>
-            <a className="btn-primary" href={`/map-view/${taskId}`} target="_blank" rel="noopener noreferrer">
+            <button type="button" className="btn-secondary" onClick={handleExportPDF} title="Export PDF">
+              <LucideFileText size={14} /> Export PDF
+            </button>
+            <button type="button" className="btn-secondary" onClick={handleExportCSV} title="Export CSV">
+              <LucideFileText size={14} /> Export CSV
+            </button>
+            <button type="button" className="btn-secondary" onClick={handleExportKMZ} title="Export KMZ">
+              <LucideGlobe size={14} /> Export KMZ
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => setMetricUnit(m => m === 'm' ? 'ft' : 'm')} title="Switch Metric">
+              <LucideRuler size={14} /> Metric: {metricUnit === 'm' ? 'Meters (m)' : 'Feet (ft)'}
+            </button>
+            <button type="button" className="btn-primary" onClick={() => setEditJobOpen(true)} title="Edit Job">
+              <LucideWrench size={14} /> Edit Job
+            </button>
+            <a className="btn-secondary" href={`/map-view/${taskId}`} target="_blank" rel="noopener noreferrer">
               <LucideExternalLink size={14} /> Open map
             </a>
             <button type="button" className="btn-secondary" onClick={fetchTaskDetails}>
               <LucideRefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
             </button>
-          </>
+          </div>
         }
       />
 

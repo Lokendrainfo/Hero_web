@@ -65,8 +65,8 @@ export const AuthProvider = ({ children }) => {
     try {
       await authService.logout();
     } catch (e) { }
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
+    localStorage.clear();
+    sessionStorage.clear();
     setUser(null);
     setVendor(null);
     setUserVendorsList([]);
