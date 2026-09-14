@@ -5,12 +5,12 @@ from .serializers import CircleSerializer, DistrictSerializer, BlockSerializer
 class CircleListView(generics.ListAPIView):
     queryset = Circle.objects.all()
     serializer_class = CircleSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     pagination_class = None
 
 class DistrictListView(generics.ListAPIView):
     serializer_class = DistrictSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     pagination_class = None
 
     def get_queryset(self):
@@ -22,7 +22,7 @@ class DistrictListView(generics.ListAPIView):
 
 class BlockListView(generics.ListAPIView):
     serializer_class = BlockSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     pagination_class = None
 
     def get_queryset(self):
