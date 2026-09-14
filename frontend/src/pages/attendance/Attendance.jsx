@@ -53,11 +53,46 @@ export const Attendance = () => {
   const [activePhotoUrl, setActivePhotoUrl] = useState(null);
   const [rejectionModal, setRejectionModal] = useState({ open: false, recordId: null, reason: '' });
 
+  const [expandedVendors, setExpandedVendors] = useState({});
+
+  const toggleVendorExpand = (vName) => {
+    setExpandedVendors(prev => ({ ...prev, [vName]: !prev[vName] }));
+  };
+
   const activeVendorName = useMemo(() => {
     if (user?.vendor?.name) return user.vendor.name;
     if (vendors && vendors.length > 0) return vendors[0].name || vendors[0].partnerName;
     return 'Your Vendor Organization';
   }, [user, vendors]);
+
+  const groupedVendorTeams = useMemo(() => {
+    if (!teamMembers || teamMembers.length === 0) return [];
+    const map = {};
+    teamMembers.forEach(m => {
+      const vName = m.vendor_name || m.vendor?.name || activeVendorName || 'Pranjal Enterprises';
+      if (!map[vName]) {
+        map[vName] = {
+          vendorName: vName,
+          type: m.vendor_type || m.vendor?.type,
+          contactName: m.vendor_contact || m.vendor?.contact_person,
+          phone: m.vendor_phone || m.vendor?.phone,
+          email: m.vendor_email || m.vendor?.email,
+          members: [],
+          stats: { total: 0, present: 0, absent: 0, half_day: 0, leave: 0, week_off: 0, not_marked: 0 }
+        };
+      }
+      map[vName].members.push(m);
+      map[vName].stats.total += 1;
+      const st = (m.status || 'NOT_MARKED').toUpperCase();
+      if (st === 'PRESENT') map[vName].stats.present += 1;
+      else if (st === 'ABSENT') map[vName].stats.absent += 1;
+      else if (st === 'HALF_DAY') map[vName].stats.half_day += 1;
+      else if (st === 'LEAVE') map[vName].stats.leave += 1;
+      else if (st === 'WEEK_OFF') map[vName].stats.week_off += 1;
+      else map[vName].stats.not_marked += 1;
+    });
+    return Object.values(map);
+  }, [teamMembers, activeVendorName]);
 
   // Fetch Daily Team Attendance
   const fetchTeamAttendance = React.useCallback(() => {
@@ -479,219 +514,248 @@ export const Attendance = () => {
             </div>
           </div>
 
-          {/* Daily Attendance Grid Table */}
-          <div className="table-container">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th style={{ paddingLeft: '20px' }}>Employee ID & Name</th>
-                  <th>Role</th>
-                  <th>Attendance Type & Equipment</th>
-                  <th>Check In / Out</th>
-                  <th>GPS Telemetry & Verification</th>
-                  <th>Approval Status</th>
-                  <th>Remarks / Notes</th>
-                  <th>Status & Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {teamMembers.map(m => (
-                  <tr key={m.user_id}>
-                    <td style={{ paddingLeft: '20px' }}>
-                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                        {m.user_name}
-                      </div>
-                      <div className="page-subtitle">
-                        {m.employee_id || `EMP-${m.user_id}`}
-                      </div>
-                    </td>
+          {/* Vendor Roster Cards (Accordion View) */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {groupedVendorTeams.map((teamGroup) => {
+              const isExpanded = expandedVendors[teamGroup.vendorName] !== false; // Default expanded
 
-                    <td>
-                      <span className="badge-pill badge-purple" style={{ fontSize: '0.72rem' }}>
-                        {m.role}
+              return (
+                <div key={teamGroup.vendorName} className="app-card" style={{ background: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                  
+                  {/* Vendor Header Strip (Clickable Accordion) */}
+                  <div
+                    onClick={() => toggleVendorExpand(teamGroup.vendorName)}
+                    style={{ padding: '14px 20px', background: isExpanded ? '#f8fafc' : '#ffffff', borderBottom: isExpanded ? '1px solid #e2e8f0' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', cursor: 'pointer', transition: 'background 0.2s' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0, flex: 1 }}>
+                      <div style={{ width: '42px', height: '42px', minWidth: '42px', borderRadius: '10px', background: isExpanded ? '#eff6ff' : '#f1f5f9', border: '1px solid #bfdbfe', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <LucideBuilding2 size={22} />
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: '1.02rem', fontWeight: '700', color: '#0f172a' }}>
+                          {teamGroup.vendorName}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Team Summary Badges & Accordion Toggle Button */}
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+                      <span className="badge-pill badge-blue" style={{ fontSize: '0.75rem', fontWeight: '700', padding: '4px 10px' }}>
+                        👥 {teamGroup.stats.total} Team Members
                       </span>
-                    </td>
+                      <span className="badge-pill badge-green" style={{ fontSize: '0.75rem', fontWeight: '700', padding: '4px 10px' }}>
+                        Present: {teamGroup.stats.present}
+                      </span>
+                      <span className="badge-pill" style={{ background: '#fef2f2', color: '#991b1b', border: '1px solid #fecaca', fontSize: '0.75rem', fontWeight: '700', padding: '4px 10px' }}>
+                        Absent: {teamGroup.stats.absent}
+                      </span>
+                      <span className="badge-pill" style={{ background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb', fontSize: '0.75rem', fontWeight: '700', padding: '4px 10px' }}>
+                        Not Marked: {teamGroup.stats.not_marked}
+                      </span>
 
-                    <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                        <span className={`badge-pill ${m.attendance_type === 'MACHINE' ? 'badge-amber' : 'badge-blue'}`} style={{ fontSize: '0.68rem', width: 'fit-content' }}>
-                          {m.attendance_type === 'MACHINE' ? '🚜 MACHINE' : '👥 TEAM'}
-                        </span>
-                        {m.machine_chassis_no && (
-                          <span style={{ fontSize: '0.72rem', fontFamily: 'monospace', color: '#475569', fontWeight: '600' }}>
-                            Chassis: {m.machine_chassis_no}
-                          </span>
-                        )}
-                      </div>
-                    </td>
+                      <button
+                        type="button"
+                        style={{ padding: '6px 12px', borderRadius: '8px', background: isExpanded ? '#eff6ff' : '#f1f5f9', border: '1px solid #cbd5e1', color: '#1e40af', fontSize: '0.78rem', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        {isExpanded ? 'Collapse' : '∨ Expand Team'}
+                      </button>
+                    </div>
+                  </div>
 
-                    <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '0.78rem', fontWeight: '600', color: m.check_in ? '#047857' : '#94a3b8' }}>
-                            In: {m.check_in || '--:--'}
-                          </span>
-                          {!m.check_in && (
-                            <button
-                              onClick={() => handleCheckInEmployee(m.user_id)}
-                              style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
-                            >
-                              Check In
-                            </button>
-                          )}
-                        </div>
+                  {/* Expanded Member Table */}
+                  {isExpanded && (
+                    <div className="table-container" style={{ border: 'none', borderRadius: 0 }}>
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th style={{ paddingLeft: '20px' }}>Employee ID & Name</th>
+                            <th>Role</th>
+                            <th>Attendance Type & Equipment</th>
+                            <th>Check In / Out</th>
+                            <th>GPS Telemetry & Verification</th>
+                            <th>Approval Status</th>
+                            <th>Remarks / Notes</th>
+                            <th>Status & Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {teamGroup.members.map(m => (
+                            <tr key={m.user_id}>
+                              <td style={{ paddingLeft: '20px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#0a2d23', color: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.78rem' }}>
+                                    {(m.user_name || 'U')[0].toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <div style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.88rem' }}>
+                                      {m.user_name}
+                                    </div>
+                                    <div style={{ fontSize: '0.72rem', color: '#2563eb', fontFamily: 'monospace', fontWeight: '700' }}>
+                                      {m.employee_id || `EMP-${m.user_id}`}
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '0.78rem', fontWeight: '600', color: m.check_out ? '#1d4ed8' : '#94a3b8' }}>
-                            Out: {m.check_out || '--:--'}
-                          </span>
-                          {m.check_in && !m.check_out && (
-                            <button
-                              onClick={() => handleCheckOutEmployee(m.user_id)}
-                              style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
-                            >
-                              Check Out
-                            </button>
-                          )}
-                        </div>
+                              <td>
+                                <span className="badge-pill badge-purple" style={{ fontSize: '0.72rem' }}>
+                                  {m.role}
+                                </span>
+                              </td>
 
-                        {m.total_working_hours && (
-                          <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>
-                            ⏱ {m.total_working_hours}
-                          </span>
-                        )}
-                      </div>
-                    </td>
+                              <td>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <span className={`badge-pill ${m.attendance_type === 'MACHINE' ? 'badge-amber' : 'badge-blue'}`} style={{ fontSize: '0.68rem', width: 'fit-content' }}>
+                                    {m.attendance_type === 'MACHINE' ? '🚜 MACHINE' : '👥 TEAM'}
+                                  </span>
+                                  {m.machine_chassis_no && (
+                                    <span style={{ fontSize: '0.7rem', color: '#475569', fontFamily: 'monospace', fontWeight: '600' }}>
+                                      {m.machine_chassis_no}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
 
-                    <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        {m.check_in_latitude ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: '#047857', fontWeight: '600' }}>
-                            <LucideMapPin size={12} />
-                            <span>{Number(m.check_in_latitude).toFixed(4)}, {Number(m.check_in_longitude).toFixed(4)}</span>
-                            {m.check_in_accuracy && <span style={{ color: '#64748b', fontSize: '0.68rem' }}>(±{m.check_in_accuracy}m)</span>}
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS log</span>
-                        )}
+                              <td>
+                                <div style={{ fontSize: '0.78rem', color: '#0f172a', fontWeight: '600' }}>
+                                  In: {m.check_in || '—'}
+                                </div>
+                                <div style={{ fontSize: '0.78rem', color: '#475569' }}>
+                                  Out: {m.check_out || '—'}
+                                </div>
+                              </td>
 
-                        {m.check_in_photo ? (
-                          <button
-                            type="button"
-                            onClick={() => setActivePhotoUrl(m.check_in_photo)}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              padding: '2px 8px',
-                              background: '#f0fdf4',
-                              color: '#166534',
-                              border: '1px solid #bbf7d0',
-                              borderRadius: '4px',
-                              fontSize: '0.7rem',
-                              fontWeight: '700',
-                              cursor: 'pointer',
-                              width: 'fit-content'
-                            }}
-                          >
-                            <LucideCamera size={12} /> View Photo
-                          </button>
-                        ) : null}
-                      </div>
-                    </td>
+                              <td>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                  {m.check_in_latitude ? (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: '#047857', fontWeight: '600' }}>
+                                      <LucideMapPin size={12} />
+                                      <span>{Number(m.check_in_latitude).toFixed(4)}, {Number(m.check_in_longitude).toFixed(4)}</span>
+                                      {m.check_in_accuracy && <span style={{ color: '#64748b', fontSize: '0.68rem' }}>(±{m.check_in_accuracy}m)</span>}
+                                    </div>
+                                  ) : (
+                                    <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS log</span>
+                                  )}
 
-                    <td>
-                      {renderApprovalPill(m.approval_status, m.rejection_reason)}
-                    </td>
+                                  {m.check_in_photo ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setActivePhotoUrl(m.check_in_photo)}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        padding: '2px 8px',
+                                        background: '#f0fdf4',
+                                        color: '#166534',
+                                        border: '1px solid #bbf7d0',
+                                        borderRadius: '4px',
+                                        fontSize: '0.7rem',
+                                        fontWeight: '700',
+                                        cursor: 'pointer',
+                                        width: 'fit-content'
+                                      }}
+                                    >
+                                      <LucideCamera size={12} /> View Photo
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </td>
 
-                    <td>
-                      <input
-                        type="text"
-                        placeholder="Remarks..."
-                        value={m.notes || ''}
-                        onChange={(e) => handleNotesChange(m.user_id, e.target.value)}
-                        style={{
-                          width: '100%',
-                          padding: '6px 10px',
-                          borderRadius: '6px',
-                          border: '1px solid #cbd5e1',
-                          fontSize: '0.78rem',
-                          outline: 'none',
-                          boxSizing: 'border-box'
-                        }}
-                      />
-                    </td>
+                              <td>
+                                {renderApprovalPill(m.approval_status, m.rejection_reason)}
+                              </td>
 
-                    <td>
-                      {/* Attendance Selector Buttons */}
-                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                        <button
-                          type="button"
-                          onClick={() => handleStatusChange(m.user_id, 'PRESENT')}
-                          style={{
-                            padding: '4px 6px',
-                            fontSize: '0.7rem',
-                            fontWeight: '700',
-                            borderRadius: '5px',
-                            border: '1px solid',
-                            borderColor: m.status === 'PRESENT' ? '#10b981' : '#cbd5e1',
-                            background: m.status === 'PRESENT' ? '#ecfdf5' : '#ffffff',
-                            color: m.status === 'PRESENT' ? '#047857' : '#64748b',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          PRESENT
-                        </button>
+                              <td>
+                                <input
+                                  type="text"
+                                  placeholder="Remarks..."
+                                  value={m.notes || ''}
+                                  onChange={(e) => handleNotesChange(m.user_id, e.target.value)}
+                                  style={{
+                                    width: '100%',
+                                    padding: '6px 10px',
+                                    borderRadius: '6px',
+                                    border: '1px solid #cbd5e1',
+                                    fontSize: '0.78rem',
+                                    outline: 'none',
+                                    boxSizing: 'border-box'
+                                  }}
+                                />
+                              </td>
 
-                        <button
-                          type="button"
-                          onClick={() => handleStatusChange(m.user_id, 'ABSENT')}
-                          style={{
-                            padding: '4px 6px',
-                            fontSize: '0.7rem',
-                            fontWeight: '700',
-                            borderRadius: '5px',
-                            border: '1px solid',
-                            borderColor: m.status === 'ABSENT' ? '#ef4444' : '#cbd5e1',
-                            background: m.status === 'ABSENT' ? '#fef2f2' : '#ffffff',
-                            color: m.status === 'ABSENT' ? '#991b1b' : '#64748b',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          ABSENT
-                        </button>
+                              <td>
+                                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStatusChange(m.user_id, 'PRESENT')}
+                                    style={{
+                                      padding: '4px 6px',
+                                      fontSize: '0.7rem',
+                                      fontWeight: '700',
+                                      borderRadius: '5px',
+                                      border: '1px solid',
+                                      borderColor: m.status === 'PRESENT' ? '#10b981' : '#cbd5e1',
+                                      background: m.status === 'PRESENT' ? '#ecfdf5' : '#ffffff',
+                                      color: m.status === 'PRESENT' ? '#047857' : '#64748b',
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    PRESENT
+                                  </button>
 
-                        <button
-                          type="button"
-                          onClick={() => handleStatusChange(m.user_id, 'HALF_DAY')}
-                          style={{
-                            padding: '4px 6px',
-                            fontSize: '0.7rem',
-                            fontWeight: '700',
-                            borderRadius: '5px',
-                            border: '1px solid',
-                            borderColor: m.status === 'HALF_DAY' ? '#f59e0b' : '#cbd5e1',
-                            background: m.status === 'HALF_DAY' ? '#fffbeb' : '#ffffff',
-                            color: m.status === 'HALF_DAY' ? '#b45309' : '#64748b',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          HALF DAY
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStatusChange(m.user_id, 'ABSENT')}
+                                    style={{
+                                      padding: '4px 6px',
+                                      fontSize: '0.7rem',
+                                      fontWeight: '700',
+                                      borderRadius: '5px',
+                                      border: '1px solid',
+                                      borderColor: m.status === 'ABSENT' ? '#ef4444' : '#cbd5e1',
+                                      background: m.status === 'ABSENT' ? '#fef2f2' : '#ffffff',
+                                      color: m.status === 'ABSENT' ? '#991b1b' : '#64748b',
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    ABSENT
+                                  </button>
 
-                {teamMembers.length === 0 && (
-                  <tr>
-                    <td colSpan="8" style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
-                      {loading ? 'Loading team attendance roster...' : 'No team members found for selected filters.'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStatusChange(m.user_id, 'HALF_DAY')}
+                                    style={{
+                                      padding: '4px 6px',
+                                      fontSize: '0.7rem',
+                                      fontWeight: '700',
+                                      borderRadius: '5px',
+                                      border: '1px solid',
+                                      borderColor: m.status === 'HALF_DAY' ? '#f59e0b' : '#cbd5e1',
+                                      background: m.status === 'HALF_DAY' ? '#fffbeb' : '#ffffff',
+                                      color: m.status === 'HALF_DAY' ? '#b45309' : '#64748b',
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    HALF DAY
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {groupedVendorTeams.length === 0 && (
+              <div className="app-card" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
+                {loading ? 'Loading team attendance roster...' : 'No team members found for selected filters.'}
+              </div>
+            )}
           </div>
         </>
       )}
