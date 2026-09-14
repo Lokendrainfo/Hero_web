@@ -6,7 +6,7 @@ import {
   LucideLayoutDashboard, LucideTruck, LucideNavigation, LucideCheckSquare, LucideUsers, LucideCalendarCheck,
   LucideDollarSign, LucideFuel, LucideRepeat, LucideFileText, LucideWrench, LucideAlertOctagon, LucideAlertTriangle,
   LucidePackage, LucideBuilding, LucideUserCheck, LucideShieldCheck, LucideBell, LucideSettings, LucideX, LucideGlobe,
-  LucideLayers, LucideTag
+  LucideLayers, LucideTag, LucideLineChart
 } from 'lucide-react';
 
 export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) => {
@@ -31,6 +31,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
         { label: 'Live Tracking', path: '/tracking', icon: LucideNavigation, perm: 'tracking.view' },
         { label: 'Tasks', path: '/tasks', icon: LucideCheckSquare, perm: 'tasks.view' },
         { label: 'Map View', path: '/map-view', icon: LucideGlobe, perm: 'mapview.view' },
+        { label: 'Chart View', path: '/chart-view', icon: LucideLineChart, perm: 'mapview.view' },
         { label: 'Team', path: '/team', icon: LucideUsers, perm: 'team.view' },
         { label: 'Attendance', path: '/attendance', icon: LucideCalendarCheck, perm: 'attendance.view' }
       ]

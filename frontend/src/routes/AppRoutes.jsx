@@ -28,6 +28,7 @@ const TaskDetailPage = lazyComponent(() => import('../pages/tasks/TaskDetailPage
 const MapViewPage = lazyComponent(() => import('../pages/mapview/MapViewPage'), 'MapViewPage');
 const TrenchingMapViewPage = lazyComponent(() => import('../pages/mapview/TrenchingMapViewPage'), 'TrenchingMapViewPage');
 const HddExecutionMapPage = lazyComponent(() => import('../pages/mapview/HddExecutionMapPage'), 'HddExecutionMapPage');
+const ChartViewPage = lazyComponent(() => import('../pages/mapview/ChartViewPage'), 'ChartViewPage');
 const Team = lazyComponent(() => import('../pages/team/Team'), 'Team');
 const Attendance = lazyComponent(() => import('../pages/attendance/Attendance'), 'Attendance');
 const Expenses = lazyComponent(() => import('../pages/expenses/Expenses'), 'Expenses');
@@ -85,6 +86,8 @@ export const AppRoutes = () => {
             <Route path="/tasks/detail/:taskId" element={<TaskDetailPage />} />
             <Route path="/map-view" element={<MapViewPage />} />
             <Route path="/map-view/trenching" element={<TrenchingMapViewPage />} />
+            <Route path="/chart-view" element={<ChartViewPage />} />
+            <Route path="/chart-view/:executionId" element={<ChartViewPage />} />
             <Route path="/team" element={<Team />} />
             <Route path="/attendance" element={<Attendance />} />
             <Route path="/expenses" element={<Expenses />} />
