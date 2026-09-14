@@ -11,22 +11,24 @@ from django.db.models import Q
 
 from apps.common.vendor_scope import filter_queryset_by_vendor
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 class LiveTrackingView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         user = request.user if request.user and request.user.is_authenticated else None
         from apps.common.vendor_scope import get_user_authorized_machines
-        machines = get_user_authorized_machines(user, request=request)
+        machines = list(get_user_authorized_machines(user, request=request))
 
         ff_client = FiberForceClient()
         headings = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
-        data = []
-        for i, m in enumerate(machines):
+
+        def fetch_machine_telemetry(machine_item):
+            m, i = machine_item
             last_telemetry = TelemetryData.objects.filter(machine=m).order_by('-timestamp').first()
             status_upper = str(m.status or 'RUNNING').upper()
 
-            # Attempt live FiberForce telemetry if chassis number is present
             live_lat = None
             live_lng = None
             live_speed = None
@@ -38,7 +40,8 @@ class LiveTrackingView(APIView):
                 try:
                     ff_resp = ff_client.get_live_telemetry(
                         m.machine_chassis_no,
-                        params=['latitude', 'longitude', 'speed_kmph', 'is_online', 'fuel_litres', 'state']
+                        params=['latitude', 'longitude', 'speed_kmph', 'is_online', 'fuel_litres', 'state'],
+                        timeout=2.0
                     )
                     ff_data = ff_resp.get('data', {}) if isinstance(ff_resp, dict) else {}
                     if ff_data.get('latitude') and ff_data.get('longitude'):
@@ -53,13 +56,13 @@ class LiveTrackingView(APIView):
                     if ff_data.get('state'):
                         live_state = str(ff_data['state']).upper()
                 except Exception as e:
-                    print(f"[LiveTrackingView] FiberForce live fetch error for {m.machine_chassis_no}: {e}")
+                    pass
 
             lat = live_lat if live_lat is not None else (last_telemetry.latitude if last_telemetry else (m.current_latitude or (27.7011 + (i % 5) * 0.015)))
             lng = live_lng if live_lng is not None else (last_telemetry.longitude if last_telemetry else (m.current_longitude or (74.4649 + (i // 5) * 0.02)))
             speed = live_speed if live_speed is not None else (last_telemetry.speed if last_telemetry else (18.5 if status_upper == 'RUNNING' else 0.0))
 
-            data.append({
+            return {
                 'id': m.id,
                 'machine_id': m.id,
                 'name': m.name,
@@ -80,7 +83,19 @@ class LiveTrackingView(APIView):
                 'fuel_percentage': m.fuel_percentage,
                 'runtime_str': m.runtime_str,
                 'last_ping': getattr(m, 'last_ping', None) or (last_telemetry.timestamp if last_telemetry else m.updated_at)
-            })
+            }
+
+        data = []
+        if machines:
+            with ThreadPoolExecutor(max_workers=min(len(machines), 15)) as executor:
+                futures = [executor.submit(fetch_machine_telemetry, (m, i)) for i, m in enumerate(machines)]
+                for future in as_completed(futures):
+                    try:
+                        data.append(future.result())
+                    except Exception as e:
+                        print(f"[LiveTrackingView] Telemetry worker error: {e}")
+
+        data.sort(key=lambda x: x['id'])
         return success_response(data=data, message="Live tracking telemetry fetched")
 
 class TelemetryViewSet(viewsets.ModelViewSet):

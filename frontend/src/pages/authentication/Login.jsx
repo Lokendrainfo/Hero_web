@@ -60,7 +60,7 @@ export const Login = () => {
               <span className="login-mark-live" />
             </div>
             <div className="login-wordmark">
-              HERO <span>WEB</span>
+              HERO
             </div>
           </div>
 

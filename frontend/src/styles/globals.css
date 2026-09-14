@@ -177,7 +177,8 @@ code {
 /* GIS execution markers — circle + label chain, like field survey maps */
 .gis-marker.leaflet-div-icon,
 .gis-dp-marker.leaflet-div-icon,
-.gis-pit-marker.leaflet-div-icon {
+.gis-pit-marker.leaflet-div-icon,
+.custom-live-location-disc-marker.leaflet-div-icon {
   background: transparent !important;
   border: none !important;
   overflow: visible !important;

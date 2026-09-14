@@ -99,21 +99,31 @@ export const LeafletMap = ({
       const course = m.course_deg || m.heading || 45;
       const status = (m.status || 'RUNNING').toUpperCase();
 
-      // Custom mint circular directional arrow marker matching screenshot
-      const statusColor = status === 'RUNNING' ? '#059669' : status === 'IDLE' ? '#1d4ed8' : '#6b7280';
+      // Custom mint-green circular disc directional arrow marker matching screenshot 1
       const customIcon = L.divIcon({
-        className: 'custom-directional-arrow-marker',
+        className: 'custom-live-location-disc-marker',
         html: `
-          <div style="display:flex;flex-direction:column;align-items:center;cursor:pointer;">
-            <svg width="22" height="28" viewBox="0 0 24 32" style="transform: rotate(${course}deg); transform-origin: 50% 40%;">
-              <path d="M12 0C5.37 0 0 5.37 0 12C0 21 12 32 12 32C12 32 24 21 24 12C24 5.37 18.63 0 12 0Z" fill="${statusColor}" stroke="#ffffff" stroke-width="1.4"/>
-              <circle cx="12" cy="11" r="4.2" fill="#ffffff"/>
+          <div style="
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: #6ee7b7;
+            border: 2.5px solid #059669;
+            box-shadow: 0 0 0 5px rgba(16, 185, 129, 0.28), 0 3px 8px rgba(0, 0, 0, 0.18);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: transform 0.15s ease;
+          ">
+            <svg width="18" height="18" viewBox="0 0 24 24" style="transform: rotate(${course}deg); transform-origin: center;">
+              <path d="M12 2L19 21L12 17L5 21L12 2Z" fill="#0f172a" />
             </svg>
           </div>
         `,
-        iconSize: [22, 28],
-        iconAnchor: [11, 28],
-        popupAnchor: [0, -26]
+        iconSize: [36, 36],
+        iconAnchor: [18, 18],
+        popupAnchor: [0, -18]
       });
 
       const marker = L.marker([lat, lng], { icon: customIcon });
