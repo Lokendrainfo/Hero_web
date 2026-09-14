@@ -18,21 +18,33 @@ class TaskViewSet(viewsets.ModelViewSet):
         
         # Advance User Geography Filter
         if user and user.is_authenticated and getattr(user, 'user_type', None) == 'ADVANCE':
-            if user.advance_scope_type == 'CIRCLE' and user.selected_circle:
-                qs = qs.filter(circle_name__iexact=user.selected_circle.name)
-            elif user.advance_scope_type == 'DISTRICT' and user.selected_district:
-                qs = qs.filter(district_name__iexact=user.selected_district.name)
-            elif user.advance_scope_type == 'BLOCK' and user.selected_block:
-                qs = qs.filter(block_name__iexact=user.selected_block.name)
+            from django.db.models import Q
+            if hasattr(Task, 'circle_name'):
+                if user.advance_scope_type == 'CIRCLE' and user.selected_circle:
+                    qs = qs.filter(circle_name__iexact=user.selected_circle.name)
+                elif user.advance_scope_type == 'DISTRICT' and user.selected_district:
+                    qs = qs.filter(district_name__iexact=user.selected_district.name)
+                elif user.advance_scope_type == 'BLOCK' and user.selected_block:
+                    qs = qs.filter(block_name__iexact=user.selected_block.name)
+            else:
+                if user.advance_scope_type == 'CIRCLE' and user.selected_circle:
+                    qs = qs.filter(Q(title__icontains=user.selected_circle.name) | Q(description__icontains=user.selected_circle.name))
+                elif user.advance_scope_type == 'DISTRICT' and user.selected_district:
+                    qs = qs.filter(Q(title__icontains=user.selected_district.name) | Q(description__icontains=user.selected_district.name))
+                elif user.advance_scope_type == 'BLOCK' and user.selected_block:
+                    qs = qs.filter(Q(title__icontains=user.selected_block.name) | Q(description__icontains=user.selected_block.name))
+        else:
+            from apps.common.vendor_scope import get_user_vendor_ids
+            allowed_v_ids = get_user_vendor_ids(user) if user and user.is_authenticated else None
+            # Reporting Manager Scope Filter for Normal users not assigned to specific vendor scoping
+            if user and user.is_authenticated and not user.is_superuser and 'ADMIN' not in user.get_role_list() and allowed_v_ids is None:
+                from apps.common.reporting_scope import get_reporting_scope
+                reporting_scope_ids = get_reporting_scope(user)
+                if reporting_scope_ids:
+                    qs = qs.filter(assigned_to_id__in=reporting_scope_ids)
 
-        # Reporting Manager Scope Filter
-        if user and user.is_authenticated and not user.is_superuser and 'ADMIN' not in user.get_role_list():
-            from apps.common.reporting_scope import get_reporting_scope
-            reporting_scope_ids = get_reporting_scope(user)
-            if len(reporting_scope_ids) > 1:
-                qs = qs.filter(assigned_to_id__in=reporting_scope_ids)
-
-        machine_id = self.request.query_params.get('machine_id') or self.request.query_params.get('machine')
+        q_params = getattr(self.request, 'query_params', getattr(self.request, 'GET', {}))
+        machine_id = q_params.get('machine_id') or q_params.get('machine')
         if machine_id and str(machine_id).strip() and str(machine_id).lower() != 'all':
             from django.db.models import Q
             if str(machine_id).isdigit():
@@ -43,11 +55,11 @@ class TaskViewSet(viewsets.ModelViewSet):
                     Q(machine__external_machine_id=machine_id)
                 )
 
-        task_type = self.request.query_params.get('task_type') or self.request.query_params.get('taskType')
+        task_type = q_params.get('task_type') or q_params.get('taskType')
         if task_type and str(task_type).strip() and str(task_type).upper() != 'ALL':
             qs = qs.filter(task_type__iexact=task_type)
 
-        status_param = self.request.query_params.get('status')
+        status_param = q_params.get('status')
         if status_param and str(status_param).strip() and str(status_param).upper() != 'ALL':
             qs = qs.filter(status__iexact=status_param)
 

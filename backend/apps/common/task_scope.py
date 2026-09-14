@@ -371,6 +371,27 @@ def is_task_authorized_for_user(user, task_id, request=None):
         if clean_id == t_clean or clean_id == t_id or str(task_id) == t_id:
             return True
 
+    # Check local DB Task queryset if clean_id is numeric
+    if clean_id.isdigit():
+        try:
+            from apps.tasks.models import Task
+            from apps.tasks.views import TaskViewSet
+            dummy_req = request
+            if not dummy_req:
+                from django.test import RequestFactory
+                dummy_req = RequestFactory().get('/')
+                dummy_req.user = user
+            
+            v = TaskViewSet()
+            v.request = dummy_req
+            qs = v.get_queryset()
+            if qs.filter(id=int(clean_id)).exists():
+                return True
+            else:
+                return False
+        except Exception:
+            pass
+
     # Fallback check direct API item with security scope enforcement
     try:
         client = IlyncClient(request=request)
