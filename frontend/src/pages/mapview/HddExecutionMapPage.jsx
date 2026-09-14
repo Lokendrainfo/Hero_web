@@ -488,40 +488,50 @@ export const HddExecutionMapPage = () => {
       }
     });
 
-    // 2. Pit endpoints — one named start, one named end; coupling pits stay as quiet dots
+    // 2. Pits — all rendered as clean mid pits
     const pits = executionData.pits || [];
-    const namedStart = pits.find((pit, idx) => resolvePitRole(pit, idx, pits.length, startPitIds, endPitIds) === 'start') || pits[0];
-    const namedEnd = [...pits].reverse().find((pit, idx) => {
-      const originalIdx = pits.length - 1 - idx;
-      return resolvePitRole(pit, originalIdx, pits.length, startPitIds, endPitIds) === 'end';
-    }) || pits[pits.length - 1];
 
     pits.forEach((pit, pIdx) => {
       const pt = [pit.lat, pit.lng];
       allBounds.push(pt);
       frameBounds.push(pt);
-
-      const role = pit === namedStart ? 'start' : (pit === namedEnd && pit !== namedStart ? 'end' : 'mid');
+      const role = 'mid';
       const pitPhotosList = (pit.photos && pit.photos.length > 0) ? pit.photos : [];
-      const pitTag = role === 'start' ? 'Start pit' : role === 'end' ? 'End pit' : '';
 
       const m = L.marker(pt, {
-        icon: pitIcon({ role, name: pit.name || pit.id, tag: pitTag }),
+        icon: pitIcon({ role: 'mid', name: pit.name || pit.id }),
         zIndexOffset: 400
       });
 
-      m.bindTooltip(pit.name || pit.id, {
+      m.bindTooltip(`${pit.depth != null ? formatDepthM(pit.depth) + ' · ' : ''}${pit.name || pit.id}`, {
         direction: 'top',
-        offset: [0, role === 'mid' ? -8 : -20],
+        offset: [0, -8],
         className: 'gis-tip',
         opacity: 1
       });
 
       if (pitPhotosList.length > 0) {
-        m.on('click', () => openLightbox(pitPhotosList, 0));
+        const cleanPitId = String(pit.id || `pit_${pIdx}`).replace(/[^a-zA-Z0-9]/g, '_');
+        window[`__openPitLightbox_${cleanPitId}`] = () => openLightbox(pitPhotosList, 0);
+        m.bindPopup(gisPopupHtml({
+          eyebrow: 'Pit',
+          title: pit.name || pit.id,
+          rows: [
+            ['Depth', pit.depth != null ? formatDepthM(pit.depth) : '—'],
+            ['Width', pit.width != null ? `${Number(pit.width).toFixed(2)}m` : '—'],
+            ['Side', pit.side],
+            ['Type', pit.type],
+            ['Time', pit.diggingTime],
+          ],
+          actionLabel: `View media (${pitPhotosList.length})`,
+        }), { maxWidth: 260, className: 'gis-popup' });
+        m.on('popupopen', (e) => {
+          const btn = e.popup.getElement()?.querySelector('.gis-popup-btn');
+          if (btn) btn.onclick = () => window[`__openPitLightbox_${cleanPitId}`]();
+        });
       } else {
         m.bindPopup(gisPopupHtml({
-          eyebrow: role === 'start' ? 'Start pit' : role === 'end' ? 'End pit' : 'Pit',
+          eyebrow: 'Pit',
           title: pit.name || pit.id,
           rows: [
             ['Depth', pit.depth != null ? formatDepthM(pit.depth) : '—'],
@@ -535,29 +545,6 @@ export const HddExecutionMapPage = () => {
 
       layerGroup.addLayer(m);
     });
-
-    (executionData.shots || []).forEach((shot) => {
-      const a = shot.startPit;
-      const b = shot.endPit;
-      if (a?.lat == null || a?.lng == null || b?.lat == null || b?.lng == null) return;
-      L.polyline([[a.lat, a.lng], [b.lat, b.lng]], {
-        color: '#111827',
-        weight: 1.5,
-        opacity: 0.55,
-        lineCap: 'round',
-        interactive: false,
-      }).addTo(layerGroup);
-    });
-    const pitChain = pits.filter((pit) => pit.lat != null && pit.lng != null);
-    if (pitChain.length > 1) {
-      L.polyline(pitChain.map((pit) => [pit.lat, pit.lng]), {
-        color: '#111827',
-        weight: 1.5,
-        opacity: 0.45,
-        lineCap: 'round',
-        interactive: false,
-      }).addTo(layerGroup);
-    }
 
     // 3. Depth captures — sample + scale with zoom so pins do not stack
     const depthPoints = executionData.depthPoints || [];
