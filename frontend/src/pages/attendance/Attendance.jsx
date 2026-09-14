@@ -69,7 +69,13 @@ export const Attendance = () => {
     if (!teamMembers || teamMembers.length === 0) return [];
     const map = {};
     teamMembers.forEach(m => {
-      const vName = m.vendor_name || m.vendor?.name || activeVendorName || 'Pranjal Enterprises';
+      let vName = m.vendor_name || m.vendor?.name || activeVendorName || 'Pranjal Enterprises';
+      const cleanV = vName.replace(/\s+/g, '').toLowerCase();
+      if (cleanV.includes('gurukripa') || cleanV.includes('gurukrupa') || cleanV.includes('gurutkripa') || (cleanV.includes('guru') && cleanV.includes('kripa'))) {
+        vName = 'Gurukripa Enterprises';
+      } else if (cleanV.includes('pranjal')) {
+        vName = 'Pranjal Enterprises';
+      }
       if (!map[vName]) {
         map[vName] = {
           vendorName: vName,
