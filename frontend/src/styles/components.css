@@ -548,7 +548,7 @@ textarea:focus {
 
 .date-field-menu {
   position: fixed;
-  z-index: 900;
+  z-index: 9999;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1496,7 +1496,7 @@ textarea:focus {
 
 .search-select-menu {
   position: fixed;
-  z-index: 800;
+  z-index: 9999;
   display: flex;
   flex-direction: column;
   background: var(--bg-surface);

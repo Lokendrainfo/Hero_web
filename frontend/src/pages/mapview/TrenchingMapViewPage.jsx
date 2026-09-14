@@ -30,9 +30,13 @@ const compactWhen = (value) => {
 export const TrenchingMapViewPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { selectedVendorId, roles, isAdmin, hasPermission } = useAuth();
+  const { selectedVendorId, roles, isAdmin, hasPermission, user } = useAuth();
 
   const isVendorAccount = !isAdmin && (roles || []).some(r => (r || '').toUpperCase() === 'VENDOR') && !hasPermission('mapview.view');
+
+  const isAdvanceUser = user?.user_type === 'ADVANCE';
+  const assignedCircle = user?.selected_circle_name ? user.selected_circle_name.toUpperCase() : null;
+  const assignedDistrict = user?.selected_district_name ? user.selected_district_name.toUpperCase() : null;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -41,6 +45,17 @@ export const TrenchingMapViewPage = () => {
   // Filters State
   const [selectedState, setSelectedState] = useState('ALL');
   const [selectedDistrict, setSelectedDistrict] = useState('ALL');
+
+  // Auto-lock state/district filters for Advance User scope
+  useEffect(() => {
+    if (isAdvanceUser && assignedCircle) {
+      setSelectedState(assignedCircle);
+      if (assignedDistrict) {
+        setSelectedDistrict(assignedDistrict);
+      }
+    }
+  }, [isAdvanceUser, assignedCircle, assignedDistrict]);
+
   const dateParam = searchParams.get('date');
   const [selectedDate, setSelectedDate] = useState(dateParam || (() => new Date().toISOString().split('T')[0]));
 
@@ -150,6 +165,20 @@ export const TrenchingMapViewPage = () => {
     );
   }
 
+  // Memoized available states dynamically
+  const availableStates = useMemo(() => {
+    if (isAdvanceUser && assignedCircle) {
+      return [assignedCircle];
+    }
+    const statesSet = new Set(
+      normalizedExecutions
+        .map(ex => (ex.state || ex.circle || '').toUpperCase())
+        .filter(Boolean)
+    );
+    ['RAJASTHAN', 'HARYANA', 'ASSAM', 'PUNJAB', 'DELHI'].forEach(s => statesSet.add(s));
+    return Array.from(statesSet).sort();
+  }, [normalizedExecutions, isAdvanceUser, assignedCircle]);
+
   // Memoized available districts
   const availableDistricts = useMemo(() => {
     return Array.from(
@@ -233,6 +262,7 @@ export const TrenchingMapViewPage = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <SearchableSelect
               value={selectedState}
+              disabled={isAdvanceUser && !!assignedCircle}
               onChange={e => {
                 setSelectedState(e.target.value);
                 setSelectedDistrict('ALL');
@@ -240,21 +270,26 @@ export const TrenchingMapViewPage = () => {
               className="vendor-switcher"
               style={{ height: 36, minWidth: 140 }}
             >
-              <option value="ALL">All states</option>
-              <option value="RAJASTHAN">Rajasthan</option>
-              <option value="HARYANA">Haryana</option>
-              <option value="ASSAM">Assam</option>
+              {!isAdvanceUser && <option value="ALL">All states</option>}
+              {availableStates.map(st => (
+                <option key={st} value={st}>
+                  {st.charAt(0) + st.slice(1).toLowerCase()} {isAdvanceUser && assignedCircle === st ? '🔒 (Assigned Circle Scope)' : ''}
+                </option>
+              ))}
             </SearchableSelect>
 
             <SearchableSelect
               value={selectedDistrict}
+              disabled={isAdvanceUser && !!assignedDistrict}
               onChange={e => setSelectedDistrict(e.target.value)}
               className="vendor-switcher"
               style={{ height: 36, minWidth: 160 }}
             >
-              <option value="ALL">All districts</option>
+              {(!isAdvanceUser || !assignedDistrict) && <option value="ALL">All districts</option>}
               {availableDistricts.map(dist => (
-                <option key={dist} value={dist}>{dist}</option>
+                <option key={dist} value={dist}>
+                  {dist} {isAdvanceUser && assignedDistrict === dist ? '🔒 (Assigned District)' : ''}
+                </option>
               ))}
             </SearchableSelect>
 

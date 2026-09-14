@@ -70,13 +70,16 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
         return 'OPERATOR'
 
     def get_reporting_manager_id(self, obj):
-        if obj.user and obj.user.reporting_manager:
-            return obj.user.reporting_manager.id
+        if obj.reporting_manager_id:
+            return obj.reporting_manager_id
+        if obj.user and obj.user.reporting_manager_id:
+            return obj.user.reporting_manager_id
         return None
 
     def get_reporting_manager_name(self, obj):
-        if obj.user and obj.user.reporting_manager:
-            return obj.user.reporting_manager.get_full_name() or obj.user.reporting_manager.username
+        mgr = obj.reporting_manager or (obj.user.reporting_manager if obj.user else None)
+        if mgr:
+            return mgr.get_full_name() or mgr.username
         return None
 
     def get_vendor_id(self, obj):

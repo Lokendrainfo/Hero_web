@@ -67,4 +67,5 @@ urlpatterns = [
     path('reports/', include('apps.reports.urls')),
     path('integrations/', include('apps.integrations.urls')),
     path('common/', include('apps.common.urls')),
+    path('geography/', include('apps.common.urls')),
 ]

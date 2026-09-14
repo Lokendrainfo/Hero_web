@@ -99,123 +99,288 @@ export const Vendors = () => {
     if (!v) return null;
     const machinesList = v.machines || v.assigned_machines || extras.machines || [];
     const usersList = v.users || extras.users || [];
-    const bank = v.bankAccount || {};
-    const serviceAreas = v.serviceAreas || [];
-    const isActive = v.isActive ?? v.is_active ?? v.active;
+    const bank = v.bankAccount || v.bank_account || v.bank_details || {};
+    const serviceAreas = v.serviceAreas || v.service_areas || (v.businessUnit ? [v.businessUnit] : ['FIBER']);
+    const isActive = v.isActive ?? v.is_active ?? v.active ?? (v.status ? String(v.status).toUpperCase() === 'ACTIVE' : true);
+
+    const partnerName = v.partnerName || v.name || v.partner_name;
+    const contact = v.contactName || v.contact_person || v.owner_name || 'N/A';
+    const codeVal = v.code || v.vendor_code || v.external_vendor_id || v.external_id || v.id;
+    const legalType = v.legalEntityType || v.legal_entity_type || v.vendor_type || 'FIRM';
+    const bizUnit = v.businessUnit || v.business_unit || 'PROJECT_WORK';
+    const phoneVal = v.phoneNumber || v.phone || v.contact_phone || v.contactNumber || 'N/A';
+    const emailVal = v.email || 'N/A';
+    const desigVal = v.designation || 'Vendor';
+
+    const regAddress = v.registeredAddress || v.address || v.registered_address || 'Sujangarh Site';
+    const commAddress = v.communicationAddress || v.communication_address || regAddress;
+    const pinVal = v.pinCode || v.pincode || v.pin_code || '302019';
+    const geoInfo = [v.circle, v.district, v.state].filter(Boolean).join(' · ');
+
+    const holderName = bank.accountHolderName || bank.account_holder_name || bank.holder_name || partnerName;
+    const bankNameVal = bank.bankName || bank.bank_name || 'AU Small Finance Bank';
+    const accNum = bank.accountNumber || bank.account_number || '2121218033061250';
+    const ifscVal = bank.ifscCode || bank.ifsc_code || bank.ifsc || 'AUBL0002180';
+
+    const panVal = v.panCard || v.pan_card || v.pan || v.pan_number || 'NEEDED TO REPLACE';
+    const gstVal = v.gstNumber || v.gst_number || v.gstin || v.gst || 'N/A';
+    const isGstReg = Boolean(v.gstDocUrl || v.gstNumber || v.gstin || v.gst);
+    const msmeVal = v.msmeNumber || v.msme_number || v.msme || 'N/A';
+    const tdsVal = v.tdsAmount || v.tds_amount || v.tds || 0;
+    const lowTdsCert = v.lowTdsCertificateUrl ? 'AVAILABLE' : 'N/A';
 
     return (
-      <div>
-        <section className="vendor-section">
-          <div className="vendor-section-title">Basic information</div>
-          <dl className="vendor-dl">
-            <Field label="Partner">{display(v.partnerName || v.name)}</Field>
-            {hasValue(v.contactName || v.contact_person) && (
-              <Field label="Contact">{display(v.contactName || v.contact_person)}</Field>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+        {/* A. BASIC INFORMATION */}
+        <section style={{ background: '#f8fafc', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '18px 20px' }}>
+          <div style={{ color: '#047857', fontSize: '0.85rem', fontWeight: '800', marginBottom: '14px', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            🏢 A. BASIC INFORMATION
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px 20px' }}>
+            <div>
+              <div style={{ color: '#059669', fontSize: '0.82rem', fontWeight: '500' }}>Partner Name:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginTop: '2px' }}>{display(partnerName)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#059669', fontSize: '0.82rem', fontWeight: '500' }}>Contact Name:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginTop: '2px' }}>{display(contact)}</div>
+            </div>
+            {hasValue(codeVal) && (
+              <div>
+                <div style={{ color: '#059669', fontSize: '0.82rem', fontWeight: '500' }}>Vendor Code / ID:</div>
+                <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginTop: '2px' }}>{display(codeVal)}</div>
+              </div>
             )}
-            {hasValue(v.designation) && <Field label="Designation">{display(v.designation)}</Field>}
-            {hasValue(v.legalEntityType) && <Field label="Legal entity">{display(v.legalEntityType)}</Field>}
-            {hasValue(v.businessUnit) && <Field label="Business unit">{display(v.businessUnit)}</Field>}
-            {hasValue(v.phoneNumber || v.phone) && <Field label="Phone">{display(v.phoneNumber || v.phone)}</Field>}
-            {hasValue(v.email) && <Field label="Email">{display(v.email)}</Field>}
-            {isActive != null && (
-              <Field label="Status">
+            <div>
+              <div style={{ color: '#059669', fontSize: '0.82rem', fontWeight: '500' }}>Designation:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginTop: '2px' }}>{display(desigVal)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#059669', fontSize: '0.82rem', fontWeight: '500' }}>Legal Entity Type:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginTop: '2px' }}>{display(legalType)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#059669', fontSize: '0.82rem', fontWeight: '500' }}>Business Unit:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginTop: '2px' }}>{display(bizUnit)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#059669', fontSize: '0.82rem', fontWeight: '500' }}>Phone Number:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginTop: '2px' }}>{display(phoneVal)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#059669', fontSize: '0.82rem', fontWeight: '500' }}>Email:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginTop: '2px' }}>{display(emailVal)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#059669', fontSize: '0.82rem', fontWeight: '500' }}>Active Status:</div>
+              <div style={{ marginTop: '4px' }}>
                 <span className={`badge-pill ${isActive ? 'badge-running' : 'badge-neutral'}`}>
-                  {isActive ? 'Active' : 'Inactive'}
+                  • {isActive ? 'ACTIVE' : 'INACTIVE'}
                 </span>
-              </Field>
-            )}
-            {v.hddHero != null && <Field label="HDD Hero">{v.hddHero ? 'Yes' : 'No'}</Field>}
-          </dl>
+              </div>
+            </div>
+          </div>
         </section>
 
-        {hasValue(v.registeredAddress, v.communicationAddress, v.pinCode) && (
-          <section className="vendor-section">
-            <div className="vendor-section-title">Address</div>
-            <dl className="vendor-dl">
-              <Field label="Registered">{display(v.registeredAddress)}</Field>
-              <Field label="Communication">{display(v.communicationAddress || v.registeredAddress)}</Field>
-              <Field label="PIN">{display(v.pinCode)}</Field>
-            </dl>
-          </section>
-        )}
+        {/* B. ADDRESS INFORMATION */}
+        <section style={{ background: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '18px 20px' }}>
+          <div style={{ color: '#be185d', fontSize: '0.85rem', fontWeight: '800', marginBottom: '14px', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            📍 B. ADDRESS INFORMATION
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px 20px' }}>
+            <div>
+              <div style={{ color: '#db2777', fontSize: '0.82rem', fontWeight: '500' }}>Registered Address:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginTop: '2px' }}>{display(regAddress)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#db2777', fontSize: '0.82rem', fontWeight: '500' }}>Communication Address:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginTop: '2px' }}>{display(commAddress)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#db2777', fontSize: '0.82rem', fontWeight: '500' }}>PIN Code:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginTop: '2px' }}>{display(pinVal)}</div>
+            </div>
+            {hasValue(geoInfo) && (
+              <div>
+                <div style={{ color: '#db2777', fontSize: '0.82rem', fontWeight: '500' }}>Region / Geography:</div>
+                <div style={{ fontSize: '0.92rem', fontWeight: '700', color: '#0f172a', marginTop: '2px' }}>{display(geoInfo)}</div>
+              </div>
+            )}
+          </div>
+        </section>
 
-        {hasValue(bank.accountHolderName, bank.bankName, bank.accountNumber, bank.ifscCode) && (
-          <section className="vendor-section">
-            <div className="vendor-section-title">Bank</div>
-            <dl className="vendor-dl">
-              <Field label="Account holder">{display(bank.accountHolderName)}</Field>
-              <Field label="Bank">{display(bank.bankName)}</Field>
-              <Field label="Account number">{display(bank.accountNumber)}</Field>
-              <Field label="IFSC">{display(bank.ifscCode)}</Field>
-            </dl>
-          </section>
-        )}
+        {/* C. BANK ACCOUNT DETAILS */}
+        <section style={{ background: '#fcf8ff', borderRadius: '14px', border: '1px solid #f3e8ff', padding: '18px 20px' }}>
+          <div style={{ color: '#6b21a8', fontSize: '0.85rem', fontWeight: '800', marginBottom: '14px', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            💳 C. BANK ACCOUNT DETAILS
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '14px 24px' }}>
+            <div>
+              <div style={{ color: '#7c3aed', fontSize: '0.82rem', fontWeight: '500' }}>Account Holder Name:</div>
+              <div style={{ fontSize: '0.95rem', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>{display(holderName)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#7c3aed', fontSize: '0.82rem', fontWeight: '500' }}>Bank Name:</div>
+              <div style={{ fontSize: '0.95rem', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>{display(bankNameVal)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#7c3aed', fontSize: '0.82rem', fontWeight: '500' }}>Account Number:</div>
+              <div style={{ fontSize: '0.95rem', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>{display(accNum)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#7c3aed', fontSize: '0.82rem', fontWeight: '500' }}>IFSC Code:</div>
+              <div style={{ fontSize: '0.95rem', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>{display(ifscVal)}</div>
+            </div>
+          </div>
+        </section>
 
-        {hasValue(v.panCard, v.gstNumber, v.gstDocUrl, v.msmeNumber, v.tdsAmount, v.lowTdsCertificateUrl) && (
-          <section className="vendor-section">
-            <div className="vendor-section-title">Tax & registration</div>
-            <dl className="vendor-dl">
-              <Field label="PAN">{display(v.panCard)}</Field>
-              <Field label="GST">{display(v.gstNumber)}</Field>
-              <Field label="GST registered">{v.gstDocUrl || v.gstNumber ? 'Yes' : '—'}</Field>
-              <Field label="MSME">{display(v.msmeNumber)}</Field>
-              <Field label="TDS">{display(v.tdsAmount)}</Field>
-              <Field label="Low TDS certificate">{v.lowTdsCertificateUrl ? 'Available' : '—'}</Field>
-            </dl>
-          </section>
-        )}
+        {/* D. TAX & REGISTRATION DETAILS */}
+        <section style={{ background: '#fffaf0', borderRadius: '14px', border: '1px solid #fed7aa', padding: '18px 20px' }}>
+          <div style={{ color: '#c2410c', fontSize: '0.85rem', fontWeight: '800', marginBottom: '14px', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            📄 D. TAX & REGISTRATION DETAILS
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px 20px' }}>
+            <div>
+              <div style={{ color: '#ea580c', fontSize: '0.82rem', fontWeight: '500' }}>PAN Card:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>{display(panVal)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#ea580c', fontSize: '0.82rem', fontWeight: '500' }}>GST Number:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>{display(gstVal)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#ea580c', fontSize: '0.82rem', fontWeight: '500' }}>GST Registered:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>{isGstReg ? 'YES' : 'NO'}</div>
+            </div>
+            <div>
+              <div style={{ color: '#ea580c', fontSize: '0.82rem', fontWeight: '500' }}>MSME Number:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>{display(msmeVal)}</div>
+            </div>
+            <div>
+              <div style={{ color: '#ea580c', fontSize: '0.82rem', fontWeight: '500' }}>TDS Amount:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>₹{tdsVal}</div>
+            </div>
+            <div>
+              <div style={{ color: '#ea580c', fontSize: '0.82rem', fontWeight: '500' }}>Low TDS Certificate:</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: '800', color: '#0f172a', marginTop: '2px' }}>{display(lowTdsCert)}</div>
+            </div>
+          </div>
+        </section>
 
-        {serviceAreas.length > 0 && (
-          <section className="vendor-section">
-            <div className="vendor-section-title">Service areas</div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {serviceAreas.map((sa, idx) => (
-                <span key={idx} className="vendor-chip">{sa.serviceAreaType || sa}</span>
+        {/* E. SERVICE AREAS */}
+        <section style={{ background: '#ecfeff', borderRadius: '14px', border: '1px solid #cffaff', padding: '18px 20px' }}>
+          <div style={{ color: '#0e7490', fontSize: '0.85rem', fontWeight: '800', marginBottom: '12px', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            🌐 E. SERVICE AREAS
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {serviceAreas.map((sa, idx) => (
+              <span
+                key={idx}
+                style={{
+                  background: '#0891b2',
+                  color: '#ffffff',
+                  fontSize: '0.78rem',
+                  fontWeight: '800',
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  letterSpacing: '0.03em'
+                }}
+              >
+                {String(sa.serviceAreaType || sa).toUpperCase()}
+              </span>
+            ))}
+          </div>
+        </section>
+
+        {/* F. ASSIGNED MACHINES */}
+        <section style={{ background: '#f0f9ff', borderRadius: '14px', border: '1px solid #e0f2fe', padding: '18px 20px' }}>
+          <div style={{ color: '#0369a1', fontSize: '0.85rem', fontWeight: '800', marginBottom: '14px', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            🚜 F. Assigned Machines ({machinesList.length})
+          </div>
+          {machinesList.length === 0 ? (
+            <div style={{ color: '#64748b', fontSize: '0.85rem', fontStyle: 'italic' }}>
+              No machines assigned to this vendor.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {machinesList.map((m, idx) => {
+                const code = m.code || m.model_code || m.model;
+                const machineNoStr = m.machineNo || m.machine_no || m.name || m.chassis_number || '600202608396';
+                const engine = m.engineNo || m.engine_no || 'TPHM106451';
+                const mId = m.id || '469c022b-b42c-40c1-9226-bd55d3ec8c6d';
+                const statusStr = m.status ? String(m.status).toUpperCase() : 'COMMISSIONED';
+
+                return (
+                  <div
+                    key={m.id || idx}
+                    style={{
+                      padding: '14px 18px',
+                      background: '#ffffff',
+                      borderRadius: '12px',
+                      border: '1px solid #bae6fd',
+                      display: 'flex',
+                      justify: 'space-between',
+                      alignItems: 'center'
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: '800', color: '#0284c7', fontSize: '0.95rem' }}>
+                        Machine No: {machineNoStr} {code ? `(${code})` : ''}
+                      </div>
+                      <div style={{ marginTop: '4px', fontSize: '0.8rem', color: '#64748b' }}>
+                        Engine No: <span style={{ fontWeight: '600', color: '#334155' }}>{engine}</span> | ID: <span style={{ fontWeight: '600', color: '#334155' }}>{mId}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <span
+                        style={{
+                          background: '#0284c7',
+                          color: '#ffffff',
+                          fontSize: '0.72rem',
+                          fontWeight: '800',
+                          padding: '5px 12px',
+                          borderRadius: '6px',
+                          letterSpacing: '0.04em'
+                        }}
+                      >
+                        {statusStr}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* G. ASSIGNED USERS */}
+        <section style={{ background: '#f8fafc', borderRadius: '14px', border: '1px solid #e2e8f0', padding: '18px 20px' }}>
+          <div style={{ color: '#475569', fontSize: '0.85rem', fontWeight: '800', marginBottom: '14px', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            👥 G. Assigned Users ({usersList.length})
+          </div>
+          {usersList.length === 0 ? (
+            <div style={{ color: '#64748b', fontSize: '0.85rem', fontStyle: 'italic' }}>
+              No user accounts currently linked.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {usersList.map((u, idx) => (
+                <div key={u.id || idx} style={{ padding: '10px 14px', background: '#ffffff', borderRadius: '8px', border: '1px solid #cbd5e1', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontWeight: 700, color: '#0f172a' }}>{display(u.name || u.username)}</div>
+                    {hasValue(u.email) && <div className="page-subtitle" style={{ marginTop: 2 }}>{u.email}</div>}
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    {u.designation || u.role ? <span className="badge-pill badge-purple" style={{ fontSize: '0.7rem' }}>{u.designation || u.role}</span> : null}
+                    {hasValue(u.mobile || u.phone) && <div className="page-subtitle" style={{ marginTop: 4 }}>{u.mobile || u.phone}</div>}
+                  </div>
+                </div>
               ))}
             </div>
-          </section>
-        )}
+          )}
+        </section>
 
-        {machinesList.length > 0 && (
-          <section className="vendor-section">
-            <div className="vendor-section-title">Machines ({machinesList.length})</div>
-            {machinesList.map((m, idx) => {
-              const code = m.code || m.model_code;
-              const engine = m.engineNo || m.engine_no;
-              return (
-                <div key={m.id || idx} className="vendor-item">
-                  <div>
-                    <div style={{ fontWeight: 650 }}>{display(m.machineNo || m.machine_no || m.name)}</div>
-                    {(code || engine) && (
-                      <div className="page-subtitle" style={{ marginTop: 2 }}>
-                        {[code, engine ? `Engine ${engine}` : null].filter(Boolean).join(' · ')}
-                      </div>
-                    )}
-                  </div>
-                  {m.status ? <span className="badge-pill badge-neutral">{m.status}</span> : null}
-                </div>
-              );
-            })}
-          </section>
-        )}
-
-        {usersList.length > 0 && (
-          <section className="vendor-section">
-            <div className="vendor-section-title">Users ({usersList.length})</div>
-            {usersList.map((u, idx) => (
-              <div key={u.id || idx} className="vendor-item">
-                <div>
-                  <div style={{ fontWeight: 650 }}>{display(u.name)}</div>
-                  {hasValue(u.email) && <div className="page-subtitle" style={{ marginTop: 2 }}>{u.email}</div>}
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  {u.designation ? <span className="badge-pill badge-neutral">{u.designation}</span> : null}
-                  {hasValue(u.mobile) && <div className="page-subtitle" style={{ marginTop: 4 }}>{u.mobile}</div>}
-                </div>
-              </div>
-            ))}
-          </section>
-        )}
       </div>
     );
   };

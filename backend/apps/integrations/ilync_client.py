@@ -126,6 +126,12 @@ class IlyncClient:
         params = {"page": page, "size": size}
         return self.get("api/users", params=params)
 
+    def get_locations(self, page=0, size=100, search=None):
+        params = {"page": page, "size": size}
+        if search:
+            params["search"] = search
+        return self.get("api/locations", params=params)
+
     def search_stock_issues(self, payload=None):
         return self.post("api/inventory/stock-issue/search", json=payload or {})
 

@@ -102,8 +102,11 @@ def sync_ilync_user_to_django(ilync_user_data, set_password_if_new=None, default
             user.first_name = first_name
             user.last_name = last_name
             changed = True
-        if user.is_active != is_active:
-            user.is_active = is_active
+        # Respect HERO local database authority on active/inactive status:
+        # If user was deactivated locally (user.is_active is False), do NOT re-activate them via sync.
+        # Only deactivate if ILYNC deactivated the user (is_active is False).
+        if not is_active and user.is_active:
+            user.is_active = False
             changed = True
         if set_password_if_new:
             user.set_password(set_password_if_new)

@@ -54,6 +54,7 @@ class AttendanceRecord(models.Model):
     updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_attendances')
 
     # Status & Manager Approval Workflow
+    reporting_manager = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='attendances_to_approve')
     status = models.CharField(max_length=50, choices=ATTENDANCE_STATUS_CHOICES, default='PRESENT')
     approval_status = models.CharField(max_length=50, choices=APPROVAL_STATUS_CHOICES, default='PENDING')
     approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_attendances')

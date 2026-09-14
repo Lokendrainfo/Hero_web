@@ -17,6 +17,7 @@ export const Users = () => {
   const { hasPermission } = useAuth();
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
+  const [ilyncRoles, setIlyncRoles] = useState([]);
   const [systemVendors, setSystemVendors] = useState([]);
   const [allSystemUsers, setAllSystemUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -159,7 +160,7 @@ export const Users = () => {
     setLoading(true);
     const querySearch = searchOverride !== null ? searchOverride : search;
     try {
-      const [userRes, roleRes, vendorRes, allUsersRes] = await Promise.all([
+      const [userRes, roleRes, vendorRes, allUsersRes, ilyncRoleRes] = await Promise.all([
         userService.getAll({
           page,
           size,
@@ -168,13 +169,17 @@ export const Users = () => {
         }),
         roleService.getRoles(),
         vendorService.getIntegrationsVendors({ size: 100 }).catch(() => vendorService.getVendors({ page: 0, size: 100 }).catch(() => ({ data: [] }))),
-        userService.getAll({ size: 'all' }).catch(() => ({ data: [] }))
+        userService.getAll({ size: 'all' }).catch(() => ({ data: [] })),
+        roleService.getIlyncRoles().catch(() => ({ data: [] }))
       ]);
 
       const payload = userRes.data || userRes;
       const userList = payload.results || (Array.isArray(payload) ? payload : (payload.data?.results || payload.data || []));
       const roleList = Array.isArray(roleRes.data) ? roleRes.data : (roleRes.results || roleRes || []);
       
+      const ilyncPayload = ilyncRoleRes.data || ilyncRoleRes;
+      const ilyncRoleList = Array.isArray(ilyncPayload) ? ilyncPayload : (ilyncPayload.results || ilyncPayload.data || []);
+
       const vPayload = vendorRes.data?.data || vendorRes.data || vendorRes;
       const vendorList = vPayload.results || vPayload.content || vPayload.vendors || (Array.isArray(vPayload) ? vPayload : []);
 
@@ -183,6 +188,7 @@ export const Users = () => {
 
       setUsers(userList);
       setRoles(roleList);
+      setIlyncRoles(ilyncRoleList);
       setSystemVendors(vendorList);
       setAllSystemUsers(allUsersList);
 
@@ -437,10 +443,11 @@ export const Users = () => {
   };
 
   const roleOptions = React.useMemo(() => {
-    const defaultList = ['ADMIN', 'PROJECT_MANAGER', 'ENGINEER', 'SUPERVISOR', 'OPERATOR', 'VENDOR', 'VIEWER', 'ALL_VIEWER'];
-    const fetchedList = (roles || []).map(r => r.name || r.code).filter(Boolean);
-    return Array.from(new Set([...defaultList, ...fetchedList]));
-  }, [roles]);
+    const defaultLocal = ['ADMIN', 'PROJECT_MANAGER', 'ENGINEER', 'SUPERVISOR', 'OPERATOR', 'VENDOR', 'VIEWER', 'ALL_VIEWER'];
+    const fetchedLocal = (roles || []).map(r => r.name || r.code).filter(Boolean);
+    const fetchedIlync = (ilyncRoles || []).map(r => r.key || r.name || r.code).filter(Boolean);
+    return Array.from(new Set([...defaultLocal, ...fetchedLocal, ...fetchedIlync]));
+  }, [roles, ilyncRoles]);
 
   const filteredUsers = React.useMemo(() => {
     if (!search || !search.trim()) return users;

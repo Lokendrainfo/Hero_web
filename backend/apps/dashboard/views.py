@@ -179,7 +179,15 @@ class DashboardSummaryView(APIView):
                 team_qs = team_qs.filter(
                     Q(vendor_id__in=vendor_ids) |
                     Q(hero_vendor_assignments__vendor_id__in=vendor_ids)
+                ).exclude(
+                    Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
                 ).distinct()
+        else:
+            team_qs = team_qs.filter(
+                Q(vendor__isnull=False) | Q(hero_vendor_assignments__isnull=False)
+            ).exclude(
+                Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
+            ).distinct()
         
         total_team_members = team_qs.count()
         team_user_ids = list(team_qs.values_list('id', flat=True))

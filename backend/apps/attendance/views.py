@@ -11,6 +11,37 @@ from apps.authentication.models import User
 from apps.common.permissions import IsVendorAuthorized
 from apps.common.responses import success_response, error_response
 from apps.common.vendor_scope import get_user_vendor_ids, get_user_vendor, check_vendor_access, filter_queryset_by_vendor
+from django.conf import settings
+from apps.notifications.models import Notification
+from apps.common.reporting_scope import get_reporting_scope
+
+def notify_user(target_user, title, body):
+    if target_user and getattr(target_user, 'is_active', True):
+        try:
+            Notification.objects.create(user=target_user, title=title, body=body)
+        except Exception as e:
+            print(f"[Notification] Error creating notification: {e}")
+
+def validate_approval_permission(request_user, attendance_record):
+    # 1. Self-approval guard (403 Forbidden)
+    if attendance_record.user_id == request_user.id:
+        return Response(
+            {"detail": "You cannot approve or reject your own attendance record."},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    # 2. Hierarchy authorization guard (403 Forbidden)
+    is_admin = request_user.is_superuser or 'ADMIN' in request_user.get_role_list()
+    if not is_admin:
+        subordinate_ids = get_reporting_scope(request_user)
+        subordinate_ids = [uid for uid in subordinate_ids if uid != request_user.id]
+        if attendance_record.user_id not in subordinate_ids:
+            return Response(
+                {"detail": "You are not authorized to approve or reject attendance for this employee."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+    return None
 
 def resolve_target_user(user_id_param):
     if not user_id_param:
@@ -73,7 +104,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         allowed_vendor_ids = get_user_vendor_ids(user)
 
         if allowed_vendor_ids is None:
-            qs = AttendanceRecord.objects.all().select_related('user', 'vendor', 'marked_by', 'updated_by', 'approved_by', 'marked_for_user')
+            qs = AttendanceRecord.objects.filter(
+                Q(user__vendor__isnull=False) | Q(user__hero_vendor_assignments__isnull=False)
+            ).exclude(
+                Q(user__is_superuser=True) | Q(user__role__iexact='ADMIN') | Q(user__roles__name__iexact='ADMIN')
+            ).distinct().select_related('user', 'vendor', 'marked_by', 'updated_by', 'approved_by', 'marked_for_user')
         elif not allowed_vendor_ids:
             return AttendanceRecord.objects.none()
         else:
@@ -81,6 +116,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 Q(vendor_id__in=allowed_vendor_ids) |
                 Q(user__vendor_id__in=allowed_vendor_ids) |
                 Q(user__hero_vendor_assignments__vendor_id__in=allowed_vendor_ids)
+            ).exclude(
+                Q(user__is_superuser=True) | Q(user__role__iexact='ADMIN') | Q(user__roles__name__iexact='ADMIN')
             ).distinct().select_related('user', 'vendor', 'marked_by', 'updated_by', 'approved_by', 'marked_for_user')
 
         req_vendor = self.request.query_params.get('vendor_id') or self.request.query_params.get('vendor')
@@ -161,12 +198,14 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         check_out_val = request.data.get('check_out')
 
         target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
+        reporting_mgr = target_user.reporting_manager
 
         record, created = AttendanceRecord.objects.get_or_create(
             user=target_user,
             date=rec_date,
             defaults={
                 'vendor': target_vendor,
+                'reporting_manager': reporting_mgr,
                 'status': status_val,
                 'approval_status': request.data.get('approval_status') or 'PENDING',
                 'notes': notes_val,
@@ -179,6 +218,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         if not created:
             record.status = status_val
+            if not record.reporting_manager and reporting_mgr:
+                record.reporting_manager = reporting_mgr
             if notes_val:
                 record.notes = notes_val
             if check_in_val:
@@ -189,6 +230,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if target_vendor and not record.vendor:
                 record.vendor = target_vendor
             record.save()
+
+        if created and reporting_mgr:
+            notify_user(
+                reporting_mgr,
+                "Pending Attendance Approval",
+                f"Attendance for {target_user.get_full_name() or target_user.username} submitted for {rec_date} requires your approval."
+            )
 
         return success_response(
             data=AttendanceRecordSerializer(record, context={'request': request}).data,
@@ -245,10 +293,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         att_type = request.data.get('attendance_type') or 'TEAM'
 
         target_vendor = user.vendor or get_user_vendor(user)
+        reporting_mgr = user.reporting_manager
 
         record = AttendanceRecord.objects.create(
             user=user,
             vendor=target_vendor,
+            reporting_manager=reporting_mgr,
             date=today,
             check_in=timezone.now(),
             status='CHECKED_IN',
@@ -262,6 +312,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             marked_by=user,
             updated_by=user
         )
+
+        if reporting_mgr:
+            notify_user(
+                reporting_mgr,
+                "Pending Attendance Approval",
+                f"Attendance check-in submitted by {user.get_full_name() or user.username} for {today} requires your approval."
+            )
 
         serializer = AttendanceRecordSerializer(record, context={'request': request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -329,10 +386,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         photo = request.FILES.get('photo') or request.data.get('photo')
 
         target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
+        reporting_mgr = target_user.reporting_manager
 
         record = AttendanceRecord.objects.create(
             user=target_user,
             vendor=target_vendor,
+            reporting_manager=reporting_mgr,
             date=today,
             check_in=timezone.now(),
             status='CHECKED_IN',
@@ -346,6 +405,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             check_in_accuracy=float(acc) if acc else None,
             check_in_photo=photo if photo else None
         )
+
+        if reporting_mgr:
+            notify_user(
+                reporting_mgr,
+                "Pending Attendance Approval",
+                f"Team attendance check-in for {target_user.get_full_name() or target_user.username} submitted by {request.user.get_full_name() or request.user.username} requires your approval."
+            )
 
         serializer = AttendanceRecordSerializer(record, context={'request': request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -365,10 +431,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         photo = request.FILES.get('photo') or request.data.get('photo')
 
         target_vendor = user.vendor or get_user_vendor(user)
+        reporting_mgr = user.reporting_manager
 
         record = AttendanceRecord.objects.create(
             user=user,
             vendor=target_vendor,
+            reporting_manager=reporting_mgr,
             date=today,
             check_in=timezone.now(),
             status='CHECKED_IN',
@@ -384,6 +452,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             check_in_accuracy=float(acc) if acc else None,
             check_in_photo=photo if photo else None
         )
+
+        if reporting_mgr:
+            notify_user(
+                reporting_mgr,
+                "Pending Attendance Approval",
+                f"Machine attendance check-in submitted by {user.get_full_name() or user.username} for {today} requires your approval."
+            )
 
         serializer = AttendanceRecordSerializer(record, context={'request': request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -421,14 +496,20 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         allowed_vendor_ids = get_user_vendor_ids(user)
 
         if allowed_vendor_ids is None:
-            team_qs = User.objects.filter(is_active=True).order_by('id')
+            team_qs = User.objects.filter(is_active=True).filter(
+                Q(vendor__isnull=False) | Q(hero_vendor_assignments__isnull=False)
+            ).exclude(
+                Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
+            ).distinct().order_by('id')
         elif not allowed_vendor_ids:
             team_qs = User.objects.none()
         else:
             team_qs = User.objects.filter(
                 Q(vendor_id__in=allowed_vendor_ids) |
                 Q(hero_vendor_assignments__vendor_id__in=allowed_vendor_ids)
-            ).filter(is_active=True).distinct().order_by('id')
+            ).filter(is_active=True).exclude(
+                Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
+            ).distinct().order_by('id')
 
         results = []
         for u in team_qs:
@@ -468,10 +549,46 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     # 4.9 Fetch Pending Attendance Approvals (For Managers)
     @action(detail=False, methods=['get'], url_path='pending-approvals')
     def pending_approvals(self, request):
+        user = request.user
         page = int(request.query_params.get('page', 0))
         size = int(request.query_params.get('size', 20))
 
-        qs = self.get_queryset().filter(approval_status='PENDING')
+        is_admin = user.is_superuser or 'ADMIN' in user.get_role_list()
+        hierarchy_mode = getattr(settings, 'ATTENDANCE_APPROVAL_HIERARCHY_MODE', 'ALL_REPORTING_DESCENDANTS')
+
+        if is_admin:
+            qs = AttendanceRecord.objects.filter(approval_status='PENDING')
+        else:
+            if hierarchy_mode == 'DIRECT_REPORTS_ONLY':
+                qs = AttendanceRecord.objects.filter(
+                    approval_status='PENDING',
+                    user__reporting_manager=user
+                )
+            else:
+                subordinate_ids = get_reporting_scope(user)
+                subordinate_ids = [uid for uid in subordinate_ids if uid != user.id]
+
+                if not subordinate_ids:
+                    qs = AttendanceRecord.objects.none()
+                else:
+                    qs = AttendanceRecord.objects.filter(
+                        approval_status='PENDING',
+                        user_id__in=subordinate_ids
+                    )
+
+        allowed_vendor_ids = get_user_vendor_ids(user)
+        if allowed_vendor_ids is not None:
+            if not allowed_vendor_ids:
+                qs = AttendanceRecord.objects.none()
+            else:
+                qs = qs.filter(
+                    Q(vendor_id__in=allowed_vendor_ids) |
+                    Q(user__vendor_id__in=allowed_vendor_ids) |
+                    Q(user__hero_vendor_assignments__vendor_id__in=allowed_vendor_ids)
+                ).distinct()
+
+        qs = qs.select_related('user', 'vendor', 'reporting_manager', 'marked_by', 'approved_by').order_by('-created_at', '-id')
+
         total = qs.count()
         start = page * size
         end = start + size
@@ -490,23 +607,24 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     def approve_attendance(self, request, pk=None):
         record = self.get_object()
 
-        # Self-Approval Prohibition Guard (403 Forbidden)
-        if record.user == request.user:
-            return Response(
-                {"detail": "You cannot approve your own attendance record."},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        validate_employee_attendance_access(request.user, record.user)
+        err_response = validate_approval_permission(request.user, record)
+        if err_response:
+            return err_response
 
         record.approval_status = 'APPROVED'
         record.approved_by = request.user
         record.approved_at = timezone.now()
         record.save()
 
+        notify_user(
+            record.user,
+            "Attendance Approved",
+            f"Your attendance record for {record.date} has been approved."
+        )
+
         return Response({
             "success": True,
-            "message": f"Attendance record {record.id} approved successfully.",
+            "message": "Attendance record approved successfully.",
             "approval_status": "APPROVED"
         }, status=status.HTTP_200_OK)
 
@@ -515,25 +633,26 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     def reject_attendance(self, request, pk=None):
         record = self.get_object()
 
-        # Self-Approval Prohibition Guard (403 Forbidden)
-        if record.user == request.user:
-            return Response(
-                {"detail": "You cannot reject your own attendance record."},
-                status=status.HTTP_403_FORBIDDEN
-            )
+        err_response = validate_approval_permission(request.user, record)
+        if err_response:
+            return err_response
 
-        validate_employee_attendance_access(request.user, record.user)
-
-        reason = request.data.get('reason') or "Attendance rejected by manager."
+        reason = request.data.get('reason') or "GPS location is outside site perimeter bounds."
         record.approval_status = 'REJECTED'
         record.rejection_reason = reason
         record.approved_by = request.user
         record.approved_at = timezone.now()
         record.save()
 
+        notify_user(
+            record.user,
+            "Attendance Rejected",
+            f"Your attendance record for {record.date} was rejected. Reason: {reason}"
+        )
+
         return Response({
             "success": True,
-            "message": f"Attendance record {record.id} rejected.",
+            "message": "Attendance record rejected.",
             "approval_status": "REJECTED",
             "rejection_reason": reason
         }, status=status.HTTP_200_OK)
@@ -551,22 +670,32 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         allowed_vendor_ids = get_user_vendor_ids(user)
         if allowed_vendor_ids is None:
-            team_qs = User.objects.filter(is_active=True).order_by('id')
-            req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
-            if req_v and str(req_v).strip() and req_v != 'all':
-                check_vendor_access(user, req_v)
-                team_qs = team_qs.filter(
-                    Q(vendor__external_vendor_id=req_v) |
-                    Q(vendor__name__icontains=req_v) |
-                    Q(vendor_id=req_v if str(req_v).isdigit() else None)
-                )
+            team_qs = User.objects.filter(is_active=True).filter(
+                Q(vendor__isnull=False) | Q(hero_vendor_assignments__isnull=False)
+            ).exclude(
+                Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
+            ).distinct().order_by('id')
         elif not allowed_vendor_ids:
             team_qs = User.objects.none()
         else:
             team_qs = User.objects.filter(
                 Q(vendor_id__in=allowed_vendor_ids) |
                 Q(hero_vendor_assignments__vendor_id__in=allowed_vendor_ids)
-            ).filter(is_active=True).distinct().order_by('id')
+            ).filter(is_active=True).exclude(
+                Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
+            ).distinct().order_by('id')
+
+        req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
+        if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+            if allowed_vendor_ids is None:
+                check_vendor_access(user, req_v)
+            team_qs = team_qs.filter(
+                Q(vendor__external_vendor_id=req_v) |
+                Q(vendor__name__icontains=req_v) |
+                Q(vendor_id=req_v if str(req_v).isdigit() else None) |
+                Q(hero_vendor_assignments__vendor__name__icontains=req_v) |
+                Q(hero_vendor_assignments__vendor_id=req_v if str(req_v).isdigit() else None)
+            ).distinct()
 
         if role_filter and role_filter.upper() != 'ALL':
             team_qs = team_qs.filter(
@@ -643,6 +772,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 'phone_number': u.phone_number or '',
                 'role': user_role,
                 'vendor_name': user_vendor_name,
+                'is_active': u.is_active,
                 'reporting_manager_name': u.reporting_manager.get_full_name() if u.reporting_manager else '',
                 'attendance_id': rec.id if rec else None,
                 'date': req_date,

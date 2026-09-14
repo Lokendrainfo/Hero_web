@@ -37,6 +37,9 @@ class UserSerializer(serializers.ModelSerializer):
     selected_circle = CircleSerializer(read_only=True)
     selected_district = DistrictSerializer(read_only=True)
     selected_block = BlockSerializer(read_only=True)
+    selected_circle_name = serializers.SerializerMethodField()
+    selected_district_name = serializers.SerializerMethodField()
+    selected_block_name = serializers.SerializerMethodField()
     advance_scope_display = serializers.SerializerMethodField()
 
     class Meta:
@@ -47,7 +50,8 @@ class UserSerializer(serializers.ModelSerializer):
             'vendors', 'permissions', 'reporting_manager', 'reporting_manager_id', 'reporting_manager_name',
             'reporting_manager_details', 'direct_reports', 'password',
             'user_type', 'advance_scope_type', 'selected_circle', 'selected_district', 'selected_block',
-            'selected_circle_id', 'selected_district_id', 'selected_block_id', 'advance_scope_display',
+            'selected_circle_id', 'selected_district_id', 'selected_block_id',
+            'selected_circle_name', 'selected_district_name', 'selected_block_name', 'advance_scope_display',
             'is_active', 'is_staff', 'is_superuser', 'avatar', 'date_joined'
         ]
         extra_kwargs = {
@@ -55,16 +59,27 @@ class UserSerializer(serializers.ModelSerializer):
             'is_staff': {'read_only': True},
         }
 
+    def get_selected_circle_name(self, obj):
+        return obj.selected_circle.name if obj.selected_circle else None
+
+    def get_selected_district_name(self, obj):
+        return obj.selected_district.name if obj.selected_district else None
+
+    def get_selected_block_name(self, obj):
+        return obj.selected_block.name if obj.selected_block else None
+
     def get_advance_scope_display(self, obj):
         if obj.user_type != 'ADVANCE':
-            return None
+            return "-"
         if obj.advance_scope_type == 'CIRCLE' and obj.selected_circle:
             return f"Circle: {obj.selected_circle.name}"
         elif obj.advance_scope_type == 'DISTRICT' and obj.selected_district:
             return f"District: {obj.selected_district.name} ({obj.selected_circle.name if obj.selected_circle else ''})"
         elif obj.advance_scope_type == 'BLOCK' and obj.selected_block:
             return f"Block: {obj.selected_block.name} ({obj.selected_district.name if obj.selected_district else ''})"
-        return obj.advance_scope_type
+        elif obj.advance_scope_type:
+            return f"{obj.advance_scope_type.capitalize()}"
+        return "Advance"
 
     def get_name(self, obj):
         full_name = obj.get_full_name()
@@ -122,10 +137,51 @@ class UserSerializer(serializers.ModelSerializer):
             return cleaned
         return value
 
+    def _resolve_geography(self, data):
+        c_val = data.pop('selected_circle_id', None)
+        if c_val is None:
+            c_val = data.get('selected_circle')
+
+        d_val = data.pop('selected_district_id', None)
+        if d_val is None:
+            d_val = data.get('selected_district')
+
+        b_val = data.pop('selected_block_id', None)
+        if b_val is None:
+            b_val = data.get('selected_block')
+
+        from apps.common.models import Circle, District, Block
+        from django.db.models import Q
+
+        circle_obj = None
+        if c_val:
+            c_str = str(c_val.id if hasattr(c_val, 'id') else c_val).strip()
+            if c_str and c_str.lower() not in ('null', 'none', ''):
+                circle_obj = Circle.objects.filter(Q(id=int(c_str) if c_str.isdigit() else None) | Q(name__iexact=c_str)).first()
+
+        district_obj = None
+        if d_val:
+            d_str = str(d_val.id if hasattr(d_val, 'id') else d_val).strip()
+            if d_str and d_str.lower() not in ('null', 'none', ''):
+                district_obj = District.objects.filter(Q(id=int(d_str) if d_str.isdigit() else None) | Q(name__iexact=d_str)).first()
+
+        block_obj = None
+        if b_val:
+            b_str = str(b_val.id if hasattr(b_val, 'id') else b_val).strip()
+            if b_str and b_str.lower() not in ('null', 'none', ''):
+                block_obj = Block.objects.filter(Q(id=int(b_str) if b_str.isdigit() else None) | Q(name__iexact=b_str)).first()
+
+        return circle_obj, district_obj, block_obj
+
     def create(self, validated_data):
         password = validated_data.pop('password', None)
         vendor_id = validated_data.pop('vendor_id', None)
         role_name = validated_data.get('role', 'VIEWER')
+
+        circle_obj, district_obj, block_obj = self._resolve_geography(validated_data)
+        validated_data['selected_circle'] = circle_obj
+        validated_data['selected_district'] = district_obj
+        validated_data['selected_block'] = block_obj
 
         user = User.objects.create(**validated_data)
         if password:
@@ -135,7 +191,13 @@ class UserSerializer(serializers.ModelSerializer):
 
         if role_name:
             from apps.roles.models import Role
-            role_obj = Role.objects.filter(name__iexact=role_name).first() or Role.objects.filter(code__iexact=role_name).first()
+            from django.db.models import Q
+            role_obj = Role.objects.filter(Q(name__iexact=role_name) | Q(code__iexact=role_name)).first()
+            if not role_obj:
+                role_obj, _ = Role.objects.get_or_create(
+                    name=role_name,
+                    defaults={'code': role_name.upper(), 'description': f"Role: {role_name}"}
+                )
             if role_obj:
                 user.roles.set([role_obj])
 
@@ -162,9 +224,23 @@ class UserSerializer(serializers.ModelSerializer):
         vendor_id = validated_data.pop('vendor_id', None)
         role_name = validated_data.get('role')
 
+        # Check if advance scope or geography fields are present in payload
+        initial = getattr(self, 'initial_data', {})
+        if any(k in initial for k in ['user_type', 'advance_scope_type', 'selected_circle', 'selected_circle_id', 'selected_district', 'selected_district_id', 'selected_block', 'selected_block_id']):
+            circle_obj, district_obj, block_obj = self._resolve_geography(validated_data)
+            validated_data['selected_circle'] = circle_obj
+            validated_data['selected_district'] = district_obj
+            validated_data['selected_block'] = block_obj
+
         if role_name:
             from apps.roles.models import Role
-            role_obj = Role.objects.filter(name__iexact=role_name).first() or Role.objects.filter(code__iexact=role_name).first()
+            from django.db.models import Q
+            role_obj = Role.objects.filter(Q(name__iexact=role_name) | Q(code__iexact=role_name)).first()
+            if not role_obj:
+                role_obj, _ = Role.objects.get_or_create(
+                    name=role_name,
+                    defaults={'code': role_name.upper(), 'description': f"Role: {role_name}"}
+                )
             if role_obj:
                 instance.roles.set([role_obj])
 

@@ -256,7 +256,23 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
                 if u.email:
                     allowed_user_identifiers.add(str(u.email).lower())
 
-    if target_match_ids or target_match_names or (has_subordinates and allowed_user_identifiers):
+    # Advance User Geographical Scope Filter
+    target_circle_name = None
+    target_district_name = None
+    target_block_name = None
+
+    if user and user.is_authenticated and getattr(user, 'user_type', None) == 'ADVANCE':
+        if user.advance_scope_type == 'CIRCLE' and user.selected_circle:
+            target_circle_name = user.selected_circle.name.strip().lower()
+        elif user.advance_scope_type == 'DISTRICT' and user.selected_district:
+            target_circle_name = user.selected_circle.name.strip().lower() if user.selected_circle else None
+            target_district_name = user.selected_district.name.strip().lower()
+        elif user.advance_scope_type == 'BLOCK' and user.selected_block:
+            target_circle_name = user.selected_circle.name.strip().lower() if user.selected_circle else None
+            target_district_name = user.selected_district.name.strip().lower() if user.selected_district else None
+            target_block_name = user.selected_block.name.strip().lower()
+
+    if target_match_ids or target_match_names or (has_subordinates and allowed_user_identifiers) or target_circle_name or target_district_name or target_block_name:
         final_tasks = []
         for t in expanded_results:
             t_vid = str(t.get('vendorId') or '').strip().lower()
@@ -278,7 +294,21 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
                 if assignee_id or assignee_email:
                     user_ok = (assignee_id in allowed_user_identifiers) or (assignee_email in allowed_user_identifiers)
 
-            if vendor_ok and user_ok:
+            geo_ok = True
+            if target_circle_name or target_district_name or target_block_name:
+                loc = t.get('locationSnapshot') or t.get('location') or {}
+                t_circle = str(loc.get('circle') or loc.get('state') or t.get('circle') or t.get('state') or '').strip().lower()
+                t_district = str(loc.get('district') or t.get('district') or '').strip().lower()
+                t_block = str(loc.get('blockName') or loc.get('block') or t.get('blockName') or t.get('block') or '').strip().lower()
+
+                if target_circle_name and t_circle and target_circle_name not in t_circle and t_circle not in target_circle_name:
+                    geo_ok = False
+                if target_district_name and t_district and target_district_name not in t_district and t_district not in target_district_name:
+                    geo_ok = False
+                if target_block_name and t_block and target_block_name not in t_block and t_block not in target_block_name:
+                    geo_ok = False
+
+            if vendor_ok and user_ok and geo_ok:
                 final_tasks.append(t)
 
         calc_tot = len(final_tasks)

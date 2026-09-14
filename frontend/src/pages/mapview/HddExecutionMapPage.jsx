@@ -20,10 +20,12 @@ import { formatDepthM } from '../../utils/formatters';
 import {
   applyGisZoomLabels,
   depthDotSize,
+  depthLabelStep,
   depthPointIcon,
   depthSampleStep,
   gisPopupHtml,
   pitIcon,
+  pitPopupHtml,
   resolvePitRole,
 } from '../../utils/gisMapMarkers';
 
@@ -488,31 +490,28 @@ export const HddExecutionMapPage = () => {
       }
     });
 
-    // 2. Pit endpoints — one named start, one named end; coupling pits stay as quiet dots
+    // 2. Pits — all pits rendered uniformly with standard pit pin marker & hover tooltip
     const pits = executionData.pits || [];
-    const namedStart = pits.find((pit, idx) => resolvePitRole(pit, idx, pits.length, startPitIds, endPitIds) === 'start') || pits[0];
-    const namedEnd = [...pits].reverse().find((pit, idx) => {
-      const originalIdx = pits.length - 1 - idx;
-      return resolvePitRole(pit, originalIdx, pits.length, startPitIds, endPitIds) === 'end';
-    }) || pits[pits.length - 1];
 
-    pits.forEach((pit, pIdx) => {
+    pits.forEach((pit) => {
       const pt = [pit.lat, pit.lng];
       allBounds.push(pt);
       frameBounds.push(pt);
 
-      const role = pit === namedStart ? 'start' : (pit === namedEnd && pit !== namedStart ? 'end' : 'mid');
       const pitPhotosList = (pit.photos && pit.photos.length > 0) ? pit.photos : [];
-      const pitTag = role === 'start' ? 'Start pit' : role === 'end' ? 'End pit' : '';
+      const pitName = pit.name || pit.id || 'Pit';
+      const depthStr = pit.depth != null ? formatDepthM(pit.depth) : '';
+
+      const tooltipText = [depthStr, pitName].filter(Boolean).join(' · ');
 
       const m = L.marker(pt, {
-        icon: pitIcon({ role, name: pit.name || pit.id, tag: pitTag }),
-        zIndexOffset: 400
+        icon: pitIcon({ role: 'mid', name: pitName, depth: pit.depth, showLabel: false }),
+        zIndexOffset: 450
       });
 
-      m.bindTooltip(pit.name || pit.id, {
+      m.bindTooltip(tooltipText, {
         direction: 'top',
-        offset: [0, role === 'mid' ? -8 : -20],
+        offset: [0, -28],
         className: 'gis-tip',
         opacity: 1
       });
@@ -521,8 +520,8 @@ export const HddExecutionMapPage = () => {
         m.on('click', () => openLightbox(pitPhotosList, 0));
       } else {
         m.bindPopup(gisPopupHtml({
-          eyebrow: role === 'start' ? 'Start pit' : role === 'end' ? 'End pit' : 'Pit',
-          title: pit.name || pit.id,
+          eyebrow: 'Pit',
+          title: pitName,
           rows: [
             ['Depth', pit.depth != null ? formatDepthM(pit.depth) : '—'],
             ['Width', pit.width != null ? `${Number(pit.width).toFixed(2)}m` : '—'],
@@ -536,29 +535,6 @@ export const HddExecutionMapPage = () => {
       layerGroup.addLayer(m);
     });
 
-    (executionData.shots || []).forEach((shot) => {
-      const a = shot.startPit;
-      const b = shot.endPit;
-      if (a?.lat == null || a?.lng == null || b?.lat == null || b?.lng == null) return;
-      L.polyline([[a.lat, a.lng], [b.lat, b.lng]], {
-        color: '#111827',
-        weight: 1.5,
-        opacity: 0.55,
-        lineCap: 'round',
-        interactive: false,
-      }).addTo(layerGroup);
-    });
-    const pitChain = pits.filter((pit) => pit.lat != null && pit.lng != null);
-    if (pitChain.length > 1) {
-      L.polyline(pitChain.map((pit) => [pit.lat, pit.lng]), {
-        color: '#111827',
-        weight: 1.5,
-        opacity: 0.45,
-        lineCap: 'round',
-        interactive: false,
-      }).addTo(layerGroup);
-    }
-
     // 3. Depth captures — sample + scale with zoom so pins do not stack
     const depthPoints = executionData.depthPoints || [];
     depthPoints.forEach((dp) => {
@@ -569,46 +545,119 @@ export const HddExecutionMapPage = () => {
       const depthLayer = depthLayerRef.current;
       if (!depthLayer || !mapInstanceRef.current) return;
       depthLayer.clearLayers();
-      const z = mapInstanceRef.current.getZoom();
+      const map = mapInstanceRef.current;
+      const z = map.getZoom();
+      const lastIdx = depthPoints.length - 1;
       const step = depthSampleStep(z, depthPoints.length);
-      const size = depthDotSize(z);
 
+      // Pixel-based collision detection to ensure depth badges never overlap on screen
+      const MIN_BADGE_DIST_PX = 75;
+      const labeledIndices = new Set();
+      const placedPositions = [];
+
+      const canPlaceBadge = (pt) => {
+        for (const pos of placedPositions) {
+          const dx = pt.x - pos.x;
+          const dy = pt.y - pos.y;
+          if (Math.hypot(dx, dy) < MIN_BADGE_DIST_PX) {
+            return false;
+          }
+        }
+        return true;
+      };
+
+      // 1. Always prioritize live/last point depth badge
+      if (lastIdx >= 0) {
+        const dpLast = depthPoints[lastIdx];
+        if (dpLast && dpLast.lat != null && dpLast.lng != null) {
+          try {
+            const pt = map.latLngToContainerPoint([dpLast.lat, dpLast.lng]);
+            labeledIndices.add(lastIdx);
+            placedPositions.push(pt);
+          } catch (e) {}
+        }
+      }
+
+      // 2. Prioritize start point depth badge
+      if (depthPoints.length > 1) {
+        const dpFirst = depthPoints[0];
+        if (dpFirst && dpFirst.lat != null && dpFirst.lng != null) {
+          try {
+            const pt = map.latLngToContainerPoint([dpFirst.lat, dpFirst.lng]);
+            if (canPlaceBadge(pt)) {
+              labeledIndices.add(0);
+              placedPositions.push(pt);
+            }
+          } catch (e) {}
+        }
+      }
+
+      // 3. Sample intermediate depth points with screen pixel collision check
       depthPoints.forEach((dp, idx) => {
-        const isLast = idx === depthPoints.length - 1;
+        if (idx === 0 || idx === lastIdx) return;
+        if (dp.lat == null || dp.lng == null) return;
+        if (idx % step !== 0) return;
+
+        try {
+          const pt = map.latLngToContainerPoint([dp.lat, dp.lng]);
+          if (canPlaceBadge(pt)) {
+            labeledIndices.add(idx);
+            placedPositions.push(pt);
+          }
+        } catch (e) {}
+      });
+
+      // Render markers
+      depthPoints.forEach((dp, idx) => {
+        const isLast = idx === lastIdx;
         const isKey = idx === 0 || isLast;
         if (!isKey && idx % step !== 0) return;
+
+        // Last depth capture always shows static green depth badge; intermediate depth pins reveal dark tooltip on cursor hover
+        const showLabel = isLast;
 
         let dateStr = '';
         if (dp.capturedAt) {
           try {
             const d = new Date(dp.capturedAt);
             if (!isNaN(d.getTime())) {
-              dateStr = d.toLocaleString('en-IN', {
-                day: 'numeric',
-                month: 'short',
-                hour: 'numeric',
-                minute: '2-digit',
-              });
+              const day = d.getDate();
+              const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'];
+              const monthName = months[d.getMonth()];
+              let hours = d.getHours();
+              const minutes = String(d.getMinutes()).padStart(2, '0');
+              const ampm = hours >= 12 ? 'pm' : 'am';
+              hours = hours % 12 || 12;
+              dateStr = `${day} ${monthName}, ${hours}:${minutes} ${ampm}`;
             }
           } catch (e) { /* ignore */ }
         }
 
+        const size = depthDotSize(z);
         const m = L.marker([dp.lat, dp.lng], {
           icon: depthPointIcon({
             depth: dp.depth,
             size,
-            showLabel: true,
+            showLabel,
             isKey,
-            isLive: isLast && isOngoing,
+            isLive: isLast,
             side: idx % 2 === 0 ? 'right' : 'left',
           }),
           zIndexOffset: isLast ? 600 : 200,
         });
 
-        m.bindTooltip(
-          [formatDepthM(dp.depth), `Pt ${dp.pointNo || idx + 1}`, dateStr].filter(Boolean).join(' · '),
-          { direction: 'top', offset: [0, -Math.round(size / 2) - 2], className: 'gis-tip', opacity: 1 }
-        );
+        const tooltipText = [
+          formatDepthM(dp.depth),
+          `Pt ${dp.pointNo || idx + 1}`,
+          dateStr
+        ].filter(Boolean).join(' · ');
+
+        m.bindTooltip(tooltipText, {
+          direction: 'top',
+          offset: [0, -26],
+          className: 'gis-tip',
+          opacity: 1,
+        });
 
         if (allDepthPhotos.length > 0) {
           m.on('click', () => openLightbox(allDepthPhotos, idx));
@@ -816,20 +865,7 @@ export const HddExecutionMapPage = () => {
           <div ref={mapContainerRef} style={{ width: '100%', height: '100%', zIndex: 1 }} />
         )}
 
-        {hasGpsData && (
-          <div className="gis-legend">
-            <div className="gis-legend-title">On this map</div>
-            <div className="gis-legend-row"><span className="gis-legend-swatch gis-legend-swatch--start gis-legend-swatch--pole" /> Start pit</div>
-            <div className="gis-legend-row"><span className="gis-legend-swatch gis-legend-swatch--end gis-legend-swatch--pole" /> End pit</div>
-            <div className="gis-legend-row"><span className="gis-legend-swatch gis-legend-swatch--depth gis-legend-swatch--pole" /> Depth capture</div>
-            <div className="gis-legend-row"><span className="gis-legend-swatch gis-legend-swatch--live gis-legend-swatch--pole" /> Latest point</div>
-            {viewMode === '3d' && (
-              <div className="gis-legend-row" style={{ color: 'var(--text-muted)', fontSize: '0.6875rem' }}>
-                Pole height = depth
-              </div>
-            )}
-          </div>
-        )}
+
 
         {/* Empty State Banner if no valid GPS data exists for selected date */}
         {!hasGpsData && (

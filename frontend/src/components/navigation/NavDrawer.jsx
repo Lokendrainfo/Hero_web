@@ -91,7 +91,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
         <div className="sidebar-brand">
           <div className="sidebar-logo">
             <div className="sidebar-mark">H</div>
-            <div className="sidebar-wordmark">HERO <span>WEB</span></div>
+            <div className="sidebar-wordmark">HERO</div>
           </div>
           <button type="button" className="header-icon-btn mobile-close-btn" onClick={onClose} aria-label="Close menu">
             <LucideX size={18} />

@@ -20,7 +20,7 @@ class FiberForceClient:
             print(f"[FiberForceClient] Error fetching machines: {e}")
         return {"success": False, "data": [], "total": 0}
 
-    def get_live_telemetry(self, machine_chassis_no, params=None):
+    def get_live_telemetry(self, machine_chassis_no, params=None, timeout=2.5):
         url = f"{self.base_url.rstrip('/')}/api/ext/v1/machines/live/"
         headers = {
             "X-API-Key": self.api_key,
@@ -34,7 +34,7 @@ class FiberForceClient:
             payload["params"] = params
 
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=10)
+            response = requests.post(url, headers=headers, json=payload, timeout=timeout)
             if response.status_code == 200:
                 return response.json()
         except Exception as e:

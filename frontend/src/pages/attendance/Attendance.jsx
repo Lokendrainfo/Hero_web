@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { attendanceService } from '../../services/attendanceService';
+import { vendorService } from '../../services/vendorService';
+import { userService } from '../../services/userService';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../context/ToastContext';
 import {
@@ -7,14 +9,15 @@ import {
   LucideFilter, LucideSave, LucideCheckCircle, LucideXCircle,
   LucideAlertCircle, LucideUser, LucideRefreshCw,
   LucideBuilding2, LucideCheck, LucideList, LucideHistory, LucideCheckSquare,
-  LucideMapPin, LucideCamera, LucideTruck, LucideShieldCheck, LucideEye, LucideX
+  LucideMapPin, LucideCamera, LucideTruck, LucideShieldCheck, LucideEye, LucideX,
+  LucideChevronDown, LucideChevronUp, LucidePower
 } from 'lucide-react';
 import '../../styles/components.css';
 import { SearchableSelect } from '../../components/common/Select';
 import { DateField } from '../../components/common/DateField';
 
 export const Attendance = () => {
-  const { user, isAdmin, vendors } = useAuth();
+  const { user, isAdmin, vendors, selectedVendorId } = useAuth();
   const { showToast } = useToast();
 
   const [activeTab, setActiveTab] = useState('daily'); // 'daily' | 'history' | 'pending_approvals'
@@ -27,6 +30,96 @@ export const Attendance = () => {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  // Vendor Team Accordion Expansion State
+  const [expandedVendors, setExpandedVendors] = useState({});
+
+  const toggleVendorExpand = (vName) => {
+    setExpandedVendors(prev => ({
+      ...prev,
+      [vName]: !prev[vName]
+    }));
+  };
+
+  const handleToggleUserActive = async (userId, currentIsActive, userName) => {
+    const newStatus = !currentIsActive;
+    try {
+      await userService.updateUser(userId, { is_active: newStatus });
+      showToast(`Account for ${userName} set to ${newStatus ? 'ACTIVE' : 'INACTIVE'}`, newStatus ? 'success' : 'warning');
+      setTeamMembers(prev => prev.map(u => u.user_id === userId ? { ...u, is_active: newStatus } : u));
+    } catch (err) {
+      console.error("Toggle user status error:", err);
+      showToast("Failed to update user active status", "error");
+    }
+  };
+
+  // Vendor Team Filter State
+  const [selectedVendorFilter, setSelectedVendorFilter] = useState('ALL');
+  const [allVendorCounts, setAllVendorCounts] = useState({});
+  const [vendorList, setVendorList] = useState([]);
+
+  // Fetch full vendor details for contact, phone, email mapping
+  useEffect(() => {
+    Promise.allSettled([
+      vendorService.getIntegrationsVendors({ page: 0, size: 100 }),
+      vendorService.getVendors({ page: 0, size: 100 })
+    ]).then(([integRes, dbRes]) => {
+      const extractList = (res) => {
+        if (res.status !== 'fulfilled' || !res.value) return [];
+        const payload = res.value.data?.data || res.value.data || {};
+        const list = payload.results || payload.content || (Array.isArray(payload) ? payload : (payload.vendors || []));
+        return Array.isArray(list) ? list : [];
+      };
+
+      const integList = extractList(integRes);
+      const dbList = extractList(dbRes);
+
+      const mergedMap = new Map();
+      [...integList, ...dbList].forEach(v => {
+        const name = v.partnerName || v.name || v.partner_name;
+        if (!name) return;
+        const key = name.toLowerCase().trim();
+        if (!mergedMap.has(key)) {
+          mergedMap.set(key, v);
+        } else {
+          const existing = mergedMap.get(key);
+          mergedMap.set(key, { ...existing, ...v });
+        }
+      });
+
+      setVendorList(Array.from(mergedMap.values()));
+    }).catch(console.error);
+  }, []);
+
+  const vendorDetailsMap = useMemo(() => {
+    const map = {};
+    const combined = [...(vendors || []), ...(vendorList || [])];
+    combined.forEach(v => {
+      const vName = v.partnerName || v.name || v.partner_name;
+      if (vName) {
+        map[vName.toLowerCase()] = {
+          name: vName,
+          contact: v.contactName || v.contact_person || v.owner_name || '',
+          phone: v.phoneNumber || v.phone || v.contact_phone || v.contactNumber || '',
+          email: v.email || '',
+          type: v.legalEntityType || v.vendor_type || v.type || ''
+        };
+      }
+    });
+    return map;
+  }, [vendors, vendorList]);
+
+  // Sync with global header vendor selector
+  useEffect(() => {
+    if (selectedVendorId && selectedVendorId !== 'all') {
+      const found = (vendors || []).find(v => String(v.id) === String(selectedVendorId));
+      if (found) {
+        setSelectedVendorFilter(found.name || found.partnerName || found.id);
+      } else {
+        setSelectedVendorFilter(selectedVendorId);
+      }
+    }
+  }, [selectedVendorId, vendors]);
 
   // Daily Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -54,10 +147,13 @@ export const Attendance = () => {
   const [rejectionModal, setRejectionModal] = useState({ open: false, recordId: null, reason: '' });
 
   const activeVendorName = useMemo(() => {
+    if (selectedVendorFilter && selectedVendorFilter !== 'ALL') {
+      return selectedVendorFilter;
+    }
     if (user?.vendor?.name) return user.vendor.name;
     if (vendors && vendors.length > 0) return vendors[0].name || vendors[0].partnerName;
-    return 'Your Vendor Organization';
-  }, [user, vendors]);
+    return 'All Vendor Teams';
+  }, [selectedVendorFilter, user, vendors]);
 
   // Fetch Daily Team Attendance
   const fetchTeamAttendance = React.useCallback(() => {
@@ -66,19 +162,107 @@ export const Attendance = () => {
     if (roleFilter !== 'ALL') params.role = roleFilter;
     if (searchQuery.trim()) params.search = searchQuery.trim();
     if (statusFilter !== 'ALL') params.status = statusFilter;
+    if (selectedVendorFilter !== 'ALL') params.vendor = selectedVendorFilter;
 
     attendanceService.getTeamAttendance(params)
       .then(res => {
         const data = res.data?.data || res.data || {};
         setSummaryStats(data.summary || { total: 0, present: 0, absent: 0, half_day: 0, leave: 0, week_off: 0, not_marked: 0 });
-        setTeamMembers(data.team_members || []);
+        const members = data.team_members || [];
+        setTeamMembers(members);
+
+        if (selectedVendorFilter === 'ALL') {
+          const counts = {};
+          members.forEach(m => {
+            if (m.vendor_name) {
+              counts[m.vendor_name] = (counts[m.vendor_name] || 0) + 1;
+            }
+          });
+          setAllVendorCounts(counts);
+        }
       })
       .catch(err => {
         console.error("Error fetching team attendance:", err);
         showToast("Failed to fetch team attendance", "error");
       })
       .finally(() => setLoading(false));
-  }, [selectedDate, roleFilter, searchQuery, statusFilter, showToast]);
+  }, [selectedDate, roleFilter, searchQuery, statusFilter, selectedVendorFilter, showToast]);
+
+  const groupedVendorTeams = useMemo(() => {
+    const groups = {};
+    const combinedVendors = [...(vendors || []), ...(vendorList || [])];
+    const canonicalVendorMap = {};
+
+    // 1. Initialize ALL registered vendors into vendor team groups
+    combinedVendors.forEach(v => {
+      const cName = v.partnerName || v.name || v.partner_name;
+      if (!cName) return;
+      const normKey = cName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      if (!groups[cName]) {
+        groups[cName] = {
+          vendorName: cName,
+          contactName: v.contactName || v.contact_person || v.owner_name || '',
+          phone: v.phoneNumber || v.phone || v.contact_phone || v.contactNumber || '',
+          email: v.email || '',
+          type: v.legalEntityType || v.vendor_type || v.type || '',
+          members: [],
+          stats: { total: 0, present: 0, absent: 0, half_day: 0, leave: 0, not_marked: 0 }
+        };
+      }
+      canonicalVendorMap[normKey] = cName;
+    });
+
+    const resolveVendorName = (rawName) => {
+      if (!rawName) return 'Independent / General Team';
+      const normInput = rawName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (canonicalVendorMap[normInput]) return canonicalVendorMap[normInput];
+
+      for (const [normKey, canName] of Object.entries(canonicalVendorMap)) {
+        if (normKey.includes(normInput) || normInput.includes(normKey)) {
+          return canName;
+        }
+      }
+      return rawName;
+    };
+
+    // 2. Map all teamMembers into canonical vendor team groups
+    teamMembers.forEach(m => {
+      const resolvedName = resolveVendorName(m.vendor_name);
+      if (!groups[resolvedName]) {
+        const details = vendorDetailsMap[resolvedName.toLowerCase()] || {};
+        groups[resolvedName] = {
+          vendorName: resolvedName,
+          contactName: details.contact || m.reporting_manager_name || '',
+          phone: details.phone || m.phone_number || '',
+          email: details.email || '',
+          type: details.type || '',
+          members: [],
+          stats: { total: 0, present: 0, absent: 0, half_day: 0, leave: 0, not_marked: 0 }
+        };
+      }
+
+      groups[resolvedName].members.push(m);
+      groups[resolvedName].stats.total += 1;
+      const st = (m.status || 'NOT_MARKED').toUpperCase().replace(' ', '_');
+      if (st === 'PRESENT' || st === 'CHECKED_IN' || st === 'CHECKED_OUT') groups[resolvedName].stats.present += 1;
+      else if (st === 'ABSENT') groups[resolvedName].stats.absent += 1;
+      else if (st === 'HALF_DAY') groups[resolvedName].stats.half_day += 1;
+      else if (st === 'LEAVE') groups[resolvedName].stats.leave += 1;
+      else groups[resolvedName].stats.not_marked += 1;
+    });
+
+    return Object.values(groups);
+  }, [teamMembers, vendors, vendorList, vendorDetailsMap]);
+
+  const vendorTeamList = useMemo(() => {
+    return groupedVendorTeams.map(g => ({
+      id: g.vendorName,
+      name: g.vendorName,
+      count: g.stats.total,
+      key: g.vendorName
+    }));
+  }, [groupedVendorTeams]);
 
   useEffect(() => {
     if (activeTab === 'daily') {
@@ -283,6 +467,15 @@ export const Attendance = () => {
     return <span className="badge-pill badge-amber" style={{ fontSize: '0.7rem' }}>⏳ PENDING</span>;
   };
 
+  const canApprove = useMemo(() => {
+    if (isAdmin) return true;
+    if (user?.subordinates_count > 0 || user?.direct_reports_count > 0 || user?.reporting_scope_count > 1) return true;
+    const rolesUpper = (user?.roles || []).map(r => (r?.name || r || '').toUpperCase());
+    if (user?.role) rolesUpper.push(user.role.toUpperCase());
+    if (rolesUpper.some(r => ['MANAGER', 'SUPERVISOR', 'ADMIN', 'VENDOR_ADMIN', 'PROJECT_MANAGER'].includes(r))) return true;
+    return false;
+  }, [user, isAdmin]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', boxSizing: 'border-box' }}>
       
@@ -301,9 +494,11 @@ export const Attendance = () => {
           <button type="button" className={`filter-chip ${activeTab === 'history' ? 'active' : ''}`} onClick={() => setActiveTab('history')}>
             <LucideHistory size={14} /> History
           </button>
-          <button type="button" className={`filter-chip ${activeTab === 'pending_approvals' ? 'active' : ''}`} onClick={() => setActiveTab('pending_approvals')}>
-            <LucideShieldCheck size={14} /> Approvals
-          </button>
+          {canApprove && (
+            <button type="button" className={`filter-chip ${activeTab === 'pending_approvals' ? 'active' : ''}`} onClick={() => setActiveTab('pending_approvals')}>
+              <LucideShieldCheck size={14} /> Approvals
+            </button>
+          )}
         </div>
       </div>
 
@@ -343,6 +538,28 @@ export const Attendance = () => {
             
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', flex: 1 }}>
               
+              {/* Vendor Team Dropdown Filter */}
+              <SearchableSelect
+                value={selectedVendorFilter}
+                onChange={(e) => setSelectedVendorFilter(e.target.value)}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  fontSize: '0.82rem',
+                  fontWeight: '600',
+                  color: '#0f172a',
+                  outline: 'none',
+                  cursor: 'pointer',
+                  minWidth: '220px'
+                }}
+              >
+                <option value="ALL">All Vendor Teams ({summaryStats.total})</option>
+                {vendorTeamList.map(v => (
+                  <option key={v.key} value={v.name}>{v.name} ({v.count} members)</option>
+                ))}
+              </SearchableSelect>
+
               {/* Date Selector */}
               <DateField
                 required
@@ -479,219 +696,326 @@ export const Attendance = () => {
             </div>
           </div>
 
-          {/* Daily Attendance Grid Table */}
-          <div className="table-container">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th style={{ paddingLeft: '20px' }}>Employee ID & Name</th>
-                  <th>Role</th>
-                  <th>Attendance Type & Equipment</th>
-                  <th>Check In / Out</th>
-                  <th>GPS Telemetry & Verification</th>
-                  <th>Approval Status</th>
-                  <th>Remarks / Notes</th>
-                  <th>Status & Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {teamMembers.map(m => (
-                  <tr key={m.user_id}>
-                    <td style={{ paddingLeft: '20px' }}>
-                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                        {m.user_name}
-                      </div>
-                      <div className="page-subtitle">
-                        {m.employee_id || `EMP-${m.user_id}`}
-                      </div>
-                    </td>
+          {/* Grouped Vendor Team Sections */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
-                    <td>
-                      <span className="badge-pill badge-purple" style={{ fontSize: '0.72rem' }}>
-                        {m.role}
-                      </span>
-                    </td>
+            {/* Quick Expand All / Collapse All Bar */}
+            {selectedVendorFilter === 'ALL' && groupedVendorTeams.length > 1 && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allObj = {};
+                    groupedVendorTeams.forEach(g => { allObj[g.vendorName] = true; });
+                    setExpandedVendors(allObj);
+                  }}
+                  style={{ padding: '6px 12px', fontSize: '0.78rem', fontWeight: '600', background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', borderRadius: '6px', cursor: 'pointer' }}
+                >
+                  Expand All Teams 🔽
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExpandedVendors({})}
+                  style={{ padding: '6px 12px', fontSize: '0.78rem', fontWeight: '600', background: '#f8fafc', color: '#64748b', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer' }}
+                >
+                  Collapse All 🔼
+                </button>
+              </div>
+            )}
 
-                    <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                        <span className={`badge-pill ${m.attendance_type === 'MACHINE' ? 'badge-amber' : 'badge-blue'}`} style={{ fontSize: '0.68rem', width: 'fit-content' }}>
-                          {m.attendance_type === 'MACHINE' ? '🚜 MACHINE' : '👥 TEAM'}
-                        </span>
-                        {m.machine_chassis_no && (
-                          <span style={{ fontSize: '0.72rem', fontFamily: 'monospace', color: '#475569', fontWeight: '600' }}>
-                            Chassis: {m.machine_chassis_no}
-                          </span>
-                        )}
-                      </div>
-                    </td>
+            {groupedVendorTeams
+              .filter(teamGroup => selectedVendorFilter === 'ALL' || selectedVendorFilter.toLowerCase() === teamGroup.vendorName.toLowerCase())
+              .map(teamGroup => {
+                const isExpanded = !!expandedVendors[teamGroup.vendorName] || (selectedVendorFilter !== 'ALL');
+                return (
+                  <div key={teamGroup.vendorName} className="app-card" style={{ background: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
 
-                    <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '0.78rem', fontWeight: '600', color: m.check_in ? '#047857' : '#94a3b8' }}>
-                            In: {m.check_in || '--:--'}
-                          </span>
-                          {!m.check_in && (
-                            <button
-                              onClick={() => handleCheckInEmployee(m.user_id)}
-                              style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
-                            >
-                              Check In
-                            </button>
-                          )}
+                    {/* Vendor Header Strip (Clickable Accordion) */}
+                    <div
+                      onClick={() => toggleVendorExpand(teamGroup.vendorName)}
+                      style={{ padding: '14px 20px', background: isExpanded ? '#f8fafc' : '#ffffff', borderBottom: isExpanded ? '1px solid #e2e8f0' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', cursor: 'pointer', transition: 'background 0.2s' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0, flex: 1 }}>
+                        <div style={{ width: '42px', height: '42px', minWidth: '42px', borderRadius: '10px', background: isExpanded ? '#eff6ff' : '#f1f5f9', border: '1px solid #bfdbfe', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <LucideBuilding2 size={22} />
                         </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '0.78rem', fontWeight: '600', color: m.check_out ? '#1d4ed8' : '#94a3b8' }}>
-                            Out: {m.check_out || '--:--'}
-                          </span>
-                          {m.check_in && !m.check_out && (
-                            <button
-                              onClick={() => handleCheckOutEmployee(m.user_id)}
-                              style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
-                            >
-                              Check Out
-                            </button>
-                          )}
-                        </div>
-
-                        {m.total_working_hours && (
-                          <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>
-                            ⏱ {m.total_working_hours}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-
-                    <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        {m.check_in_latitude ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: '#047857', fontWeight: '600' }}>
-                            <LucideMapPin size={12} />
-                            <span>{Number(m.check_in_latitude).toFixed(4)}, {Number(m.check_in_longitude).toFixed(4)}</span>
-                            {m.check_in_accuracy && <span style={{ color: '#64748b', fontSize: '0.68rem' }}>(±{m.check_in_accuracy}m)</span>}
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: '1.02rem', fontWeight: '700', color: '#0f172a' }}>
+                            {teamGroup.vendorName}
                           </div>
-                        ) : (
-                          <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS log</span>
-                        )}
-
-                        {m.check_in_photo ? (
-                          <button
-                            type="button"
-                            onClick={() => setActivePhotoUrl(m.check_in_photo)}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              padding: '2px 8px',
-                              background: '#f0fdf4',
-                              color: '#166534',
-                              border: '1px solid #bbf7d0',
-                              borderRadius: '4px',
-                              fontSize: '0.7rem',
-                              fontWeight: '700',
-                              cursor: 'pointer',
-                              width: 'fit-content'
-                            }}
-                          >
-                            <LucideCamera size={12} /> View Photo
-                          </button>
-                        ) : null}
+                        </div>
                       </div>
-                    </td>
 
-                    <td>
-                      {renderApprovalPill(m.approval_status, m.rejection_reason)}
-                    </td>
+                      {/* Team Summary Badges & Accordion Toggle Button */}
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+                        <span className="badge-pill badge-blue" style={{ fontSize: '0.75rem', fontWeight: '700', padding: '4px 10px' }}>
+                          👥 {teamGroup.stats.total} Team Members
+                        </span>
+                        <span className="badge-pill badge-green" style={{ fontSize: '0.75rem', fontWeight: '700', padding: '4px 10px' }}>
+                          Present: {teamGroup.stats.present}
+                        </span>
+                        <span className="badge-pill" style={{ background: '#fef2f2', color: '#991b1b', border: '1px solid #fecaca', fontSize: '0.75rem', fontWeight: '700', padding: '4px 10px' }}>
+                          Absent: {teamGroup.stats.absent}
+                        </span>
+                        <span className="badge-pill" style={{ background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb', fontSize: '0.75rem', fontWeight: '700', padding: '4px 10px' }}>
+                          Not Marked: {teamGroup.stats.not_marked}
+                        </span>
 
-                    <td>
-                      <input
-                        type="text"
-                        placeholder="Remarks..."
-                        value={m.notes || ''}
-                        onChange={(e) => handleNotesChange(m.user_id, e.target.value)}
-                        style={{
-                          width: '100%',
-                          padding: '6px 10px',
-                          borderRadius: '6px',
-                          border: '1px solid #cbd5e1',
-                          fontSize: '0.78rem',
-                          outline: 'none',
-                          boxSizing: 'border-box'
-                        }}
-                      />
-                    </td>
-
-                    <td>
-                      {/* Attendance Selector Buttons */}
-                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                        <button
-                          type="button"
-                          onClick={() => handleStatusChange(m.user_id, 'PRESENT')}
-                          style={{
-                            padding: '4px 6px',
-                            fontSize: '0.7rem',
-                            fontWeight: '700',
-                            borderRadius: '5px',
-                            border: '1px solid',
-                            borderColor: m.status === 'PRESENT' ? '#10b981' : '#cbd5e1',
-                            background: m.status === 'PRESENT' ? '#ecfdf5' : '#ffffff',
-                            color: m.status === 'PRESENT' ? '#047857' : '#64748b',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          PRESENT
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleStatusChange(m.user_id, 'ABSENT')}
-                          style={{
-                            padding: '4px 6px',
-                            fontSize: '0.7rem',
-                            fontWeight: '700',
-                            borderRadius: '5px',
-                            border: '1px solid',
-                            borderColor: m.status === 'ABSENT' ? '#ef4444' : '#cbd5e1',
-                            background: m.status === 'ABSENT' ? '#fef2f2' : '#ffffff',
-                            color: m.status === 'ABSENT' ? '#991b1b' : '#64748b',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          ABSENT
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleStatusChange(m.user_id, 'HALF_DAY')}
-                          style={{
-                            padding: '4px 6px',
-                            fontSize: '0.7rem',
-                            fontWeight: '700',
-                            borderRadius: '5px',
-                            border: '1px solid',
-                            borderColor: m.status === 'HALF_DAY' ? '#f59e0b' : '#cbd5e1',
-                            background: m.status === 'HALF_DAY' ? '#fffbeb' : '#ffffff',
-                            color: m.status === 'HALF_DAY' ? '#b45309' : '#64748b',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          HALF DAY
-                        </button>
+                        <div style={{ padding: '6px 12px', borderRadius: '8px', background: isExpanded ? '#eff6ff' : '#f1f5f9', color: '#2563eb', fontWeight: '700', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid #bfdbfe' }}>
+                          {isExpanded ? <LucideChevronUp size={16} /> : <LucideChevronDown size={16} />}
+                          <span>{isExpanded ? 'Hide Roster' : 'Expand Team'}</span>
+                        </div>
                       </div>
-                    </td>
-                  </tr>
-                ))}
+                    </div>
 
-                {teamMembers.length === 0 && (
-                  <tr>
-                    <td colSpan="8" style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
-                      {loading ? 'Loading team attendance roster...' : 'No team members found for selected filters.'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                    {/* Vendor Team Attendance Table (Expanded Only) */}
+                    {isExpanded && (
+                      <div className="table-container" style={{ borderRadius: 0, border: 'none' }}>
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th style={{ paddingLeft: '20px' }}>Employee ID & Name</th>
+                              <th>Account Status</th>
+                              <th>Role</th>
+                              <th>Attendance Type & Equipment</th>
+                              <th>Check In / Out</th>
+                              <th>GPS Telemetry & Verification</th>
+                              <th>Approval Status</th>
+                              <th>Remarks / Notes</th>
+                              <th>Attendance Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {teamGroup.members.map(m => (
+                              <tr key={m.user_id}>
+                                <td style={{ paddingLeft: '20px' }}>
+                                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    {m.user_name}
+                                  </div>
+                                  <div className="page-subtitle">
+                                    {m.employee_id || `EMP-${m.user_id}`}
+                                  </div>
+                                </td>
+
+                                <td>
+                                  {/* Active / Inactive User Account Toggle */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleToggleUserActive(m.user_id, m.is_active, m.user_name);
+                                    }}
+                                    style={{
+                                      padding: '4px 10px',
+                                      fontSize: '0.72rem',
+                                      fontWeight: '700',
+                                      borderRadius: '6px',
+                                      border: '1px solid',
+                                      borderColor: m.is_active !== false ? '#a7f3d0' : '#fecaca',
+                                      background: m.is_active !== false ? '#ecfdf5' : '#fef2f2',
+                                      color: m.is_active !== false ? '#047857' : '#991b1b',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '4px'
+                                    }}
+                                    title="Click to activate / inactivate user account"
+                                  >
+                                    <LucidePower size={12} />
+                                    {m.is_active !== false ? 'ACTIVE' : 'INACTIVE'}
+                                  </button>
+                                </td>
+
+                                <td>
+                                  <span className="badge-pill badge-purple" style={{ fontSize: '0.72rem' }}>
+                                    {m.role}
+                                  </span>
+                                </td>
+
+                                <td>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                    <span className={`badge-pill ${m.attendance_type === 'MACHINE' ? 'badge-amber' : 'badge-blue'}`} style={{ fontSize: '0.68rem', width: 'fit-content' }}>
+                                      {m.attendance_type === 'MACHINE' ? '🚜 MACHINE' : '👥 TEAM'}
+                                    </span>
+                                    {m.machine_chassis_no && (
+                                      <span style={{ fontSize: '0.72rem', fontFamily: 'monospace', color: '#475569', fontWeight: '600' }}>
+                                        Chassis: {m.machine_chassis_no}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                <td>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <span style={{ fontSize: '0.78rem', fontWeight: '600', color: m.check_in ? '#047857' : '#94a3b8' }}>
+                                        In: {m.check_in || '--:--'}
+                                      </span>
+                                      {!m.check_in && (
+                                        <button
+                                          onClick={() => handleCheckInEmployee(m.user_id)}
+                                          style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
+                                        >
+                                          Check In
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <span style={{ fontSize: '0.78rem', fontWeight: '600', color: m.check_out ? '#1d4ed8' : '#94a3b8' }}>
+                                        Out: {m.check_out || '--:--'}
+                                      </span>
+                                      {m.check_in && !m.check_out && (
+                                        <button
+                                          onClick={() => handleCheckOutEmployee(m.user_id)}
+                                          style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
+                                        >
+                                          Check Out
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {m.total_working_hours && (
+                                      <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>
+                                        ⏱ {m.total_working_hours}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                <td>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                    {m.check_in_latitude ? (
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: '#047857', fontWeight: '600' }}>
+                                        <LucideMapPin size={12} />
+                                        <span>{Number(m.check_in_latitude).toFixed(4)}, {Number(m.check_in_longitude).toFixed(4)}</span>
+                                        {m.check_in_accuracy && <span style={{ color: '#64748b', fontSize: '0.68rem' }}>(±{m.check_in_accuracy}m)</span>}
+                                      </div>
+                                    ) : (
+                                      <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS log</span>
+                                    )}
+
+                                    {m.check_in_photo ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => setActivePhotoUrl(m.check_in_photo)}
+                                        style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '4px',
+                                          padding: '2px 8px',
+                                          background: '#f0fdf4',
+                                          color: '#166534',
+                                          border: '1px solid #bbf7d0',
+                                          borderRadius: '4px',
+                                          fontSize: '0.7rem',
+                                          fontWeight: '700',
+                                          cursor: 'pointer',
+                                          width: 'fit-content'
+                                        }}
+                                      >
+                                        <LucideCamera size={12} /> View Photo
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </td>
+
+                                <td>
+                                  {renderApprovalPill(m.approval_status, m.rejection_reason)}
+                                </td>
+
+                                <td>
+                                  <input
+                                    type="text"
+                                    placeholder="Remarks..."
+                                    value={m.notes || ''}
+                                    onChange={(e) => handleNotesChange(m.user_id, e.target.value)}
+                                    style={{
+                                      width: '100%',
+                                      padding: '6px 10px',
+                                      borderRadius: '6px',
+                                      border: '1px solid #cbd5e1',
+                                      fontSize: '0.78rem',
+                                      outline: 'none',
+                                      boxSizing: 'border-box'
+                                    }}
+                                  />
+                                </td>
+
+                                <td>
+                                  {/* Attendance Selector Buttons */}
+                                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStatusChange(m.user_id, 'PRESENT')}
+                                      style={{
+                                        padding: '4px 6px',
+                                        fontSize: '0.7rem',
+                                        fontWeight: '700',
+                                        borderRadius: '5px',
+                                        border: '1px solid',
+                                        borderColor: m.status === 'PRESENT' ? '#10b981' : '#cbd5e1',
+                                        background: m.status === 'PRESENT' ? '#ecfdf5' : '#ffffff',
+                                        color: m.status === 'PRESENT' ? '#047857' : '#64748b',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      PRESENT
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStatusChange(m.user_id, 'ABSENT')}
+                                      style={{
+                                        padding: '4px 6px',
+                                        fontSize: '0.7rem',
+                                        fontWeight: '700',
+                                        borderRadius: '5px',
+                                        border: '1px solid',
+                                        borderColor: m.status === 'ABSENT' ? '#ef4444' : '#cbd5e1',
+                                        background: m.status === 'ABSENT' ? '#fef2f2' : '#ffffff',
+                                        color: m.status === 'ABSENT' ? '#991b1b' : '#64748b',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      ABSENT
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStatusChange(m.user_id, 'HALF_DAY')}
+                                      style={{
+                                        padding: '4px 6px',
+                                        fontSize: '0.7rem',
+                                        fontWeight: '700',
+                                        borderRadius: '5px',
+                                        border: '1px solid',
+                                        borderColor: m.status === 'HALF_DAY' ? '#f59e0b' : '#cbd5e1',
+                                        background: m.status === 'HALF_DAY' ? '#fffbeb' : '#ffffff',
+                                        color: m.status === 'HALF_DAY' ? '#b45309' : '#64748b',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      HALF DAY
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                  </div>
+                );
+              })}
+
+            {groupedVendorTeams.length === 0 && (
+              <div className="app-card" style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
+                {loading ? 'Loading team attendance roster...' : 'No team members found for selected filters.'}
+              </div>
+            )}
           </div>
         </>
       )}
