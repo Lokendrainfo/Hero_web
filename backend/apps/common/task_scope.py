@@ -207,6 +207,31 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
             target_match_ids.clear()
             target_match_names.clear()
 
+    # Advance Geography Scope Filter
+    if user and user.is_authenticated and user.user_type == 'ADVANCE':
+        geo_circle = user.selected_circle.name.lower() if user.selected_circle else None
+        geo_district = user.selected_district.name.lower() if user.selected_district else None
+        geo_block = user.selected_block.name.lower() if user.selected_block else None
+
+        filtered_geo_tasks = []
+        for t in expanded_results:
+            t_circle = str(t.get('circle') or t.get('state') or t.get('circleName') or '').strip().lower()
+            t_district = str(t.get('district') or t.get('districtName') or '').strip().lower()
+            t_block = str(t.get('block') or t.get('blockName') or '').strip().lower()
+
+            match = True
+            if geo_circle and t_circle and geo_circle not in t_circle and t_circle not in geo_circle:
+                match = False
+            if user.advance_scope_type in ['DISTRICT', 'BLOCK'] and geo_district and t_district and geo_district not in t_district and t_district not in geo_district:
+                match = False
+            if user.advance_scope_type == 'BLOCK' and geo_block and t_block and geo_block not in t_block and t_block not in geo_block:
+                match = False
+
+            if match:
+                filtered_geo_tasks.append(t)
+
+        expanded_results = filtered_geo_tasks
+
     # Reporting Manager Hierarchy Filter
     from apps.common.reporting_scope import get_reporting_scope
     from apps.authentication.models import User

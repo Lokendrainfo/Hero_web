@@ -66,4 +66,5 @@ urlpatterns = [
     path('notifications/', include('apps.notifications.urls')),
     path('reports/', include('apps.reports.urls')),
     path('integrations/', include('apps.integrations.urls')),
+    path('common/', include('apps.common.urls')),
 ]

@@ -23,41 +23,6 @@ export const LiveTracking = () => {
 
   useEffect(() => {
     fetchTrackingData();
-
-    // WebSocket real-time telemetry socket
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.hostname === 'localhost' ? 'localhost:8000' : window.location.host;
-    const wsUrl = `${protocol}//${host}/ws/tracking/`;
-    let ws = null;
-
-    try {
-      ws = new WebSocket(wsUrl);
-      ws.onmessage = (event) => {
-        try {
-          const update = JSON.parse(event.data);
-          if (update && (update.id || update.machine_id)) {
-            const updateId = update.id || update.machine_id;
-            setTelemetry(prev => {
-              const exists = prev.some(m => m.id === updateId);
-              if (exists) {
-                return prev.map(m => m.id === updateId ? { ...m, ...update } : m);
-              }
-              return [...prev, update];
-            });
-          }
-        } catch (e) {
-          console.error('[LiveTracking WS Error]', e);
-        }
-      };
-    } catch (err) {
-      console.warn('[LiveTracking WS] Could not connect to WebSocket:', err);
-    }
-
-    return () => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
-    };
   }, []);
 
   const counts = {

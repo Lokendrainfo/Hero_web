@@ -1,9 +1,20 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.core.exceptions import ValidationError
 from apps.vendors.models import Vendor
 from apps.common.constants import ROLE_CHOICES
 
 class User(AbstractUser):
+    USER_TYPE_CHOICES = [
+        ('NORMAL', 'Normal'),
+        ('ADVANCE', 'Advance'),
+    ]
+    ADVANCE_SCOPE_CHOICES = [
+        ('CIRCLE', 'Circle'),
+        ('DISTRICT', 'District'),
+        ('BLOCK', 'Block'),
+    ]
+
     external_user_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
     employee_id = models.CharField(max_length=50, null=True, blank=True)
     phone_number = models.CharField(max_length=30, blank=True, null=True)
@@ -12,6 +23,14 @@ class User(AbstractUser):
     role = models.CharField(max_length=100, default='VIEWER', blank=True)
     roles = models.ManyToManyField('roles.Role', through='roles.UserRole', related_name='users')
     assigned_vendors = models.ManyToManyField(Vendor, through='vendors.HeroVendorAssignment', through_fields=('user', 'vendor'), related_name='assigned_hero_users')
+    
+    # Geography Access Scope fields
+    user_type = models.CharField(max_length=20, choices=USER_TYPE_CHOICES, default='NORMAL')
+    advance_scope_type = models.CharField(max_length=20, choices=ADVANCE_SCOPE_CHOICES, blank=True, null=True)
+    selected_circle = models.ForeignKey('common.Circle', on_delete=models.SET_NULL, null=True, blank=True, related_name='advance_users')
+    selected_district = models.ForeignKey('common.District', on_delete=models.SET_NULL, null=True, blank=True, related_name='advance_users')
+    selected_block = models.ForeignKey('common.Block', on_delete=models.SET_NULL, null=True, blank=True, related_name='advance_users')
+
     is_active = models.BooleanField(default=True)
     avatar = models.URLField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -25,6 +44,27 @@ class User(AbstractUser):
         if self.reporting_manager:
             from apps.common.reporting_scope import prevent_circular_reporting
             prevent_circular_reporting(self, self.reporting_manager)
+
+        if self.user_type == 'ADVANCE':
+            if not self.advance_scope_type:
+                raise ValidationError({"advance_scope_type": "Advance scope type is required for Advance user."})
+            if not self.selected_circle:
+                raise ValidationError({"selected_circle": "Selected Circle is required for Advance user."})
+            if self.advance_scope_type in ['DISTRICT', 'BLOCK']:
+                if not self.selected_district:
+                    raise ValidationError({"selected_district": "Selected District is required when scope type is DISTRICT or BLOCK."})
+                if self.selected_district.circle_id != self.selected_circle_id:
+                    raise ValidationError({"selected_district": "Selected District does not belong to the selected Circle."})
+            if self.advance_scope_type == 'BLOCK':
+                if not self.selected_block:
+                    raise ValidationError({"selected_block": "Selected Block is required when scope type is BLOCK."})
+                if self.selected_block.district_id != self.selected_district_id:
+                    raise ValidationError({"selected_block": "Selected Block does not belong to the selected District."})
+        elif self.user_type == 'NORMAL':
+            self.advance_scope_type = None
+            self.selected_circle = None
+            self.selected_district = None
+            self.selected_block = None
 
     def save(self, *args, **kwargs):
         self.clean()

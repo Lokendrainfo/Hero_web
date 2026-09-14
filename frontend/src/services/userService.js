@@ -11,4 +11,7 @@ export const userService = {
   assignVendor: (id, vendorId) => api.post(`/users/${id}/vendors/`, { vendor_id: vendorId }),
   removeVendor: (id, vendorId) => api.delete(`/users/${id}/vendors/`, { data: { vendor_id: vendorId } }),
   getAssignedVendors: (id) => api.get(`/users/${id}/vendors/`),
+  getCircles: () => api.get('/common/geography/circles/'),
+  getDistricts: (circleId) => api.get('/common/geography/districts/', { params: { circle_id: circleId } }),
+  getBlocks: (districtId) => api.get('/common/geography/blocks/', { params: { district_id: districtId } }),
 };

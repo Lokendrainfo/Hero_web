@@ -3,6 +3,8 @@ from django.contrib.auth import authenticate
 from django.db.models import Q
 from .models import User
 from apps.vendors.serializers import VendorSerializer
+from apps.common.models import Circle, District, Block
+from apps.common.serializers import CircleSerializer, DistrictSerializer, BlockSerializer
 
 class UserSerializer(serializers.ModelSerializer):
     vendor_details = VendorSerializer(source='vendor', read_only=True)
@@ -23,6 +25,20 @@ class UserSerializer(serializers.ModelSerializer):
     vendor_id = serializers.CharField(required=False, allow_null=True, write_only=True)
     password = serializers.CharField(required=False, allow_blank=True, write_only=True)
 
+    selected_circle_id = serializers.PrimaryKeyRelatedField(
+        queryset=Circle.objects.all(), source='selected_circle', required=False, allow_null=True
+    )
+    selected_district_id = serializers.PrimaryKeyRelatedField(
+        queryset=District.objects.all(), source='selected_district', required=False, allow_null=True
+    )
+    selected_block_id = serializers.PrimaryKeyRelatedField(
+        queryset=Block.objects.all(), source='selected_block', required=False, allow_null=True
+    )
+    selected_circle = CircleSerializer(read_only=True)
+    selected_district = DistrictSerializer(read_only=True)
+    selected_block = BlockSerializer(read_only=True)
+    advance_scope_display = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = [
@@ -30,12 +46,25 @@ class UserSerializer(serializers.ModelSerializer):
             'employee_id', 'phone_number', 'vendor', 'vendor_id', 'vendor_details', 'vendor_name', 'role', 'roles',
             'vendors', 'permissions', 'reporting_manager', 'reporting_manager_id', 'reporting_manager_name',
             'reporting_manager_details', 'direct_reports', 'password',
+            'user_type', 'advance_scope_type', 'selected_circle', 'selected_district', 'selected_block',
+            'selected_circle_id', 'selected_district_id', 'selected_block_id', 'advance_scope_display',
             'is_active', 'is_staff', 'is_superuser', 'avatar', 'date_joined'
         ]
         extra_kwargs = {
             'is_superuser': {'read_only': True},
             'is_staff': {'read_only': True},
         }
+
+    def get_advance_scope_display(self, obj):
+        if obj.user_type != 'ADVANCE':
+            return None
+        if obj.advance_scope_type == 'CIRCLE' and obj.selected_circle:
+            return f"Circle: {obj.selected_circle.name}"
+        elif obj.advance_scope_type == 'DISTRICT' and obj.selected_district:
+            return f"District: {obj.selected_district.name} ({obj.selected_circle.name if obj.selected_circle else ''})"
+        elif obj.advance_scope_type == 'BLOCK' and obj.selected_block:
+            return f"Block: {obj.selected_block.name} ({obj.selected_district.name if obj.selected_district else ''})"
+        return obj.advance_scope_type
 
     def get_name(self, obj):
         full_name = obj.get_full_name()
@@ -220,11 +249,6 @@ class LoginSerializer(serializers.Serializer):
                     user = sync_ilync_user_to_django(matched_ilync_user, set_password_if_new=password)
             except Exception as err:
                 print("[LoginSerializer] ILYNC live sync error:", err)
-
-        if not user and user_obj and user_obj.is_active:
-            user_obj.set_password(password)
-            user_obj.save()
-            user = user_obj
 
         if not user:
             raise serializers.ValidationError('Invalid username/ID or password.')

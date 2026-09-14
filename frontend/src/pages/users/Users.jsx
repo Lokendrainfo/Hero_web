@@ -30,6 +30,13 @@ export const Users = () => {
   const [vendorSearchInEditModal, setVendorSearchInEditModal] = useState('');
   const [managerSearchInEditModal, setManagerSearchInEditModal] = useState('');
 
+  // Geography Master State
+  const [masterCircles, setMasterCircles] = useState([]);
+  const [createDistricts, setCreateDistricts] = useState([]);
+  const [createBlocks, setCreateBlocks] = useState([]);
+  const [editDistricts, setEditDistricts] = useState([]);
+  const [editBlocks, setEditBlocks] = useState([]);
+
   // Create User State
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -46,7 +53,12 @@ export const Users = () => {
     role: 'VIEWER',
     reporting_manager_id: '',
     vendor_id: '',
-    password: ''
+    password: '',
+    user_type: 'NORMAL',
+    advance_scope_type: 'CIRCLE',
+    selected_circle_id: '',
+    selected_district_id: '',
+    selected_block_id: ''
   });
 
   const [editUser, setEditUser] = useState(null);
@@ -59,9 +71,82 @@ export const Users = () => {
     role: 'VIEWER',
     reporting_manager_id: '',
     vendor_id: '',
+    user_type: 'NORMAL',
+    advance_scope_type: 'CIRCLE',
+    selected_circle_id: '',
+    selected_district_id: '',
+    selected_block_id: '',
     is_active: true
   });
   const [statusMessage, setStatusMessage] = useState(null);
+
+  const fetchCircles = async () => {
+    try {
+      const res = await userService.getCircles();
+      const list = res.data?.data || res.data || [];
+      setMasterCircles(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.error("Failed to fetch circles:", err);
+    }
+  };
+
+  const fetchDistrictsForCreate = async (circleId) => {
+    if (!circleId) {
+      setCreateDistricts([]);
+      setCreateBlocks([]);
+      return;
+    }
+    try {
+      const res = await userService.getDistricts(circleId);
+      const list = res.data?.data || res.data || [];
+      setCreateDistricts(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.error("Failed to fetch districts:", err);
+    }
+  };
+
+  const fetchBlocksForCreate = async (districtId) => {
+    if (!districtId) {
+      setCreateBlocks([]);
+      return;
+    }
+    try {
+      const res = await userService.getBlocks(districtId);
+      const list = res.data?.data || res.data || [];
+      setCreateBlocks(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.error("Failed to fetch blocks:", err);
+    }
+  };
+
+  const fetchDistrictsForEdit = async (circleId) => {
+    if (!circleId) {
+      setEditDistricts([]);
+      setEditBlocks([]);
+      return;
+    }
+    try {
+      const res = await userService.getDistricts(circleId);
+      const list = res.data?.data || res.data || [];
+      setEditDistricts(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.error("Failed to fetch districts for edit:", err);
+    }
+  };
+
+  const fetchBlocksForEdit = async (districtId) => {
+    if (!districtId) {
+      setEditBlocks([]);
+      return;
+    }
+    try {
+      const res = await userService.getBlocks(districtId);
+      const list = res.data?.data || res.data || [];
+      setEditBlocks(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.error("Failed to fetch blocks for edit:", err);
+    }
+  };
 
   const [pagination, setPagination] = useState({
     page: 0,
@@ -187,12 +272,20 @@ export const Users = () => {
     }
   };
 
-  const handleEditClick = (u) => {
+  const handleEditClick = async (u) => {
     setEditUser(u);
     setVendorSearchInEditModal('');
     setManagerSearchInEditModal('');
+    fetchCircles();
+
     const currentRole = (u.roles && u.roles.length > 0) ? u.roles[0] : (u.role || 'VIEWER');
     const firstAssignedVendorId = (u.vendors && u.vendors.length > 0) ? (u.vendors[0].id || u.vendors[0].external_vendor_id) : (u.vendor || u.vendor_id || '');
+
+    const uType = u.user_type || 'NORMAL';
+    const scopeType = u.advance_scope_type || 'CIRCLE';
+    const cId = u.selected_circle ? (u.selected_circle.id || u.selected_circle) : (u.selected_circle_id || '');
+    const dId = u.selected_district ? (u.selected_district.id || u.selected_district) : (u.selected_district_id || '');
+    const bId = u.selected_block ? (u.selected_block.id || u.selected_block) : (u.selected_block_id || '');
 
     setEditForm({
       first_name: u.first_name || u.name || '',
@@ -203,8 +296,20 @@ export const Users = () => {
       role: currentRole,
       reporting_manager_id: u.reporting_manager_id || u.reporting_manager || '',
       vendor_id: firstAssignedVendorId || '',
+      user_type: uType,
+      advance_scope_type: scopeType,
+      selected_circle_id: cId,
+      selected_district_id: dId,
+      selected_block_id: bId,
       is_active: u.is_active !== undefined ? u.is_active : true
     });
+
+    if (cId) {
+      fetchDistrictsForEdit(cId);
+    }
+    if (dId) {
+      fetchBlocksForEdit(dId);
+    }
   };
 
   const handleSaveEditUser = async () => {
@@ -218,7 +323,12 @@ export const Users = () => {
         role: editForm.role,
         is_active: editForm.is_active,
         reporting_manager_id: editForm.reporting_manager_id ? Number(editForm.reporting_manager_id) : null,
-        vendor_id: editForm.vendor_id ? editForm.vendor_id : null
+        vendor_id: editForm.vendor_id ? editForm.vendor_id : null,
+        user_type: editForm.user_type || 'NORMAL',
+        advance_scope_type: editForm.user_type === 'ADVANCE' ? editForm.advance_scope_type : null,
+        selected_circle_id: editForm.user_type === 'ADVANCE' ? editForm.selected_circle_id || null : null,
+        selected_district_id: editForm.user_type === 'ADVANCE' && (editForm.advance_scope_type === 'DISTRICT' || editForm.advance_scope_type === 'BLOCK') ? editForm.selected_district_id || null : null,
+        selected_block_id: editForm.user_type === 'ADVANCE' && editForm.advance_scope_type === 'BLOCK' ? editForm.selected_block_id || null : null,
       };
 
       await userService.updateUser(editUser.id, payload);
@@ -267,7 +377,12 @@ export const Users = () => {
         role: createForm.role || 'VIEWER',
         reporting_manager_id: createForm.reporting_manager_id ? Number(createForm.reporting_manager_id) : null,
         vendor_id: createForm.vendor_id ? (isNaN(Number(createForm.vendor_id)) ? createForm.vendor_id : Number(createForm.vendor_id)) : null,
-        password: createForm.password.trim() || undefined
+        password: createForm.password.trim() || undefined,
+        user_type: createForm.user_type || 'NORMAL',
+        advance_scope_type: createForm.user_type === 'ADVANCE' ? createForm.advance_scope_type : null,
+        selected_circle_id: createForm.user_type === 'ADVANCE' ? createForm.selected_circle_id || null : null,
+        selected_district_id: createForm.user_type === 'ADVANCE' && (createForm.advance_scope_type === 'DISTRICT' || createForm.advance_scope_type === 'BLOCK') ? createForm.selected_district_id || null : null,
+        selected_block_id: createForm.user_type === 'ADVANCE' && createForm.advance_scope_type === 'BLOCK' ? createForm.selected_block_id || null : null,
       };
 
       await userService.createUser(payload);
@@ -286,7 +401,12 @@ export const Users = () => {
         role: 'VIEWER',
         reporting_manager_id: '',
         vendor_id: '',
-        password: ''
+        password: '',
+        user_type: 'NORMAL',
+        advance_scope_type: 'CIRCLE',
+        selected_circle_id: '',
+        selected_district_id: '',
+        selected_block_id: ''
       });
     } catch (err) {
       console.error("Failed to create user:", err);
@@ -365,6 +485,7 @@ export const Users = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button
             onClick={() => {
+              fetchCircles();
               setCreateForm({
                 username: '',
                 first_name: '',
@@ -376,7 +497,12 @@ export const Users = () => {
                 role: 'VIEWER',
                 reporting_manager_id: '',
                 vendor_id: '',
-                password: ''
+                password: '',
+                user_type: 'NORMAL',
+                advance_scope_type: 'CIRCLE',
+                selected_circle_id: '',
+                selected_district_id: '',
+                selected_block_id: ''
               });
               setVendorSearchInCreateModal('');
               setManagerSearchInCreateModal('');
@@ -549,6 +675,8 @@ export const Users = () => {
               <th style={{ padding: '12px 16px' }}>User Details</th>
               <th style={{ padding: '12px 16px' }}>External User ID</th>
               <th style={{ padding: '12px 16px' }}>HERO Role</th>
+              <th style={{ padding: '12px 16px' }}>User Type</th>
+              <th style={{ padding: '12px 16px' }}>Access Scope</th>
               <th style={{ padding: '12px 16px' }}>Reporting Manager</th>
               <th style={{ padding: '12px 16px' }}>Assigned Vendors Scope</th>
               <th style={{ padding: '12px 16px' }}>Status</th>
@@ -558,13 +686,13 @@ export const Users = () => {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
+                <td colSpan={9} style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
                   Loading HERO platform users...
                 </td>
               </tr>
             ) : filteredUsers.length === 0 ? (
               <tr>
-                <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
+                <td colSpan={9} style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
                   No users found matching your search query.
                 </td>
               </tr>
@@ -606,6 +734,30 @@ export const Users = () => {
                           <option key={r} value={r}>{r}</option>
                         ))}
                       </SearchableSelect>
+                    </td>
+
+                    {/* User Type */}
+                    <td style={{ padding: '12px 16px' }}>
+                      {u.user_type === 'ADVANCE' ? (
+                        <span style={{ fontSize: '0.75rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', padding: '3px 8px', borderRadius: '4px', fontWeight: '700' }}>
+                          Advance
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: '0.75rem', background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', padding: '3px 8px', borderRadius: '4px', fontWeight: '600' }}>
+                          Normal
+                        </span>
+                      )}
+                    </td>
+
+                    {/* Access Scope */}
+                    <td style={{ padding: '12px 16px' }}>
+                      {u.user_type === 'ADVANCE' ? (
+                        <div style={{ fontSize: '0.78rem', color: '#1e293b', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '3px 8px', borderRadius: '6px' }}>
+                          <span>📍</span> {u.advance_scope_display || u.advance_scope_type || 'Advance'}
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>-</span>
+                      )}
                     </td>
 
                     <td style={{ padding: '12px 16px' }}>
@@ -1084,6 +1236,133 @@ export const Users = () => {
                 </div>
               </div>
 
+              {/* User Type & Geographical Access Scope */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontWeight: '700', color: '#1e293b', marginBottom: '4px' }}>User Type:</label>
+                    <SearchableSelect
+                      value={editForm.user_type}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditForm(prev => ({
+                          ...prev,
+                          user_type: val,
+                          advance_scope_type: val === 'ADVANCE' ? 'CIRCLE' : '',
+                          selected_circle_id: '',
+                          selected_district_id: '',
+                          selected_block_id: ''
+                        }));
+                        if (val === 'ADVANCE') {
+                          fetchCircles();
+                        }
+                      }}
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff' }}
+                    >
+                      <option value="NORMAL">Normal</option>
+                      <option value="ADVANCE">Advance</option>
+                    </SearchableSelect>
+                  </div>
+
+                  {editForm.user_type === 'ADVANCE' && (
+                    <div>
+                      <label style={{ display: 'block', fontWeight: '700', color: '#1e293b', marginBottom: '4px' }}>Access Scope:</label>
+                      <SearchableSelect
+                        value={editForm.advance_scope_type}
+                        onChange={(e) => {
+                          const scope = e.target.value;
+                          setEditForm(prev => ({
+                            ...prev,
+                            advance_scope_type: scope,
+                            selected_district_id: scope === 'CIRCLE' ? '' : prev.selected_district_id,
+                            selected_block_id: scope === 'BLOCK' ? prev.selected_block_id : ''
+                          }));
+                        }}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff' }}
+                      >
+                        <option value="CIRCLE">Circle</option>
+                        <option value="DISTRICT">District</option>
+                        <option value="BLOCK">Block</option>
+                      </SearchableSelect>
+                    </div>
+                  )}
+                </div>
+
+                {editForm.user_type === 'ADVANCE' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: '#eff6ff', padding: '10px', borderRadius: '6px', border: '1px solid #bfdbfe', marginTop: '4px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>Circle / State:</label>
+                      <SearchableSelect
+                        value={editForm.selected_circle_id}
+                        onChange={(e) => {
+                          const cId = e.target.value;
+                          setEditForm(prev => ({
+                            ...prev,
+                            selected_circle_id: cId,
+                            selected_district_id: '',
+                            selected_block_id: ''
+                          }));
+                          fetchDistrictsForEdit(cId);
+                        }}
+                        style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: '#fff', fontSize: '0.82rem' }}
+                      >
+                        <option value="">-- Select Circle --</option>
+                        {masterCircles.map(c => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </SearchableSelect>
+                    </div>
+
+                    {(editForm.advance_scope_type === 'DISTRICT' || editForm.advance_scope_type === 'BLOCK') && (
+                      <div>
+                        <label style={{ display: 'block', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>District:</label>
+                        <SearchableSelect
+                          value={editForm.selected_district_id}
+                          disabled={!editForm.selected_circle_id}
+                          onChange={(e) => {
+                            const dId = e.target.value;
+                            setEditForm(prev => ({
+                              ...prev,
+                              selected_district_id: dId,
+                              selected_block_id: ''
+                            }));
+                            fetchBlocksForEdit(dId);
+                          }}
+                          style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: !editForm.selected_circle_id ? '#f3f4f6' : '#fff', fontSize: '0.82rem' }}
+                        >
+                          <option value="">-- Select District --</option>
+                          {editDistricts.map(d => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                          ))}
+                        </SearchableSelect>
+                      </div>
+                    )}
+
+                    {editForm.advance_scope_type === 'BLOCK' && (
+                      <div>
+                        <label style={{ display: 'block', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>Block:</label>
+                        <SearchableSelect
+                          value={editForm.selected_block_id}
+                          disabled={!editForm.selected_district_id}
+                          onChange={(e) => {
+                            setEditForm(prev => ({
+                              ...prev,
+                              selected_block_id: e.target.value
+                            }));
+                          }}
+                          style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: !editForm.selected_district_id ? '#f3f4f6' : '#fff', fontSize: '0.82rem' }}
+                        >
+                          <option value="">-- Select Block --</option>
+                          {editBlocks.map(b => (
+                            <option key={b.id} value={b.id}>{b.name}</option>
+                          ))}
+                        </SearchableSelect>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Search & Select Vendor Scope & Reporting Manager */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
                 {/* Search & Select Vendor */}
@@ -1407,6 +1686,143 @@ export const Users = () => {
                     ))}
                   </SearchableSelect>
                 </div>
+              </div>
+
+              {/* User Type & Geographical Access Scope */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontWeight: '700', color: '#1e293b', marginBottom: '4px' }}>
+                      User Type <span style={{ color: '#dc2626' }}>*</span>
+                    </label>
+                    <SearchableSelect
+                      value={createForm.user_type}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setCreateForm(prev => ({
+                          ...prev,
+                          user_type: val,
+                          advance_scope_type: val === 'ADVANCE' ? 'CIRCLE' : '',
+                          selected_circle_id: '',
+                          selected_district_id: '',
+                          selected_block_id: ''
+                        }));
+                        if (val === 'ADVANCE') {
+                          fetchCircles();
+                        }
+                      }}
+                      style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
+                    >
+                      <option value="NORMAL">Normal</option>
+                      <option value="ADVANCE">Advance</option>
+                    </SearchableSelect>
+                  </div>
+
+                  {createForm.user_type === 'ADVANCE' && (
+                    <div>
+                      <label style={{ display: 'block', fontWeight: '700', color: '#1e293b', marginBottom: '4px' }}>
+                        Access Scope <span style={{ color: '#dc2626' }}>*</span>
+                      </label>
+                      <SearchableSelect
+                        value={createForm.advance_scope_type}
+                        onChange={(e) => {
+                          const scope = e.target.value;
+                          setCreateForm(prev => ({
+                            ...prev,
+                            advance_scope_type: scope,
+                            selected_district_id: scope === 'CIRCLE' ? '' : prev.selected_district_id,
+                            selected_block_id: scope === 'BLOCK' ? prev.selected_block_id : ''
+                          }));
+                        }}
+                        style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
+                      >
+                        <option value="CIRCLE">Circle</option>
+                        <option value="DISTRICT">District</option>
+                        <option value="BLOCK">Block</option>
+                      </SearchableSelect>
+                    </div>
+                  )}
+                </div>
+
+                {createForm.user_type === 'ADVANCE' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: '#eff6ff', padding: '10px', borderRadius: '6px', border: '1px solid #bfdbfe', marginTop: '4px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>
+                        Circle / State <span style={{ color: '#dc2626' }}>*</span>
+                      </label>
+                      <SearchableSelect
+                        value={createForm.selected_circle_id}
+                        onChange={(e) => {
+                          const cId = e.target.value;
+                          setCreateForm(prev => ({
+                            ...prev,
+                            selected_circle_id: cId,
+                            selected_district_id: '',
+                            selected_block_id: ''
+                          }));
+                          fetchDistrictsForCreate(cId);
+                        }}
+                        style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
+                      >
+                        <option value="">-- Select Circle --</option>
+                        {masterCircles.map(c => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </SearchableSelect>
+                    </div>
+
+                    {(createForm.advance_scope_type === 'DISTRICT' || createForm.advance_scope_type === 'BLOCK') && (
+                      <div>
+                        <label style={{ display: 'block', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>
+                          District <span style={{ color: '#dc2626' }}>*</span>
+                        </label>
+                        <SearchableSelect
+                          value={createForm.selected_district_id}
+                          disabled={!createForm.selected_circle_id}
+                          onChange={(e) => {
+                            const dId = e.target.value;
+                            setCreateForm(prev => ({
+                              ...prev,
+                              selected_district_id: dId,
+                              selected_block_id: ''
+                            }));
+                            fetchBlocksForCreate(dId);
+                          }}
+                          style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: !createForm.selected_circle_id ? '#f3f4f6' : '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
+                        >
+                          <option value="">-- Select District --</option>
+                          {createDistricts.map(d => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                          ))}
+                        </SearchableSelect>
+                      </div>
+                    )}
+
+                    {createForm.advance_scope_type === 'BLOCK' && (
+                      <div>
+                        <label style={{ display: 'block', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>
+                          Block <span style={{ color: '#dc2626' }}>*</span>
+                        </label>
+                        <SearchableSelect
+                          value={createForm.selected_block_id}
+                          disabled={!createForm.selected_district_id}
+                          onChange={(e) => {
+                            setCreateForm(prev => ({
+                              ...prev,
+                              selected_block_id: e.target.value
+                            }));
+                          }}
+                          style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: !createForm.selected_district_id ? '#f3f4f6' : '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
+                        >
+                          <option value="">-- Select Block --</option>
+                          {createBlocks.map(b => (
+                            <option key={b.id} value={b.id}>{b.name}</option>
+                          ))}
+                        </SearchableSelect>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Vendor Scope & Reporting Manager Selection */}

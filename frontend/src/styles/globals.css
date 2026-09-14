@@ -177,8 +177,7 @@ code {
 /* GIS execution markers — circle + label chain, like field survey maps */
 .gis-marker.leaflet-div-icon,
 .gis-dp-marker.leaflet-div-icon,
-.gis-pit-marker.leaflet-div-icon,
-.custom-live-location-disc-marker.leaflet-div-icon {
+.gis-pit-marker.leaflet-div-icon {
   background: transparent !important;
   border: none !important;
   overflow: visible !important;
@@ -208,31 +207,10 @@ code {
   flex-shrink: 0;
 }
 
-@keyframes gisPulseHalo {
-  0% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.8), 0 1px 4px rgba(0, 0, 0, 0.3);
-  }
-  70% {
-    box-shadow: 0 0 0 14px rgba(16, 185, 129, 0), 0 1px 4px rgba(0, 0, 0, 0.3);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0), 0 1px 4px rgba(0, 0, 0, 0.3);
-  }
-}
-
 .gis-dp--live .gis-dp-dot {
-  background: #10b981 !important;
-  border-color: #ffffff !important;
-  animation: gisPulseHalo 1.5s infinite ease-out !important;
-}
-
-.gis-dp--live .gis-dp-label {
-  background: #059669 !important;
-  color: #ffffff !important;
-  border-color: #047857 !important;
-  text-shadow: none !important;
-  padding: 2px 6px !important;
-  border-radius: 4px !important;
+  background: #6d28d9;
+  border-color: #ffffff;
+  box-shadow: 0 0 0 3px rgba(109, 40, 217, 0.28), 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
 .gis-dp-label {
