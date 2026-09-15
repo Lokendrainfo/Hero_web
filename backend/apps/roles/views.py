@@ -11,6 +11,7 @@ class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.all().order_by('id')
     serializer_class = RoleSerializer
     permission_classes = [permissions.AllowAny]
+    pagination_class = None
 
     def get_queryset(self):
         if Role.objects.count() == 0 or not Role.objects.filter(code='SUPER_ADMIN').exists() or Permission.objects.count() < len(SYSTEM_PERMISSIONS):
@@ -65,7 +66,6 @@ class RoleViewSet(viewsets.ModelViewSet):
     def toggle_active(self, request, pk=None):
         role = self.get_object()
         if role.is_system and role.is_active:
-            # Prevent deactivating super critical roles if required, or allow toggle with warning
             pass
         role.is_active = not role.is_active
         if request.user.is_authenticated:
@@ -82,7 +82,6 @@ class RoleViewSet(viewsets.ModelViewSet):
             return error_response(message="user_ids must be a list of user IDs.")
         
         users = User.objects.filter(id__in=user_ids)
-        # Clear existing role assignments for these users or assign this role
         for u in users:
             UserRole.objects.get_or_create(user=u, role=role)
         
@@ -105,7 +104,6 @@ class RoleViewSet(viewsets.ModelViewSet):
 
         permission_codes = user.get_permission_codes()
         
-        # Effective scope aggregation
         scopes = set(roles.values_list('data_scope', flat=True))
         if 'ALL_DATA' in scopes or user.is_superuser or 'SUPER_ADMIN' in role_codes or 'ADMIN' in role_codes:
             effective_scope = 'ALL_DATA'
@@ -146,6 +144,7 @@ class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Permission.objects.all().order_by('category', 'id')
     serializer_class = PermissionSerializer
     permission_classes = [permissions.AllowAny]
+    pagination_class = None
 
     def get_queryset(self):
         if Permission.objects.count() < len(SYSTEM_PERMISSIONS):

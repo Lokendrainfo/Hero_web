@@ -142,9 +142,9 @@ export const mapHddExecutionResponse = (task, execution = null) => {
   if (!task) return null;
 
   const loc = task.locationSnapshot || task.location || {};
-  const execData = task.taskExecution || execution?.data || execution || null;
-  const fieldData = execData?.fieldData || (execData && !execData.id ? execData : {});
-  const trenching = fieldData?.trenching || null;
+  const execData = task?.taskExecution || execution?.data || execution || null;
+  const fieldData = execData?.fieldData || execData?.trenching || execData || {};
+  const trenching = fieldData?.trenching || execData?.trenching || fieldData || {};
 
   const createMediaItem = (rawMedia, defaultLabel = 'Photo', isVidFallback = false) => {
     if (!rawMedia) return null;
@@ -173,7 +173,7 @@ export const mapHddExecutionResponse = (task, execution = null) => {
   const availableDatesSet = new Set();
 
   // 1. Extract Pits and Build Pit Lookup Map
-  const rawPits = trenching?.pitDetails || fieldData?.pitDetails || [];
+  const rawPits = trenching?.pitDetails || fieldData?.pitDetails || execData?.pitDetails || execData?.pits || fieldData?.pits || [];
   const pitsMap = new Map();
 
   const pits = rawPits.map((p, idx) => {
@@ -201,7 +201,8 @@ export const mapHddExecutionResponse = (task, execution = null) => {
       }
     });
 
-    const executionDate = parseDateToYMD(p.pitDiggingTime) || parseDateToYMD((p.pitImage_1 || {}).capturedAt);
+    const pitTime = p.pitDiggingTime || p.createdAt || p.updatedAt || p.date || p.diggingTime || (p.pitImage_1 || {}).capturedAt || (p.pitDepthImage || {}).capturedAt;
+    const executionDate = parseDateToYMD(pitTime);
     if (executionDate) availableDatesSet.add(executionDate);
 
     const pitObj = {
@@ -227,7 +228,11 @@ export const mapHddExecutionResponse = (task, execution = null) => {
   }).filter(p => !isNaN(p.lat) && !isNaN(p.lng) && p.lat !== 0);
 
   // 2. Extract HDD Shots / Trenches (Pit-to-Pit)
-  const rawShots = Array.isArray(trenching?.hddShot) ? trenching.hddShot : (Array.isArray(fieldData?.hddShot) ? fieldData.hddShot : []);
+  const rawShots = Array.isArray(trenching?.hddShot) ? trenching.hddShot :
+                   (Array.isArray(fieldData?.hddShot) ? fieldData.hddShot :
+                   (Array.isArray(execData?.hddShot) ? execData.hddShot :
+                   (Array.isArray(execData?.shots) ? execData.shots :
+                   (Array.isArray(fieldData?.shots) ? fieldData.shots : []))));
   let allDepthReadings = [];
   let minDepth = Infinity;
   let maxDepth = -Infinity;
@@ -244,7 +249,8 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     const pitVideoObj = createMediaItem(shot.pitToPitVideo, `Trench ${shotId} Pit-to-Pit Video`, true);
     if (pitVideoObj) trenchPhotos.push(pitVideoObj);
 
-    const executionDate = parseDateToYMD(shot.hddEndTime) || parseDateToYMD(shot.hddStartTime) || parseDateToYMD(shot.hddDate);
+    const shotTime = shot.hddEndTime || shot.hddStartTime || shot.hddDate || shot.createdAt || shot.updatedAt || shot.date || shot.startTime || shot.endTime;
+    const executionDate = parseDateToYMD(shotTime);
     if (executionDate) availableDatesSet.add(executionDate);
 
     const rawCaptures = Array.isArray(shot.depthCapture) ? shot.depthCapture : [];
@@ -252,7 +258,7 @@ export const mapHddExecutionResponse = (task, execution = null) => {
       const photoObj = dp.depthoMeterImage || dp.photo || dp.photoUrl || dp.image || null;
       const lat = parseFloat(dp.latitude || (photoObj && photoObj.latitude) || 0);
       const lng = parseFloat(dp.longitude || (photoObj && photoObj.longitude) || 0);
-      const capturedAt = dp.capturedAt || dp.createdAt || dp.createdTime || (photoObj && photoObj.capturedAt) || null;
+      const capturedAt = dp.capturedAt || dp.createdAt || dp.createdTime || dp.timestamp || dp.time || dp.date || (photoObj && photoObj.capturedAt) || null;
       const dpDate = parseDateToYMD(capturedAt) || executionDate;
       if (dpDate) availableDatesSet.add(dpDate);
 

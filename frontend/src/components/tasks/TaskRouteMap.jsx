@@ -72,7 +72,7 @@ export const TaskRouteMap = ({
   const displayBlock = block || 'ANUPGARH';
   const displayGpCount = gpCount || (routeNodes.length > 0 ? routeNodes.length : (childRoutes.length || 2));
 
-  const effectivePct = progressPct > 0 ? progressPct : (coveredKm > 0 && plannedScopeKm > 0 ? Math.min(100, Math.round((coveredKm / plannedScopeKm) * 100)) : 35);
+  const effectivePct = progressPct > 0 ? progressPct : (coveredKm > 0 && plannedScopeKm > 0 ? Math.min(100, Math.round((coveredKm / plannedScopeKm) * 100)) : 0);
 
   const toggleFullscreen = () => {
     if (!wrapperRef.current) return;

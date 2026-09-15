@@ -149,7 +149,7 @@ export const HddExecutionMapPage = () => {
     return normalized;
   };
 
-  const resolveExecutionData = async (targetId, maxDepth = 1) => {
+  const resolveExecutionData = async (targetId, maxDepth = 3) => {
     if (!targetId || maxDepth <= 0) return null;
 
     try {
@@ -189,11 +189,8 @@ export const HddExecutionMapPage = () => {
             })
           );
 
-          // Merge any valid child shots and pits into THIS user's execution object ONLY if child belongs to the same user!
+          // Merge any valid child shots, pits, and depth points into execution object
           childResults.filter(Boolean).forEach(childNorm => {
-            const isSameUser = !childNorm.user || (childNorm.user.toLowerCase().trim() === (normalized.user || '').toLowerCase().trim());
-            if (!isSameUser) return;
-
             if (childNorm.shots && childNorm.shots.length > 0) {
               normalized.shots = [...(normalized.shots || []), ...childNorm.shots];
             }
@@ -574,7 +571,7 @@ export const HddExecutionMapPage = () => {
             const pt = map.latLngToContainerPoint([dpLast.lat, dpLast.lng]);
             labeledIndices.add(lastIdx);
             placedPositions.push(pt);
-          } catch (e) {}
+          } catch (e) { }
         }
       }
 
@@ -588,7 +585,7 @@ export const HddExecutionMapPage = () => {
               labeledIndices.add(0);
               placedPositions.push(pt);
             }
-          } catch (e) {}
+          } catch (e) { }
         }
       }
 
@@ -604,7 +601,7 @@ export const HddExecutionMapPage = () => {
             labeledIndices.add(idx);
             placedPositions.push(pt);
           }
-        } catch (e) {}
+        } catch (e) { }
       });
 
       // Render markers
@@ -648,7 +645,6 @@ export const HddExecutionMapPage = () => {
 
         const tooltipText = [
           formatDepthM(dp.depth),
-          `Dt ${dp.pointNo || idx + 1}`,
           dateStr
         ].filter(Boolean).join(' · ');
 

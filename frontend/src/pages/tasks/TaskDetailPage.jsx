@@ -556,9 +556,35 @@ export const TaskDetailPage = () => {
     plannedScopeKm = Number(task.coveredLengthKm);
   }
 
-  const coveredKm = task.coveredLengthKm !== undefined && task.coveredLengthKm !== null ? Number(task.coveredLengthKm) : 0;
+  // Execution records from normalized executionData
+  const activePits = executionData?.pits || [];
+  const activeShots = executionData?.shots || [];
+  const activeDepthPoints = executionData?.depthPoints || [];
+  const availableDates = rawExecutionData?.availableDates || [];
+  const hasRealExecution = activeShots.length > 0 || activePits.length > 0 || activeDepthPoints.length > 0;
+
+  // Execution Telemetry Distance (Meters & Km from actual trench shots)
+  const execMetersFromShots = activeShots.reduce((sum, s) => sum + (Number(s.lengthMeters) || 0), 0);
+  const execKmFromShots = execMetersFromShots > 0 ? execMetersFromShots / 1000 : 0;
+
+  // Task Progress Percentage (e.g. 35%)
+  const rawProgressPct = task.progressPercentage ?? task.completionPercentage ?? task.progress ?? executionData?.progressPercentage ?? (plannedScopeKm > 0 && execKmFromShots > 0 ? (execKmFromShots / plannedScopeKm) * 100 : 0);
+  const progressPctNum = Number(rawProgressPct) || 0;
+
+  // Calculate actual Covered Km:
+  let coveredKm = 0;
+  if (task.coveredLengthKm && Number(task.coveredLengthKm) > 0) {
+    coveredKm = Number(task.coveredLengthKm);
+  } else if (task.coveredLengthMeters && Number(task.coveredLengthMeters) > 0) {
+    coveredKm = Number(task.coveredLengthMeters) / 1000;
+  } else if (execKmFromShots > 0) {
+    coveredKm = execKmFromShots;
+  } else if (progressPctNum > 0 && plannedScopeKm > 0) {
+    coveredKm = (plannedScopeKm * progressPctNum) / 100;
+  }
+
   const remainingKm = Math.max(0, plannedScopeKm - coveredKm);
-  const pct = plannedScopeKm > 0 ? Math.min(100, Math.round((coveredKm / plannedScopeKm) * 100)) : 0;
+  const pct = plannedScopeKm > 0 ? Math.min(100, Math.round((coveredKm / plannedScopeKm) * 100)) : (progressPctNum > 0 ? Math.round(progressPctNum) : 0);
 
   const routeNodes = routeSnapshot.nodes || task.nodes || [];
   const currentNode = routeSnapshot.currentNode || (routeNodes.length > 0 ? routeNodes[0] : null);
@@ -578,13 +604,6 @@ export const TaskDetailPage = () => {
   // OTDR / Fiber Survey
   const fiberCableDetails = fieldData?.fiberCableDetails || [];
   const fiberHealthTable = fiberCableDetails[0]?.fiberHealthTable || [];
-
-  // Execution records from normalized executionData
-  const activePits = executionData?.pits || [];
-  const activeShots = executionData?.shots || [];
-  const activeDepthPoints = executionData?.depthPoints || [];
-  const availableDates = rawExecutionData?.availableDates || [];
-  const hasRealExecution = activeShots.length > 0 || activePits.length > 0 || activeDepthPoints.length > 0;
 
   // Calculate Media Totals
   let totalPhotos = 0;

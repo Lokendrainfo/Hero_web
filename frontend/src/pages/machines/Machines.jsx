@@ -38,8 +38,8 @@ export const Machines = () => {
   const [search, setSearch] = useState('');
   const navigate = useNavigate();
 
-  const fetchMachines = (shouldResync = false) => {
-    setLoading(true);
+  const fetchMachines = (shouldResync = false, isSilent = false) => {
+    if (!isSilent) setLoading(true);
     const params = {};
     if (shouldResync) params.resync = 'true';
 
@@ -52,11 +52,17 @@ export const Machines = () => {
         setEmptyStateMessage(next.emptyStateMessage);
       })
       .catch(console.error)
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!isSilent) setLoading(false);
+      });
   };
 
   useEffect(() => {
-    fetchMachines();
+    fetchMachines(false, false);
+    const interval = setInterval(() => {
+      fetchMachines(false, true); // Silent auto-refresh every 10s
+    }, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const counts = {

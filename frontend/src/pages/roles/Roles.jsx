@@ -47,8 +47,8 @@ export const Roles = () => {
         roleService.getRoles(),
         roleService.getPermissions()
       ]);
-      const roleList = Array.isArray(roleRes.data) ? roleRes.data : (roleRes.results || roleRes || []);
-      const permList = Array.isArray(permRes.data) ? permRes.data : (permRes.results || permRes || []);
+      const roleList = Array.isArray(roleRes.data) ? roleRes.data : (roleRes.data?.results || roleRes.results || roleRes || []);
+      const permList = Array.isArray(permRes.data) ? permRes.data : (permRes.data?.results || permRes.results || permRes || []);
       
       setRoles(roleList);
       setPermissions(permList);

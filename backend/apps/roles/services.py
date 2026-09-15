@@ -5,10 +5,17 @@ SYSTEM_PERMISSIONS = [
     ("dashboard.view", "View Dashboard", "Dashboard", "View dashboard analytics and financial KPI statistics"),
     ("dashboard.export", "Export Dashboard Data", "Dashboard", "Export dashboard data and charts"),
 
-    # Map View & Execution Topology
-    ("mapview.view", "View Map View & Topology", "Map View", "View GIS map view and trenching / HDD execution topology"),
-    ("chartview.view", "View Depth/Chart View", "Map View", "View GIS depth/chart view and execution analytics"),
-    ("mapview.export", "Export Map Data", "Map View", "Export spatial and execution topology data"),
+    # Machinery & Fleet
+    ("machines.view", "View Machinery", "Machines", "View fleet machinery list and equipment details"),
+    ("machines.create", "Create Machinery", "Machines", "Add new machinery and drill rigs to fleet"),
+    ("machines.edit", "Edit Machinery", "Machines", "Update equipment specs, status, and telemetry settings"),
+    ("machines.delete", "Delete Machinery", "Machines", "Remove equipment from fleet"),
+    ("machines.assign", "Assign Machine", "Machines", "Assign machine to vendors, operators, or tasks"),
+    ("machines.manage", "Manage Machinery", "Machines", "Full administration of machinery fleet"),
+
+    # Live GPS Telemetry & Tracking
+    ("tracking.view", "View Live GPS Tracking", "Live Tracking", "View live machine locations, geofences, and route history"),
+    ("tracking.manage", "Manage GPS Telemetry", "Live Tracking", "Configure GPS devices, polling frequency, and alerts"),
 
     # Work Tasks & Operations
     ("tasks.view", "View Work Tasks", "Tasks", "View work tasks and site assignments"),
@@ -23,34 +30,13 @@ SYSTEM_PERMISSIONS = [
     ("tasks.import", "Import Tasks", "Tasks", "Import work tasks via CSV/Excel template"),
     ("tasks.manage", "Manage Tasks System", "Tasks", "Full management of work tasks"),
 
-    # Vendors & Contracting
-    ("vendors.view", "View Vendors", "Vendors", "View vendor profiles and contracts"),
-    ("vendors.create", "Create Vendors", "Vendors", "Register new vendor organizations"),
-    ("vendors.edit", "Edit Vendors", "Vendors", "Update vendor profiles, contracts, and contact info"),
-    ("vendors.delete", "Delete Vendors", "Vendors", "Delete vendor entries"),
-    ("vendors.activate", "Activate Vendors", "Vendors", "Activate vendor status"),
-    ("vendors.deactivate", "Deactivate Vendors", "Vendors", "Deactivate vendor status"),
-    ("vendors.manage", "Manage Vendors", "Vendors", "Full administration of vendor network"),
+    # Map View & GIS Topology
+    ("mapview.view", "View Map View & Topology", "Map View", "View GIS map view and trenching / HDD execution topology"),
+    ("mapview.export", "Export Map Data", "Map View", "Export spatial and execution topology data"),
 
-    # Machinery & Fleet
-    ("machines.view", "View Machinery", "Machines", "View fleet machinery list and equipment details"),
-    ("machines.create", "Create Machinery", "Machines", "Add new machinery and drill rigs to fleet"),
-    ("machines.edit", "Edit Machinery", "Machines", "Update equipment specs, status, and telemetry settings"),
-    ("machines.delete", "Delete Machinery", "Machines", "Remove equipment from fleet"),
-    ("machines.assign", "Assign Machine", "Machines", "Assign machine to vendors, operators, or tasks"),
-    ("machines.manage", "Manage Machinery", "Machines", "Full administration of machinery fleet"),
-
-    # Team & Roster Management
-    ("team.view", "View Team", "Team", "View team members, operators, and supervisor profiles"),
-    ("team.create", "Create Team Member", "Team", "Add new team member or operator profile"),
-    ("team.edit", "Edit Team Member", "Team", "Update team member details and reporting manager"),
-    ("team.delete", "Delete Team Member", "Team", "Remove team member from system"),
-    ("team.assign", "Assign Team Roster", "Team", "Assign team members to machines or tasks"),
-    ("team.manage", "Manage Team Roster", "Team", "Full administration of workforce team roster"),
-
-    # GPS Telemetry & Live Tracking
-    ("tracking.view", "View Live GPS Tracking", "Live Tracking", "View live machine locations, geofences, and route history"),
-    ("tracking.manage", "Manage GPS Telemetry", "Live Tracking", "Configure GPS devices, polling frequency, and alerts"),
+    # Depth View / Chart View
+    ("chartview.view", "View Depth View", "Depth View", "View GIS depth view profile and execution analytics"),
+    ("chartview.export", "Export Depth View Data", "Depth View", "Export depth view profile logs and charts"),
 
     # Attendance & Geo-Verification
     ("attendance.view", "View Attendance", "Attendance", "View employee check-in/out and geo-attendance logs"),
@@ -71,17 +57,40 @@ SYSTEM_PERMISSIONS = [
     ("expenses.export", "Export Expenses", "Expenses", "Export expense reports to Excel/PDF"),
     ("expenses.manage", "Manage Expense Records", "Expenses", "Full control over site expenses"),
 
-    # Refuel & Fuel Management
-    ("refuel.view", "View Fuel & Refuel Records", "Refuel", "View fuel consumption logs and machine fuel efficiency"),
+    # Fuel Logs
+    ("fuel.view", "View Fuel Logs", "Fuel Logs", "View machine fuel consumption logs and efficiency"),
+    ("fuel.create", "Log Fuel Entry", "Fuel Logs", "Create machine fuel consumption entry"),
+    ("fuel.edit", "Edit Fuel Entry", "Fuel Logs", "Edit fuel log quantities and timestamps"),
+    ("fuel.delete", "Delete Fuel Entry", "Fuel Logs", "Remove fuel log entry"),
+    ("fuel.export", "Export Fuel Logs", "Fuel Logs", "Export fuel logs to CSV/Excel"),
+    ("fuel.manage", "Manage Fuel Logs", "Fuel Logs", "Full management of machine fuel consumption logs"),
+
+    # Refuel Operations
+    ("refuel.view", "View Refuel Requests", "Refuel", "View machine refuel request logs and fuel dispensing"),
     ("refuel.create", "Request Refuel", "Refuel", "Create machine refuel requests and log fuel dispensing"),
     ("refuel.edit", "Edit Refuel Entry", "Refuel", "Edit fuel dispenser logs and quantities"),
     ("refuel.approve", "Approve Refuel Requests", "Refuel", "Approve or reject refuel requests"),
     ("refuel.reject", "Reject Refuel Requests", "Refuel", "Reject refuel requests with reasons"),
     ("refuel.manage", "Manage Refuel Operations", "Refuel", "Full management of fuel dispensing and logs"),
 
-    # System Alerts & Warnings
-    ("alerts.view", "View System Alerts", "Alerts", "View operational warnings, breakdown notifications, and geofence alerts"),
-    ("alerts.manage", "Manage Alert Rules", "Alerts", "Configure thresholds and clear system alert rules"),
+    # System Reports & Analytics
+    ("reports.view", "View Operational Reports", "Reports", "Generate and view performance reports"),
+    ("reports.export", "Export Reports & Data", "Reports", "Export system data and CSV/PDF audit reports"),
+    ("reports.download", "Download Custom Reports", "Reports", "Download detailed custom performance reports"),
+
+    # Masters (Expense Categories & Subcategories)
+    ("expense_categories.view", "View Expense Categories", "Masters", "View expense master categories and rates"),
+    ("expense_categories.manage", "Manage Expense Categories", "Masters", "Create, edit, and delete expense categories"),
+    ("expense_subcategories.view", "View Subcategories", "Masters", "View expense subcategory master items"),
+    ("expense_subcategories.manage", "Manage Subcategories", "Masters", "Create, edit, and delete expense subcategories"),
+    ("masters.view", "View Masters Data", "Masters", "View all system reference master data"),
+    ("masters.manage", "Manage Masters System", "Masters", "Full management of system master data"),
+
+    # Workshop & Maintenance
+    ("maintenance.view", "View Maintenance Logs", "Maintenance", "View preventive maintenance schedules"),
+    ("maintenance.create", "Log Maintenance", "Maintenance", "Create maintenance and service entries"),
+    ("maintenance.edit", "Edit Maintenance", "Maintenance", "Update maintenance status and service logs"),
+    ("maintenance.manage", "Manage Maintenance", "Maintenance", "Update and complete maintenance schedules"),
 
     # Breakdown Incident Reports
     ("breakdowns.view", "View Breakdown Reports", "Breakdowns", "View machine breakdown incident reports"),
@@ -89,10 +98,23 @@ SYSTEM_PERMISSIONS = [
     ("breakdowns.edit", "Edit Breakdown Log", "Breakdowns", "Update breakdown status and service logs"),
     ("breakdowns.manage", "Manage Breakdown Resolution", "Breakdowns", "Assign technicians and resolve breakdown incidents"),
 
-    # System Reports & Analytics
-    ("reports.view", "View Operational Reports", "Reports", "Generate and view performance reports"),
-    ("reports.export", "Export Reports & Data", "Reports", "Export system data and CSV/PDF audit reports"),
-    ("reports.download", "Download Custom Reports", "Reports", "Download detailed custom performance reports"),
+    # System Alerts & Warnings
+    ("alerts.view", "View System Alerts", "Alerts", "View operational warnings, breakdown notifications, and geofence alerts"),
+    ("alerts.manage", "Manage Alert Rules", "Alerts", "Configure thresholds and clear system alert rules"),
+
+    # Spare Parts & Stock Inventory
+    ("inventory.view", "View Stock / Inventory", "Inventory", "View spare parts, warehouse stock, and inventory items"),
+    ("stock.view", "View Stock Items", "Inventory", "View spare parts inventory"),
+    ("inventory.manage", "Manage Stock / Inventory", "Inventory", "Manage stock items, issuance, and warehouse levels"),
+
+    # Vendors & Contracting
+    ("vendors.view", "View Vendors", "Vendors", "View vendor profiles and contracts"),
+    ("vendors.create", "Create Vendors", "Vendors", "Register new vendor organizations"),
+    ("vendors.edit", "Edit Vendors", "Vendors", "Update vendor profiles, contracts, and contact info"),
+    ("vendors.delete", "Delete Vendors", "Vendors", "Delete vendor entries"),
+    ("vendors.activate", "Activate Vendors", "Vendors", "Activate vendor status"),
+    ("vendors.deactivate", "Deactivate Vendors", "Vendors", "Deactivate vendor status"),
+    ("vendors.manage", "Manage Vendors", "Vendors", "Full administration of vendor network"),
 
     # Users & Staff Access
     ("users.view", "View Platform Users", "Users", "View platform users, supervisors, and vendor user accounts"),
@@ -103,6 +125,14 @@ SYSTEM_PERMISSIONS = [
     ("users.deactivate", "Deactivate Users", "Users", "Deactivate user account"),
     ("users.manage", "Manage Users System", "Users", "Full administration of users"),
 
+    # Team & Roster Management
+    ("team.view", "View Team", "Team", "View team members, operators, and supervisor profiles"),
+    ("team.create", "Create Team Member", "Team", "Add new team member or operator profile"),
+    ("team.edit", "Edit Team Member", "Team", "Update team member details and reporting manager"),
+    ("team.delete", "Delete Team Member", "Team", "Remove team member from system"),
+    ("team.assign", "Assign Team Roster", "Team", "Assign team members to machines or tasks"),
+    ("team.manage", "Manage Team Roster", "Team", "Full administration of workforce team roster"),
+
     # Roles & RBAC Configuration
     ("roles.view", "View Roles & Permissions", "Roles", "View role configurations, permission matrix, and scope settings"),
     ("roles.create", "Create Roles", "Roles", "Create custom roles with permissions and scopes"),
@@ -112,12 +142,9 @@ SYSTEM_PERMISSIONS = [
     ("roles.deactivate", "Deactivate Roles", "Roles", "Deactivate roles"),
     ("roles.manage", "Manage Roles System", "Roles", "Full administration of roles and permissions"),
 
-    # Masters Configuration
-    ("masters.view", "View Masters Data", "Masters", "View system masters (expense categories, machine types, task types)"),
-    ("masters.create", "Create Master Items", "Masters", "Add new master categories and reference data"),
-    ("masters.edit", "Edit Master Items", "Masters", "Edit master categories and rates"),
-    ("masters.delete", "Delete Master Items", "Masters", "Remove master reference data"),
-    ("masters.manage", "Manage Masters System", "Masters", "Full management of system master data"),
+    # Notifications
+    ("notifications.view", "View Notifications", "Notifications", "Receive operational notifications and system updates"),
+    ("notifications.manage", "Manage Notifications", "Notifications", "Configure notification dispatch rules"),
 
     # External Integrations
     ("integrations.view", "View External Integrations", "Integrations", "View iLync enterprise integration sync status"),
@@ -166,8 +193,8 @@ DEFAULT_ROLES = {
             "team.view", "team.create", "team.edit", "team.assign", "tracking.view",
             "attendance.view", "attendance.approve", "attendance.reject", "attendance.export",
             "expenses.view", "expenses.approve", "expenses.reject", "expenses.export",
-            "refuel.view", "refuel.approve", "refuel.reject", "alerts.view", "breakdowns.view", "breakdowns.manage",
-            "reports.view", "reports.export", "reports.download", "users.view", "masters.view"
+            "fuel.view", "refuel.view", "refuel.approve", "refuel.reject", "alerts.view", "breakdowns.view", "breakdowns.manage",
+            "reports.view", "reports.export", "reports.download", "users.view", "expense_categories.view", "expense_subcategories.view", "masters.view"
         ]
     },
     "CIRCLE_MANAGER": {
@@ -180,7 +207,7 @@ DEFAULT_ROLES = {
             "tasks.view", "tasks.edit", "tasks.approve", "tasks.assign", "tasks.export",
             "vendors.view", "machines.view", "team.view", "team.edit", "tracking.view",
             "attendance.view", "attendance.approve", "expenses.view", "expenses.approve",
-            "refuel.view", "refuel.approve", "alerts.view", "breakdowns.view", "reports.view"
+            "fuel.view", "refuel.view", "refuel.approve", "alerts.view", "breakdowns.view", "reports.view"
         ]
     },
     "REPORTING_MANAGER": {
@@ -193,7 +220,7 @@ DEFAULT_ROLES = {
             "tasks.view", "tasks.edit", "tasks.assign",
             "team.view", "team.edit", "attendance.view", "attendance.approve", "attendance.create",
             "expenses.view", "expenses.create", "expenses.approve",
-            "refuel.view", "refuel.create", "refuel.approve", "breakdowns.view", "breakdowns.create", "reports.view"
+            "fuel.view", "refuel.view", "refuel.create", "refuel.approve", "breakdowns.view", "breakdowns.create", "reports.view"
         ]
     },
     "VENDOR_ADMIN": {
@@ -207,7 +234,7 @@ DEFAULT_ROLES = {
             "machines.view", "team.view", "team.create", "team.edit", "team.assign", "tracking.view",
             "attendance.view", "attendance.create", "attendance.approve", "attendance.export",
             "expenses.view", "expenses.create", "expenses.export",
-            "refuel.view", "refuel.create", "refuel.approve", "breakdowns.view", "breakdowns.create", "reports.view"
+            "fuel.view", "refuel.view", "refuel.create", "refuel.approve", "breakdowns.view", "breakdowns.create", "reports.view"
         ]
     },
     "VENDOR_USER": {
@@ -219,7 +246,7 @@ DEFAULT_ROLES = {
             "dashboard.view", "mapview.view", "chartview.view",
             "tasks.view", "tasks.edit", "machines.view", "team.view",
             "attendance.view", "attendance.create", "expenses.view", "expenses.create",
-            "refuel.view", "refuel.create", "breakdowns.view", "breakdowns.create"
+            "fuel.view", "refuel.view", "refuel.create", "breakdowns.view", "breakdowns.create"
         ]
     },
     "OPERATOR": {
@@ -229,7 +256,7 @@ DEFAULT_ROLES = {
         "data_scope": "OWN_TASKS",
         "permission_codes": [
             "dashboard.view", "machines.view", "tasks.view", "tasks.edit",
-            "attendance.view", "attendance.create", "refuel.view", "refuel.create",
+            "attendance.view", "attendance.create", "fuel.view", "refuel.view", "refuel.create",
             "breakdowns.view", "breakdowns.create"
         ]
     },
@@ -240,7 +267,7 @@ DEFAULT_ROLES = {
         "data_scope": "OWN_TASKS",
         "permission_codes": [
             "dashboard.view", "mapview.view", "chartview.view", "tasks.view", "tasks.edit",
-            "attendance.view", "attendance.create", "refuel.view", "refuel.create"
+            "attendance.view", "attendance.create", "fuel.view", "refuel.view", "refuel.create"
         ]
     },
     "LABOUR": {

@@ -14,7 +14,6 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
   const { pathname } = useLocation();
   const activeMobile = isMobileOpen !== undefined ? isMobileOpen : isOpen;
   const activeVisible = isVisible !== undefined ? isVisible : true;
-  const isExplicitVendorRole = !isAdmin && (roles || []).some(r => (r || '').toUpperCase() === 'VENDOR');
   const canSee = (perm) => isAdmin || !perm || hasPermission(perm);
 
   const menuSections = [
@@ -46,10 +45,9 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
     },
     {
       title: 'Masters',
-      adminOnly: true,
       items: [
-        { label: 'Expense Categories', path: '/expense-categories', icon: LucideLayers, perm: 'expenses.manage' },
-        { label: 'Subcategories', path: '/expense-subcategories', icon: LucideTag, perm: 'expenses.manage' }
+        { label: 'Expense Categories', path: '/expense-categories', icon: LucideLayers, perm: 'expense_categories.view' },
+        { label: 'Subcategories', path: '/expense-subcategories', icon: LucideTag, perm: 'expense_subcategories.view' }
       ]
     },
     {
@@ -98,35 +96,33 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
           </button>
         </div>
 
-        <nav className="sidebar-scroll" aria-label="Main">
-          {menuSections.map(sec => {
-            if (sec.adminOnly && !isAdmin && !hasPermission('expenses.manage')) return null;
-
-            const visibleItems = sec.items.filter(item => {
-              if (isExplicitVendorRole && item.path === '/map-view' && !hasPermission('mapview.view')) return false;
-              if (isExplicitVendorRole && item.path === '/chart-view' && !hasPermission('chartview.view')) return false;
-              return canSee(item.perm);
-            });
+        <nav className="sidebar-nav">
+          {menuSections.map((section, idx) => {
+            const visibleItems = section.items.filter(item => canSee(item.perm));
             if (visibleItems.length === 0) return null;
 
             return (
-              <div key={sec.title}>
-                <div className="menu-section-title">{sec.title}</div>
-                {visibleItems.map(item => {
-                  const Icon = item.icon;
-                  return (
-                    <NavLink
-                      key={item.path}
-                      to={item.path}
-                      end={item.path === '/dashboard'}
-                      onClick={onClose}
-                      className={() => `menu-item-link ${isNavPathActive(item.path, pathname) ? 'active' : ''}`}
-                    >
-                      <Icon size={16} strokeWidth={1.75} />
-                      <span>{item.label}</span>
-                    </NavLink>
-                  );
-                })}
+              <div key={idx} className="nav-section">
+                <div className="nav-section-title">{section.title}</div>
+                <div className="nav-section-items">
+                  {visibleItems.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = isNavPathActive(pathname, item.path);
+                    return (
+                      <NavLink
+                        key={item.path}
+                        to={item.path}
+                        className={`nav-link-item ${isActive ? 'active' : ''}`}
+                        onClick={() => {
+                          if (isMobileOpen && onClose) onClose();
+                        }}
+                      >
+                        <Icon size={18} className="nav-icon" />
+                        <span className="nav-label">{item.label}</span>
+                      </NavLink>
+                    );
+                  })}
+                </div>
               </div>
             );
           })}

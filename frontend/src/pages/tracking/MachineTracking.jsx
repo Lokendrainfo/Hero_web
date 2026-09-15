@@ -12,13 +12,13 @@ export const MachineTracking = () => {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    setLoading(true);
+  const loadTrackingData = (isSilent = false) => {
+    if (!isSilent) setLoading(true);
     if (targetId) {
       machineService.getById(targetId)
         .then(res => setMachine(res.data || res))
         .catch(console.error)
-        .finally(() => setLoading(false));
+        .finally(() => { if (!isSilent) setLoading(false); });
     } else {
       machineService.getAll()
         .then(res => {
@@ -26,8 +26,16 @@ export const MachineTracking = () => {
           setMachine(list[0]);
         })
         .catch(console.error)
-        .finally(() => setLoading(false));
+        .finally(() => { if (!isSilent) setLoading(false); });
     }
+  };
+
+  useEffect(() => {
+    loadTrackingData(false);
+    const timer = setInterval(() => {
+      loadTrackingData(true);
+    }, 10000);
+    return () => clearInterval(timer);
   }, [targetId]);
 
   const isOnline = machine?.is_online !== undefined ? machine?.is_online : true;

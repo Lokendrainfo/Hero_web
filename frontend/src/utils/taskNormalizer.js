@@ -64,8 +64,43 @@ export const normalizeTask = (t, vendorMasterMap = {}) => {
     const segmentSnapshots = t.segmentSnapshots || [];
 
     // Scopes & Metrics
-    const totalLengthKm = Number(Number(routeSnapshot.lengthKm || t.totalLengthKm || 0).toFixed(2));
-    const coveredLengthKm = Number(Number(t.coveredLengthKm || 0).toFixed(2));
+    const childRoutes = Array.isArray(routeSnapshot.routes) ? routeSnapshot.routes : [];
+    let totalLengthKm = 0;
+    if (childRoutes.length > 0) {
+      totalLengthKm = childRoutes.reduce((acc, r) => acc + (Number(r.lengthKm) || 0), 0);
+    } else if (routeSnapshot.lengthKm) {
+      totalLengthKm = Number(routeSnapshot.lengthKm);
+    } else if (t.totalLengthKm) {
+      totalLengthKm = Number(t.totalLengthKm);
+    }
+    totalLengthKm = Number(Number(totalLengthKm).toFixed(2));
+
+    // Calculate execution telemetry shot length if available
+    const execShots = t.taskExecution?.fieldData?.trenching?.hddShot || t.taskExecution?.shots || t.shots || [];
+    const execMetersFromShots = Array.isArray(execShots) ? execShots.reduce((sum, s) => sum + (Number(s.lengthMeters || s.tentativeShotLength || 0) || 0), 0) : 0;
+    const execKmFromShots = execMetersFromShots > 0 ? execMetersFromShots / 1000 : 0;
+
+    const rawPct = Number(t.progress_percent ?? t.progressPercentage ?? t.completionPercentage ?? t.progress ?? t.taskExecution?.progressPercentage ?? 0);
+
+    let coveredLengthKm = 0;
+    if (t.coveredLengthKm && Number(t.coveredLengthKm) > 0) {
+      coveredLengthKm = Number(t.coveredLengthKm);
+    } else if (t.coveredLengthMeters && Number(t.coveredLengthMeters) > 0) {
+      coveredLengthKm = Number(t.coveredLengthMeters) / 1000;
+    } else if (execKmFromShots > 0) {
+      coveredLengthKm = execKmFromShots;
+    } else if (rawPct > 0 && totalLengthKm > 0) {
+      coveredLengthKm = (totalLengthKm * rawPct) / 100;
+    }
+    coveredLengthKm = Number(Number(coveredLengthKm).toFixed(2));
+
+    let pct = 0;
+    if (totalLengthKm > 0 && coveredLengthKm > 0) {
+      pct = Math.min(100, Math.round((coveredLengthKm / totalLengthKm) * 100));
+    } else if (rawPct > 0) {
+      pct = Math.min(100, Math.round(rawPct));
+    }
+
     const coveredScopeStr = typeof t.coveredScopeStr === 'string'
       ? t.coveredScopeStr.replace(/-?\d+(?:\.\d+)?/g, (n) => Number(n).toFixed(2))
       : `${coveredLengthKm.toFixed(2)} km`;
@@ -99,6 +134,8 @@ export const normalizeTask = (t, vendorMasterMap = {}) => {
       segmentSnapshots,
       totalLengthKm,
       coveredLengthKm,
+      progress_percent: pct,
+      pct,
       coveredScopeStr,
       parentTaskId,
       rootTaskId,

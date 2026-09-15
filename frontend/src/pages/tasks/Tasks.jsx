@@ -9,7 +9,8 @@ import {
   LucideCheckSquare, LucidePlus, LucideRefreshCw, LucideMapPin,
   LucideUser, LucideLayers, LucideAlertCircle, LucideSearch,
   LucideBuilding2, LucideFilter, LucideEye, LucideX, LucideGitCommit,
-  LucideArrowRight, LucidePhone, LucideShieldCheck, LucideGlobe, LucideNavigation
+  LucideArrowRight, LucidePhone, LucideShieldCheck, LucideGlobe, LucideNavigation,
+  LucideChevronRight, LucideChevronDown, LucideFolder, LucideFolderOpen, LucideListTree, LucideList
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { normalizeTask } from '../../utils/taskNormalizer';
@@ -33,9 +34,15 @@ export const Tasks = () => {
 
   // Filter States
   const [selectedTaskType, setSelectedTaskType] = useState('ALL');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState('ALL');
   const [selectedVendorId, setSelectedVendorId] = useState('ALL');
   const [selectedDistrict, setSelectedDistrict] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Hierarchy Tree Accordion States
+  const [viewMode, setViewMode] = useState('hierarchy'); // 'hierarchy' | 'flat'
+  const [expandedBlocks, setExpandedBlocks] = useState({});
+  const [expandedRings, setExpandedRings] = useState({});
 
   // Active Modal State for Task Deep Inspection
   const [activeModalTask, setActiveModalTask] = useState(null);
@@ -335,6 +342,40 @@ export const Tasks = () => {
     return tasks;
   }, [tasks, isAdmin, activeVendorFilter, availableVendorOptions]);
 
+  const statusCounts = useMemo(() => {
+    const list = Array.isArray(vendorScopedTasks) ? vendorScopedTasks : [];
+    let completed = 0;
+    let inProgress = 0;
+    let created = 0;
+    let pending = 0;
+
+    list.forEach(t => {
+      const statusStr = String(t.status || t.taskStage || t.approvalStatus || '').toUpperCase();
+      const pctNum = Number(t.progress_percent || t.progressPercentage || t.pct || 0);
+      const isDone = statusStr === 'COMPLETED' || statusStr === 'COMPLETE' || pctNum >= 100;
+
+      if (isDone) {
+        completed++;
+      } else {
+        pending++;
+        const isInProg = statusStr === 'IN_PROGRESS' || statusStr === 'EXECUTING' || pctNum > 0;
+        if (isInProg) {
+          inProgress++;
+        } else {
+          created++;
+        }
+      }
+    });
+
+    return {
+      all: list.length,
+      completed,
+      pending,
+      inProgress,
+      created
+    };
+  }, [vendorScopedTasks]);
+
   const filteredTasks = useMemo(() => {
     if (!Array.isArray(vendorScopedTasks)) return [];
     return vendorScopedTasks.filter(t => {
@@ -348,6 +389,25 @@ export const Tasks = () => {
           return false;
         }
       }
+
+      // Status Filter
+      if (selectedStatusFilter !== 'ALL') {
+        const statusStr = String(t.status || t.taskStage || t.approvalStatus || '').toUpperCase();
+        const pctNum = Number(t.progress_percent || t.progressPercentage || t.pct || 0);
+        const isDone = statusStr === 'COMPLETED' || statusStr === 'COMPLETE' || pctNum >= 100;
+
+        if (selectedStatusFilter === 'COMPLETED') {
+          if (!isDone) return false;
+        } else if (selectedStatusFilter === 'PENDING') {
+          if (isDone) return false;
+        } else if (selectedStatusFilter === 'IN_PROGRESS') {
+          const isInProgress = statusStr === 'IN_PROGRESS' || statusStr === 'EXECUTING' || (pctNum > 0 && !isDone);
+          if (!isInProgress) return false;
+        } else if (selectedStatusFilter === 'CREATED') {
+          if (statusStr !== 'CREATED' && statusStr !== 'PLANNING') return false;
+        }
+      }
+
       // Search Query Filter
       if (searchQuery.trim() !== '') {
         const q = searchQuery.toLowerCase();
@@ -364,12 +424,216 @@ export const Tasks = () => {
       }
       return true;
     });
-  }, [vendorScopedTasks, selectedTaskType, searchQuery]);
+  }, [vendorScopedTasks, selectedTaskType, selectedStatusFilter, searchQuery]);
+
+  const hierarchicalTree = useMemo(() => {
+    if (!Array.isArray(filteredTasks) || filteredTasks.length === 0) return [];
+
+    const groupsMap = new Map();
+
+    filteredTasks.forEach(t => {
+      if (!t) return;
+      const loc = t.locationSnapshot || t.location || {};
+      const blockName = String(loc.blockName || loc.block || t.displayName || loc.locationName || 'Unassigned Block').trim();
+      const vId = String(t.vendorId || '').trim().toLowerCase();
+      const vName = getVendorName(t.vendorId, t) || 'Vendor';
+      const groupKey = `${blockName.toLowerCase()}__${vId}`;
+
+      if (!groupsMap.has(groupKey)) {
+        groupsMap.set(groupKey, {
+          groupKey,
+          blockName,
+          vendorId: t.vendorId,
+          vendorName: vName,
+          blockTask: null,
+          ringsMap: new Map(),
+          orphanSegments: [],
+          allTasks: []
+        });
+      }
+
+      const group = groupsMap.get(groupKey);
+      group.allTasks.push(t);
+
+      const levelStr = String(t.routeSnapshot?.level || (t.depth === 0 ? 'BLOCK' : (t.depth === 1 ? 'RING' : 'SEGMENT'))).toUpperCase();
+
+      if (levelStr === 'BLOCK') {
+        if (!group.blockTask) group.blockTask = t;
+      } else if (levelStr === 'RING') {
+        const ringId = String(t.id || t.taskCode || t.displayName).toLowerCase();
+        if (!group.ringsMap.has(ringId)) {
+          group.ringsMap.set(ringId, {
+            ringId,
+            ringTask: t,
+            segments: []
+          });
+        } else {
+          group.ringsMap.get(ringId).ringTask = t;
+        }
+      } else {
+        // SEGMENT task
+        let matchedRingKey = null;
+        if (t.parentTaskId) {
+          const parentIdClean = String(t.parentTaskId).toLowerCase();
+          for (const [rKey, rObj] of group.ringsMap.entries()) {
+            if (rObj.ringTask && String(rObj.ringTask.id).toLowerCase() === parentIdClean) {
+              matchedRingKey = rKey;
+              break;
+            }
+          }
+        }
+
+        if (matchedRingKey && group.ringsMap.has(matchedRingKey)) {
+          group.ringsMap.get(matchedRingKey).segments.push(t);
+        } else {
+          group.orphanSegments.push(t);
+        }
+      }
+    });
+
+    // Attach orphan segments to existing ring or synthetic ring container
+    groupsMap.forEach(group => {
+      if (group.orphanSegments.length > 0) {
+        const ringKeys = Array.from(group.ringsMap.keys());
+        if (ringKeys.length > 0) {
+          const firstRing = group.ringsMap.get(ringKeys[0]);
+          group.orphanSegments.forEach(s => firstRing.segments.push(s));
+          group.orphanSegments = [];
+        } else {
+          const synthRingId = `${group.groupKey}_ring`;
+          group.ringsMap.set(synthRingId, {
+            ringId: synthRingId,
+            ringTask: {
+              id: synthRingId,
+              taskCode: `${group.blockName}-Rings`,
+              displayName: `${group.blockName} Ring Group`,
+              routeSnapshot: { level: 'RING' },
+              locationSnapshot: { blockName: group.blockName },
+              vendorId: group.vendorId,
+              vendorName: group.vendorName,
+              isSynthetic: true,
+              status: group.blockTask?.status || 'CREATED'
+            },
+            segments: group.orphanSegments
+          });
+          group.orphanSegments = [];
+        }
+      }
+    });
+
+    const tree = [];
+    groupsMap.forEach(group => {
+      const rawRings = Array.from(group.ringsMap.values());
+      const rings = rawRings.map(rObj => {
+        const segs = rObj.segments || [];
+        let rTaskPlannedKm = 0;
+        let rTaskCoveredKm = 0;
+        let rTaskPct = 0;
+
+        if (segs.length > 0) {
+          rTaskPlannedKm = segs.reduce((acc, s) => acc + (Number(s.totalLengthKm) || 0), 0);
+          rTaskCoveredKm = segs.reduce((acc, s) => acc + (Number(s.coveredLengthKm) || 0), 0);
+          if (rTaskPlannedKm > 0) {
+            rTaskPct = Math.min(100, Math.round((rTaskCoveredKm / rTaskPlannedKm) * 100));
+          } else {
+            const sumPcts = segs.reduce((acc, s) => acc + Number(s.progress_percent || s.pct || 0), 0);
+            rTaskPct = Math.min(100, Math.round(sumPcts / segs.length));
+          }
+        } else {
+          rTaskPlannedKm = Number(rObj.ringTask?.totalLengthKm || 0);
+          rTaskCoveredKm = Number(rObj.ringTask?.coveredLengthKm || 0);
+          rTaskPct = rTaskPlannedKm > 0 ? Math.min(100, Math.round((rTaskCoveredKm / rTaskPlannedKm) * 100)) : Number(rObj.ringTask?.progress_percent || rObj.ringTask?.pct || 0);
+        }
+
+        const updatedRingTask = {
+          ...rObj.ringTask,
+          totalLengthKm: rTaskPlannedKm,
+          coveredLengthKm: rTaskCoveredKm,
+          progress_percent: rTaskPct,
+          pct: rTaskPct
+        };
+
+        return {
+          ...rObj,
+          ringTask: updatedRingTask,
+          ringTotalKm: rTaskPlannedKm,
+          ringCoveredKm: rTaskCoveredKm,
+          ringPct: rTaskPct
+        };
+      });
+
+      let blockTotalKm = 0;
+      let blockCoveredKm = 0;
+      let blockPct = 0;
+
+      if (rings.length > 0) {
+        blockTotalKm = rings.reduce((acc, r) => acc + r.ringTotalKm, 0);
+        blockCoveredKm = rings.reduce((acc, r) => acc + r.ringCoveredKm, 0);
+        if (blockTotalKm > 0) {
+          blockPct = Math.min(100, Math.round((blockCoveredKm / blockTotalKm) * 100));
+        } else {
+          const sumRingPcts = rings.reduce((acc, r) => acc + r.ringPct, 0);
+          blockPct = Math.min(100, Math.round(sumRingPcts / rings.length));
+        }
+      } else {
+        blockTotalKm = Number(group.blockTask?.totalLengthKm || 0);
+        blockCoveredKm = Number(group.blockTask?.coveredLengthKm || 0);
+        blockPct = blockTotalKm > 0 ? Math.min(100, Math.round((blockCoveredKm / blockTotalKm) * 100)) : Number(group.blockTask?.progress_percent || group.blockTask?.pct || 0);
+      }
+
+      const rawBTask = group.blockTask || {
+        id: `synth_block_${group.groupKey}`,
+        taskCode: `TASK-BLOCK-${group.blockName.toUpperCase().replace(/[^A-Z0-9]/g, '')}`,
+        displayName: `${group.blockName} Block`,
+        routeSnapshot: { level: 'BLOCK' },
+        locationSnapshot: { blockName: group.blockName },
+        vendorId: group.vendorId,
+        vendorName: group.vendorName,
+        isSynthetic: true,
+        status: 'CREATED'
+      };
+
+      const blockTask = {
+        ...rawBTask,
+        totalLengthKm: blockTotalKm,
+        coveredLengthKm: blockCoveredKm,
+        progress_percent: blockPct,
+        pct: blockPct
+      };
+
+      tree.push({
+        groupKey: group.groupKey,
+        blockName: group.blockName,
+        vendorName: group.vendorName,
+        blockTask,
+        rings,
+        totalRingsCount: rings.length,
+        totalSegmentsCount: rings.reduce((acc, r) => acc + r.segments.length, 0),
+        totalTasksCount: group.allTasks.length
+      });
+    });
+
+    return tree;
+  }, [filteredTasks]);
+
+  const toggleBlockExpand = (groupKey) => {
+    setExpandedBlocks(prev => ({
+      ...prev,
+      [groupKey]: !prev[groupKey]
+    }));
+  };
+
+  const toggleRingExpand = (ringId) => {
+    setExpandedRings(prev => ({
+      ...prev,
+      [ringId]: !prev[ringId]
+    }));
+  };
 
   // Reset page to 0 when filters change
   useEffect(() => {
     setPage(0);
-  }, [selectedTaskType, searchQuery, selectedVendorId]);
+  }, [selectedTaskType, selectedStatusFilter, searchQuery, selectedVendorId]);
 
   const displayTotalElements = filteredTasks.length;
   const displayTotalPages = Math.max(1, Math.ceil(displayTotalElements / pageSize));
@@ -461,6 +725,31 @@ export const Tasks = () => {
           <LucideSearch size={16} color="#9ca3af" style={{ position: 'absolute', left: '10px', top: '10px' }} />
         </div>
 
+        {/* Status Selector Dropdown */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <LucideFilter size={16} color="#6b7280" />
+          <SearchableSelect
+            value={selectedStatusFilter}
+            onChange={(e) => setSelectedStatusFilter(e.target.value)}
+            style={{
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: '1px solid #d1d5db',
+              fontSize: '0.82rem',
+              color: '#374151',
+              background: '#ffffff',
+              cursor: 'pointer',
+              fontWeight: '600'
+            }}
+          >
+            <option value="ALL">All Statuses ({statusCounts.all})</option>
+            <option value="PENDING">Pending / Active ({statusCounts.pending})</option>
+            <option value="IN_PROGRESS">In Progress ({statusCounts.inProgress})</option>
+            <option value="COMPLETED">Completed ({statusCounts.completed})</option>
+            <option value="CREATED">Created / Planning ({statusCounts.created})</option>
+          </SearchableSelect>
+        </div>
+
         {/* Vendor Selector Dropdown (Only for Admin; Locked for Vendor Users) */}
         {isAdmin ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -503,20 +792,88 @@ export const Tasks = () => {
         )}
       </div>
 
-      <div className="filter-row">
+      <div className="filter-row" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
         {[
-          { key: 'ALL', title: 'All Execution Tasks', count: vendorScopedTasks.length || totalElements },
-          { key: 'FIBER_TRENCHING_DUCTING_TASK', title: 'Trenching & Ducting', count: vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('TRENCH') || (t.taskType || t.type || '').toUpperCase().includes('DUCTING')).length || vendorScopedTasks.length || totalElements }
+          { key: 'ALL', title: 'All Tasks', count: statusCounts.all, isStatus: true },
+          { key: 'PENDING', title: 'Pending', count: statusCounts.pending, isStatus: true },
+          { key: 'IN_PROGRESS', title: 'In Progress', count: statusCounts.inProgress, isStatus: true },
+          { key: 'COMPLETED', title: 'Completed', count: statusCounts.completed, isStatus: true },
+          { key: 'CREATED', title: 'Created', count: statusCounts.created, isStatus: true },
         ].map(card => (
           <button
             key={card.key}
             type="button"
-            className={`filter-chip ${selectedTaskType === card.key ? 'active' : ''}`}
-            onClick={() => setSelectedTaskType(card.key)}
+            className={`filter-chip ${selectedStatusFilter === card.key ? 'active' : ''}`}
+            onClick={() => setSelectedStatusFilter(card.key)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
           >
-            {card.title} {card.count}
+            <span>{card.title}</span>
+            <span
+              style={{
+                background: selectedStatusFilter === card.key ? '#ffffff' : '#e5e7eb',
+                color: selectedStatusFilter === card.key ? '#111827' : '#374151',
+                padding: '1px 6px',
+                borderRadius: '10px',
+                fontSize: '0.72rem',
+                fontWeight: '700'
+              }}
+            >
+              {card.count}
+            </span>
           </button>
         ))}
+      </div>
+
+      {/* View Mode Toolbar Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '4px 0 8px 0' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#374151' }}>Task Hierarchy Mode</span>
+          <span className="badge-pill badge-neutral" style={{ fontSize: '0.72rem' }}>
+            {viewMode === 'hierarchy' ? `${hierarchicalTree.length} Block Groups` : `${filteredTasks.length} Tasks`}
+          </span>
+        </div>
+        <div style={{ display: 'inline-flex', background: '#e5e7eb', padding: '2px', borderRadius: '8px' }}>
+          <button
+            type="button"
+            onClick={() => setViewMode('hierarchy')}
+            style={{
+              padding: '5px 12px',
+              borderRadius: '6px',
+              border: 'none',
+              fontSize: '0.75rem',
+              fontWeight: '700',
+              cursor: 'pointer',
+              background: viewMode === 'hierarchy' ? '#ffffff' : 'transparent',
+              color: viewMode === 'hierarchy' ? '#0284c7' : '#4b5563',
+              boxShadow: viewMode === 'hierarchy' ? '0 1px 2px rgba(0,0,0,0.1)' : 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px'
+            }}
+          >
+            <LucideListTree size={14} /> Block ➔ Ring ➔ Segment Tree
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('flat')}
+            style={{
+              padding: '5px 12px',
+              borderRadius: '6px',
+              border: 'none',
+              fontSize: '0.75rem',
+              fontWeight: '700',
+              cursor: 'pointer',
+              background: viewMode === 'flat' ? '#ffffff' : 'transparent',
+              color: viewMode === 'flat' ? '#0284c7' : '#4b5563',
+              boxShadow: viewMode === 'flat' ? '0 1px 2px rgba(0,0,0,0.1)' : 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px'
+            }}
+          >
+            <LucideList size={14} /> Flat List
+          </button>
+        </div>
       </div>
 
       {/* Task List Table */}
@@ -545,99 +902,358 @@ export const Tasks = () => {
               </tr>
             </thead>
             <tbody>
-              {paginatedTasks.map(t => {
-                const isCompleted = t.status === 'COMPLETED';
-                const pct = formatPct(t.progress_percent || t.pct || 0);
-                const levelStr = (t.routeSnapshot?.level || (t.depth === 0 ? 'BLOCK' : (t.depth === 1 ? 'RING' : 'SEGMENT'))).toUpperCase();
+              {viewMode === 'hierarchy' ? (
+                /* HIERARCHICAL ACCORDION TREE VIEW */
+                hierarchicalTree.map(blockNode => {
+                  const isBlockExpanded = Boolean(expandedBlocks[blockNode.groupKey]);
+                  const bTask = blockNode.blockTask;
+                  const bPct = formatPct(bTask.progress_percent || bTask.pct || 0);
+                  const isBCompleted = bTask.status === 'COMPLETED';
 
-                return (
-                  <tr key={t.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td
-                      onClick={() => handleInspectTask(t)}
-                      style={{ padding: '12px 16px', cursor: 'pointer' }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
-                        <span style={{ fontWeight: '700', color: '#0284c7', textDecoration: 'underline', whiteSpace: 'nowrap' }}>{t.taskCode || t.title}</span>
-                        {levelStr === 'BLOCK' && (
-                          <span className="badge-pill badge-idle">BLOCK</span>
-                        )}
-                        {levelStr === 'RING' && (
-                          <span className="badge-pill badge-purple">RING</span>
-                        )}
-                        {levelStr === 'SEGMENT' && (
-                          <span className="badge-pill badge-running">SEGMENT</span>
-                        )}
-                      </div>
-                      <div style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: '2px' }}>{t.displayName || t.taskType}</div>
-                    </td>
-                    <td style={{ padding: '12px 16px', color: '#4b5563' }}>
-                      {t.locationStr || (t.locationSnapshot?.blockName ? `${t.locationSnapshot.blockName}${t.locationSnapshot.district ? `, ${t.locationSnapshot.district}` : ''}` : (t.location?.blockName ? `${t.location.blockName}${t.location.district ? `, ${t.location.district}` : ''}` : 'N/A'))}
-                    </td>
-                    <td style={{ padding: '12px 16px', fontWeight: '600', color: '#111827' }}>
-                      {getVendorName(t.vendorId, t)}
-                    </td>
-                    <td style={{ padding: '12px 16px', color: '#4b5563' }}>
-                      {t.assigneeName || t.assigneeSnapshot?.name || 'Field Supervisor'}
-                    </td>
-                    <td style={{ padding: '12px 16px', minWidth: 160 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div className="progress-track" style={{ flex: 1 }}>
-                          <div className="progress-fill" style={{ width: `${pct}%` }} />
-                        </div>
-                        <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#374151' }}>{pct}%</span>
-                      </div>
-                      <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: '2px' }}>
-                        {formatScopeStr(t.coveredScopeStr, t.coveredLengthKm)}
-                      </div>
-                    </td>
-                    <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }}>
-                      <span className={`badge-pill ${isCompleted ? 'badge-running' : 'badge-idle'}`}>
-                        {t.status || 'IN_PROGRESS'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
-                        <button
-                          onClick={() => handleInspectTask(t)}
-                          style={{
-                            padding: '5px 10px',
-                            background: '#eff6ff',
-                            color: '#2563eb',
-                            border: '1px solid #bfdbfe',
-                            borderRadius: '6px',
-                            fontSize: '0.75rem',
-                            fontWeight: '600',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px'
-                          }}
-                        >
-                          <LucideEye size={12} /> Inspect
-                        </button>
-
-                        {!isCompleted && (
+                  return (
+                    <React.Fragment key={blockNode.groupKey}>
+                      {/* LEVEL 1: BLOCK ROW */}
+                      <tr
+                        onClick={() => toggleBlockExpand(blockNode.groupKey)}
+                        style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0', borderLeft: '4px solid #3b82f6', cursor: 'pointer' }}
+                      >
+                        <td style={{ padding: '12px 16px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); toggleBlockExpand(blockNode.groupKey); }}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'inline-flex', alignItems: 'center', color: '#475569' }}
+                            >
+                              {isBlockExpanded ? <LucideChevronDown size={18} /> : <LucideChevronRight size={18} />}
+                            </button>
+                            <span
+                              onClick={(e) => { e.stopPropagation(); handleInspectTask(bTask); }}
+                              style={{ fontWeight: '800', color: '#1e3a8a', cursor: 'pointer', textDecoration: 'underline', fontSize: '0.88rem' }}
+                            >
+                              {bTask.taskCode}
+                            </span>
+                            <span className="badge-pill badge-idle" style={{ fontWeight: '700' }}>BLOCK</span>
+                            <span style={{ fontSize: '0.72rem', background: '#dbeafe', color: '#1e40af', padding: '1px 6px', borderRadius: '10px', fontWeight: '700' }}>
+                              {blockNode.totalRingsCount} Ring{blockNode.totalRingsCount !== 1 ? 's' : ''}, {blockNode.totalSegmentsCount} Segment{blockNode.totalSegmentsCount !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '2px', paddingLeft: '26px' }}>
+                            {bTask.displayName || `${blockNode.blockName} Block`}
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 16px', fontWeight: '600', color: '#334155' }}>
+                          {blockNode.blockName}
+                        </td>
+                        <td style={{ padding: '12px 16px', fontWeight: '700', color: '#0f172a' }}>
+                          {blockNode.vendorName}
+                        </td>
+                        <td style={{ padding: '12px 16px', color: '#475569' }}>
+                          {bTask.assigneeName || bTask.assigneeSnapshot?.name || 'Block Incharge'}
+                        </td>
+                        <td style={{ padding: '12px 16px', minWidth: 140 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div className="progress-track" style={{ flex: 1 }}>
+                              <div className="progress-fill" style={{ width: `${bPct}%` }} />
+                            </div>
+                            <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#334155' }}>{bPct}%</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }}>
+                          <span className={`badge-pill ${isBCompleted ? 'badge-running' : 'badge-idle'}`}>
+                            {bTask.status || 'IN_PROGRESS'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 16px', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
                           <button
-                            onClick={() => handleComplete(t.id)}
+                            onClick={() => handleInspectTask(bTask)}
                             style={{
                               padding: '5px 10px',
-                              background: '#059669',
-                              color: '#fff',
-                              border: 'none',
+                              background: '#eff6ff',
+                              color: '#2563eb',
+                              border: '1px solid #bfdbfe',
                               borderRadius: '6px',
                               fontSize: '0.75rem',
                               fontWeight: '600',
-                              cursor: 'pointer'
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
                             }}
                           >
-                            Complete
+                            <LucideEye size={12} /> Inspect Block
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                        </td>
+                      </tr>
+
+                      {/* LEVEL 2: RINGS INSIDE BLOCK */}
+                      {isBlockExpanded && blockNode.rings.map(ringNode => {
+                        const isRingExpanded = Boolean(expandedRings[ringNode.ringId]);
+                        const rTask = ringNode.ringTask;
+                        const rPct = formatPct(rTask.progress_percent || rTask.pct || 0);
+                        const isRCompleted = rTask.status === 'COMPLETED';
+
+                        return (
+                          <React.Fragment key={ringNode.ringId}>
+                            <tr
+                              onClick={() => toggleRingExpand(ringNode.ringId)}
+                              style={{ background: '#faf5ff', borderBottom: '1px solid #f3e8ff', borderLeft: '4px solid #8b5cf6', cursor: 'pointer' }}
+                            >
+                              <td style={{ padding: '10px 16px 10px 36px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); toggleRingExpand(ringNode.ringId); }}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'inline-flex', alignItems: 'center', color: '#6b21a8' }}
+                                  >
+                                    {isRingExpanded ? <LucideChevronDown size={16} /> : <LucideChevronRight size={16} />}
+                                  </button>
+                                  <span
+                                    onClick={(e) => { e.stopPropagation(); handleInspectTask(rTask); }}
+                                    style={{ fontWeight: '700', color: '#6b21a8', cursor: 'pointer', textDecoration: 'underline', fontSize: '0.84rem' }}
+                                  >
+                                    {rTask.taskCode}
+                                  </span>
+                                  <span className="badge-pill badge-purple">RING</span>
+                                  <span style={{ fontSize: '0.7rem', background: '#f3e8ff', color: '#6b21a8', padding: '1px 6px', borderRadius: '10px', fontWeight: '700' }}>
+                                    {ringNode.segments.length} Segment{ringNode.segments.length !== 1 ? 's' : ''}
+                                  </span>
+                                </div>
+                                <div style={{ fontSize: '0.7rem', color: '#7e22ce', marginTop: '2px', paddingLeft: '24px' }}>
+                                  {rTask.displayName}
+                                </div>
+                              </td>
+                              <td style={{ padding: '10px 16px', color: '#581c87', fontSize: '0.82rem' }}>
+                                {blockNode.blockName}
+                              </td>
+                              <td style={{ padding: '10px 16px', fontWeight: '600', color: '#4c1d95', fontSize: '0.82rem' }}>
+                                {blockNode.vendorName}
+                              </td>
+                              <td style={{ padding: '10px 16px', color: '#6b21a8', fontSize: '0.82rem' }}>
+                                {rTask.assigneeName || rTask.assigneeSnapshot?.name || 'Ring Supervisor'}
+                              </td>
+                              <td style={{ padding: '10px 16px', minWidth: 140 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                  <div className="progress-track" style={{ flex: 1 }}>
+                                    <div className="progress-fill" style={{ width: `${rPct}%`, background: '#8b5cf6' }} />
+                                  </div>
+                                  <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#581c87' }}>{rPct}%</span>
+                                </div>
+                              </td>
+                              <td style={{ padding: '10px 16px', whiteSpace: 'nowrap' }}>
+                                <span className={`badge-pill ${isRCompleted ? 'badge-running' : 'badge-idle'}`}>
+                                  {rTask.status || 'IN_PROGRESS'}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px 16px', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  onClick={() => handleInspectTask(rTask)}
+                                  style={{
+                                    padding: '4px 8px',
+                                    background: '#f3e8ff',
+                                    color: '#6b21a8',
+                                    border: '1px solid #d8b4fe',
+                                    borderRadius: '6px',
+                                    fontSize: '0.72rem',
+                                    fontWeight: '600',
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '3px'
+                                  }}
+                                >
+                                  <LucideEye size={12} /> Inspect
+                                </button>
+                              </td>
+                            </tr>
+
+                            {/* LEVEL 3: SEGMENTS INSIDE RING */}
+                            {isRingExpanded && ringNode.segments.map(segTask => {
+                              const sPct = formatPct(segTask.progress_percent || segTask.pct || 0);
+                              const isSCompleted = segTask.status === 'COMPLETED';
+
+                              return (
+                                <tr key={segTask.id} style={{ background: '#f0fdf4', borderBottom: '1px solid #dcfce7', borderLeft: '4px solid #10b981' }}>
+                                  <td style={{ padding: '8px 16px 8px 64px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <span
+                                        onClick={() => handleInspectTask(segTask)}
+                                        style={{ fontWeight: '700', color: '#047857', cursor: 'pointer', textDecoration: 'underline', fontSize: '0.82rem' }}
+                                      >
+                                        {segTask.taskCode}
+                                      </span>
+                                      <span className="badge-pill badge-running">SEGMENT</span>
+                                    </div>
+                                    <div style={{ fontSize: '0.7rem', color: '#065f46', marginTop: '2px' }}>
+                                      {segTask.displayName}
+                                    </div>
+                                  </td>
+                                  <td style={{ padding: '8px 16px', color: '#064e3b', fontSize: '0.8rem' }}>
+                                    {segTask.locationStr || blockNode.blockName}
+                                  </td>
+                                  <td style={{ padding: '8px 16px', fontWeight: '600', color: '#064e3b', fontSize: '0.8rem' }}>
+                                    {blockNode.vendorName}
+                                  </td>
+                                  <td style={{ padding: '8px 16px', color: '#065f46', fontSize: '0.8rem' }}>
+                                    {segTask.assigneeName || segTask.assigneeSnapshot?.name || 'Field Supervisor'}
+                                  </td>
+                                  <td style={{ padding: '8px 16px', minWidth: 140 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                      <div className="progress-track" style={{ flex: 1 }}>
+                                        <div className="progress-fill" style={{ width: `${sPct}%`, background: '#10b981' }} />
+                                      </div>
+                                      <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#064e3b' }}>{sPct}%</span>
+                                    </div>
+                                  </td>
+                                  <td style={{ padding: '8px 16px', whiteSpace: 'nowrap' }}>
+                                    <span className={`badge-pill ${isSCompleted ? 'badge-running' : 'badge-idle'}`}>
+                                      {segTask.status || 'IN_PROGRESS'}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: '8px 16px', textAlign: 'right' }}>
+                                    <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                                      <button
+                                        onClick={() => handleInspectTask(segTask)}
+                                        style={{
+                                          padding: '4px 8px',
+                                          background: '#dcfce7',
+                                          color: '#047857',
+                                          border: '1px solid #a7f3d0',
+                                          borderRadius: '6px',
+                                          fontSize: '0.72rem',
+                                          fontWeight: '600',
+                                          cursor: 'pointer',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '3px'
+                                        }}
+                                      >
+                                        <LucideEye size={12} /> Inspect
+                                      </button>
+
+                                      {!isSCompleted && (
+                                        <button
+                                          onClick={() => handleComplete(segTask.id)}
+                                          style={{
+                                            padding: '4px 8px',
+                                            background: '#059669',
+                                            color: '#fff',
+                                            border: 'none',
+                                            borderRadius: '6px',
+                                            fontSize: '0.72rem',
+                                            fontWeight: '600',
+                                            cursor: 'pointer'
+                                          }}
+                                        >
+                                          Complete
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </React.Fragment>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                })
+              ) : (
+                /* FLAT LIST VIEW */
+                paginatedTasks.map(t => {
+                  const isCompleted = t.status === 'COMPLETED';
+                  const pct = formatPct(t.progress_percent || t.pct || 0);
+                  const levelStr = (t.routeSnapshot?.level || (t.depth === 0 ? 'BLOCK' : (t.depth === 1 ? 'RING' : 'SEGMENT'))).toUpperCase();
+
+                  return (
+                    <tr key={t.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                      <td
+                        onClick={() => handleInspectTask(t)}
+                        style={{ padding: '12px 16px', cursor: 'pointer' }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
+                          <span style={{ fontWeight: '700', color: '#0284c7', textDecoration: 'underline', whiteSpace: 'nowrap' }}>{t.taskCode || t.title}</span>
+                          {levelStr === 'BLOCK' && (
+                            <span className="badge-pill badge-idle">BLOCK</span>
+                          )}
+                          {levelStr === 'RING' && (
+                            <span className="badge-pill badge-purple">RING</span>
+                          )}
+                          {levelStr === 'SEGMENT' && (
+                            <span className="badge-pill badge-running">SEGMENT</span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: '#6b7280', marginTop: '2px' }}>{t.displayName || t.taskType}</div>
+                      </td>
+                      <td style={{ padding: '12px 16px', color: '#4b5563' }}>
+                        {t.locationStr || (t.locationSnapshot?.blockName ? `${t.locationSnapshot.blockName}${t.locationSnapshot.district ? `, ${t.locationSnapshot.district}` : ''}` : (t.location?.blockName ? `${t.location.blockName}${t.location.district ? `, ${t.location.district}` : ''}` : 'N/A'))}
+                      </td>
+                      <td style={{ padding: '12px 16px', fontWeight: '600', color: '#111827' }}>
+                        {getVendorName(t.vendorId, t)}
+                      </td>
+                      <td style={{ padding: '12px 16px', color: '#4b5563' }}>
+                        {t.assigneeName || t.assigneeSnapshot?.name || 'Field Supervisor'}
+                      </td>
+                      <td style={{ padding: '12px 16px', minWidth: 160 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div className="progress-track" style={{ flex: 1 }}>
+                            <div className="progress-fill" style={{ width: `${pct}%` }} />
+                          </div>
+                          <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#374151' }}>{pct}%</span>
+                        </div>
+                        <div style={{ fontSize: '0.7rem', color: '#6b7280', marginTop: '2px' }}>
+                          {formatScopeStr(t.coveredScopeStr, t.coveredLengthKm)}
+                        </div>
+                      </td>
+                      <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }}>
+                        <span className={`badge-pill ${isCompleted ? 'badge-running' : 'badge-idle'}`}>
+                          {t.status || 'IN_PROGRESS'}
+                        </span>
+                      </td>
+                      <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                          <button
+                            onClick={() => handleInspectTask(t)}
+                            style={{
+                              padding: '5px 10px',
+                              background: '#eff6ff',
+                              color: '#2563eb',
+                              border: '1px solid #bfdbfe',
+                              borderRadius: '6px',
+                              fontSize: '0.75rem',
+                              fontWeight: '600',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <LucideEye size={12} /> Inspect
+                          </button>
+
+                          {!isCompleted && (
+                            <button
+                              onClick={() => handleComplete(t.id)}
+                              style={{
+                                padding: '5px 10px',
+                                background: '#059669',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: '6px',
+                                fontSize: '0.75rem',
+                                fontWeight: '600',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              Complete
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
 

@@ -235,7 +235,7 @@ export function pitPopupHtml(pit, photos = [], buttonId = '') {
       } else if (typeof pit.diggingTime === 'string') {
         timeStr = pit.diggingTime;
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   const firstPhoto = photos[0];

@@ -12,13 +12,13 @@ export const MachineDetails = () => {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    setLoading(true);
+  const loadDetail = (isSilent = false) => {
+    if (!isSilent) setLoading(true);
     if (id) {
       machineService.getById(id)
         .then(res => setMachine(res.data || res))
         .catch(console.error)
-        .finally(() => setLoading(false));
+        .finally(() => { if (!isSilent) setLoading(false); });
     } else {
       machineService.getAll()
         .then(res => {
@@ -26,8 +26,16 @@ export const MachineDetails = () => {
           setMachine(list[0]);
         })
         .catch(console.error)
-        .finally(() => setLoading(false));
+        .finally(() => { if (!isSilent) setLoading(false); });
     }
+  };
+
+  useEffect(() => {
+    loadDetail(false);
+    const timer = setInterval(() => {
+      loadDetail(true);
+    }, 10000);
+    return () => clearInterval(timer);
   }, [id]);
 
   if (loading) {
