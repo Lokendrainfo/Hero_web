@@ -11,6 +11,7 @@ SYSTEM_PERMISSIONS = [
     # GPS Telemetry & GIS Mapping
     ("tracking.view", "View Live GPS Tracking", "Tracking", "View live machine locations and route history"),
     ("mapview.view", "View Map View & Topology", "Map View", "View GIS map view and trenching / HDD execution topology"),
+    ("chartview.view", "View Chart View", "Map View", "View GIS chart view and execution analytics"),
 
     # Work Tasks & Operations
     ("tasks.view", "View Work Tasks", "Tasks", "View work tasks and site assignments"),
@@ -100,7 +101,7 @@ DEFAULT_ROLES = {
         "description": "Project Manager overseeing fleet operations, tasks, team, expenses, and site analytics",
         "is_system": True,
         "permission_codes": [
-            "dashboard.view", "machines.view", "machines.manage", "tracking.view", "mapview.view",
+            "dashboard.view", "machines.view", "machines.manage", "tracking.view", "mapview.view", "chartview.view",
             "tasks.view", "tasks.create", "tasks.update", "tasks.delete", "tasks.assign",
             "team.view", "team.manage", "attendance.view", "attendance.approve",
             "expenses.view", "expenses.create", "expenses.approve", "expense_categories.view",
@@ -116,7 +117,7 @@ DEFAULT_ROLES = {
         "description": "Site Engineer managing machinery, task updates, technical maintenance, and breakdown resolution",
         "is_system": True,
         "permission_codes": [
-            "dashboard.view", "machines.view", "tracking.view", "mapview.view",
+            "dashboard.view", "machines.view", "tracking.view", "mapview.view", "chartview.view",
             "tasks.view", "tasks.create", "tasks.update",
             "maintenance.view", "maintenance.create", "maintenance.manage",
             "breakdowns.view", "breakdowns.create", "breakdowns.manage",
@@ -128,7 +129,7 @@ DEFAULT_ROLES = {
         "description": "Field Supervisor monitoring daily machine progress, team attendance, and refuel entries",
         "is_system": True,
         "permission_codes": [
-            "dashboard.view", "machines.view", "tracking.view", "mapview.view",
+            "dashboard.view", "machines.view", "tracking.view", "mapview.view", "chartview.view",
             "tasks.view", "tasks.update", "team.view",
             "attendance.view", "attendance.create", "attendance.approve",
             "expenses.view", "expenses.create", "fuel.view", "refuel.view", "refuel.create",
@@ -160,7 +161,7 @@ DEFAULT_ROLES = {
         "description": "Read-only Viewer account with basic dashboard, machine, tracking, and report access",
         "is_system": True,
         "permission_codes": [
-            "dashboard.view", "machines.view", "tracking.view", "mapview.view", "reports.view"
+            "dashboard.view", "machines.view", "tracking.view", "mapview.view", "chartview.view", "reports.view"
         ]
     },
     "ALL_VIEWER": {

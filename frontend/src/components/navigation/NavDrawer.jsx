@@ -31,7 +31,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
         { label: 'Live Tracking', path: '/tracking', icon: LucideNavigation, perm: 'tracking.view' },
         { label: 'Tasks', path: '/tasks', icon: LucideCheckSquare, perm: 'tasks.view' },
         { label: 'Map View', path: '/map-view', icon: LucideGlobe, perm: 'mapview.view' },
-        { label: 'Chart View', path: '/chart-view', icon: LucideLineChart, perm: 'mapview.view' },
+        { label: 'Chart View', path: '/chart-view', icon: LucideLineChart, perm: 'chartview.view' },
         { label: 'Team', path: '/team', icon: LucideUsers, perm: 'team.view' },
         { label: 'Attendance', path: '/attendance', icon: LucideCalendarCheck, perm: 'attendance.view' }
       ]
@@ -105,6 +105,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
 
             const visibleItems = sec.items.filter(item => {
               if (isExplicitVendorRole && item.path === '/map-view' && !hasPermission('mapview.view')) return false;
+              if (isExplicitVendorRole && item.path === '/chart-view' && !hasPermission('chartview.view')) return false;
               return canSee(item.perm);
             });
             if (visibleItems.length === 0) return null;

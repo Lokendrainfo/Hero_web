@@ -3,6 +3,7 @@ export const VIEWER_FALLBACK_PERMS = [
   'machines.view',
   'tracking.view',
   'mapview.view',
+  'chartview.view',
   'tasks.view',
   'reports.view',
   'settings.view',
@@ -15,6 +16,7 @@ export const getDefaultRoute = (permissions = [], isAdmin = false) => {
   if (perms.length === 0) return '/dashboard';
   if (perms.includes('dashboard.view')) return '/dashboard';
   if (perms.includes('mapview.view')) return '/map-view';
+  if (perms.includes('chartview.view')) return '/chart-view';
   if (perms.includes('machines.view')) return '/machines';
   if (perms.includes('tracking.view')) return '/tracking';
   if (perms.includes('tasks.view')) return '/tasks';

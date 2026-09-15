@@ -156,7 +156,6 @@ export const TaskDetailPage = () => {
 
   const [jobMeta, setJobMeta] = useState({
     companyName: 'Telecrats Infra',
-    clientName: 'Hero HDD Network',
     firstRodLength: 3.0,
     defaultRodLength: 3.0,
     pitchUnit: '%',

@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from apps.roles.models import Role, Permission
 from apps.roles.serializers import RoleSerializer, PermissionSerializer
 from apps.common.responses import success_response, error_response
-from apps.roles.services import seed_roles_and_permissions
+from apps.roles.services import seed_roles_and_permissions, SYSTEM_PERMISSIONS
 
 class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.all().order_by('id')
@@ -12,7 +12,7 @@ class RoleViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        if Role.objects.count() == 0 or not Role.objects.filter(code='ALL_VIEWER').exists():
+        if Role.objects.count() == 0 or not Role.objects.filter(code='ALL_VIEWER').exists() or Permission.objects.count() < len(SYSTEM_PERMISSIONS):
             seed_roles_and_permissions()
         return Role.objects.all().order_by('id')
 
@@ -48,6 +48,7 @@ class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        if Permission.objects.count() == 0:
+        if Permission.objects.count() < len(SYSTEM_PERMISSIONS):
             seed_roles_and_permissions()
         return Permission.objects.all().order_by('category', 'id')
+

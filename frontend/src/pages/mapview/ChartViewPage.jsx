@@ -22,54 +22,7 @@ import { EmptyState } from '../../components/common/EmptyState';
 import { DateField } from '../../components/common/DateField';
 import { PhotoLightbox, formatImageUrl } from '../../components/common/PhotoLightbox';
 
-// Generator for default demo/sample HDD bore chart profile matching reference view
-const generateSampleHddProfile = () => {
-  const pointsCount = 32;
-  const totalDist = 470;
-  const step = totalDist / (pointsCount - 1);
 
-  const measuredData = [
-    0.0, -0.6, -1.1, -1.0, -0.4, -0.6, -0.7, -0.4, -0.1, 0.3,
-    1.1, 0.6, 0.8, 0.3, -0.1, 0.4, 0.4, 0.6, 0.5, 0.4,
-    1.0, 1.1, 1.3, 2.1, 1.8, 0.9, 1.4, 1.2, 0.8, 2.4,
-    2.0, 1.6, 2.2, 0.7, 1.0, 1.2, 1.7, 1.5, 2.0, 1.4,
-    2.4, 1.2, 1.1, 1.2, 1.4, 1.8
-  ];
-
-  const calculatedData = [
-    -8.2, -9.7, -10.1, -9.5, -8.8, -8.0, -7.5, -7.3, -7.1, -7.0,
-    -6.8, -6.6, -6.7, -6.9, -7.1, -7.0, -6.7, -6.5, -6.4, -6.4,
-    -6.2, -6.2, -6.5, -6.8, -6.9, -6.8, -6.6, -6.5, -6.5, -6.6,
-    -6.9, -7.2, -7.3, -7.1, -6.8, -6.4, -6.1, -6.0, -5.9, -5.5,
-    -5.2, -5.5, -6.1, -6.5, -6.4, -6.1, -5.8, -5.3
-  ];
-
-  const points = [];
-  for (let i = 0; i < pointsCount; i++) {
-    const xDist = Math.round(i * step);
-    const mDepth = measuredData[i % measuredData.length];
-    const cDepth = calculatedData[i % calculatedData.length];
-    points.push({
-      id: `SAMPLE-DP-${i + 1}`,
-      pointNo: i + 1,
-      xDistance: xDist,
-      measuredDepth: mDepth,
-      calculatedDepth: cDepth,
-      pitch: Number((Math.sin(i / 3) * 2.5).toFixed(1)),
-      temp: 24 + Math.round(Math.sin(i) * 3),
-      lat: 27.8234 + i * 0.0001,
-      lng: 74.4512 + i * 0.0001,
-      executionDate: '2026-09-15',
-      photos: []
-    });
-  }
-
-  return {
-    title: 'Sample HDD Bore Depth Profile',
-    totalDistance: totalDist,
-    points
-  };
-};
 
 export const ChartViewPage = () => {
   const { executionId } = useParams();
@@ -77,7 +30,7 @@ export const ChartViewPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { roles, isAdmin, hasPermission, user } = useAuth();
 
-  const isVendorAccount = !isAdmin && (roles || []).some(r => (r || '').toUpperCase() === 'VENDOR') && !hasPermission('mapview.view');
+  const isVendorAccount = !isAdmin && (roles || []).some(r => (r || '').toUpperCase() === 'VENDOR') && !hasPermission('chartview.view');
   const isAdvanceUser = user?.user_type === 'ADVANCE';
   const assignedCircle = user?.selected_circle_name ? user.selected_circle_name.toUpperCase() : null;
   const assignedDistrict = user?.selected_district_name ? user.selected_district_name.toUpperCase() : null;
