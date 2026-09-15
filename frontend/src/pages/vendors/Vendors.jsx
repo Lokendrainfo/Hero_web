@@ -31,6 +31,65 @@ export const Vendors = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedVendor, setSelectedVendor] = useState(null);
+  const [vendorDetail, setVendorDetail] = useState(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+
+  useEffect(() => {
+    if (!selectedVendor) {
+      setVendorDetail(null);
+      setLoadingDetail(false);
+      return;
+    }
+
+    setVendorDetail(selectedVendor);
+    setLoadingDetail(true);
+
+    const vendorId = selectedVendor.id || selectedVendor.external_vendor_id || selectedVendor.external_id;
+    if (!vendorId) {
+      setLoadingDetail(false);
+      return;
+    }
+
+    Promise.allSettled([
+      vendorService.getVendorById(vendorId),
+      vendorService.getIntegrationsVendorById
+        ? vendorService.getIntegrationsVendorById(vendorId)
+        : Promise.resolve(null)
+    ])
+      .then(([dbRes, intRes]) => {
+        const dbData = dbRes.status === 'fulfilled' ? (dbRes.value?.data?.data || dbRes.value?.data) : null;
+        const intData = intRes.status === 'fulfilled' ? (intRes.value?.data?.data || intRes.value?.data) : null;
+
+        const merged = {
+          ...selectedVendor,
+          ...(intData && typeof intData === 'object' ? intData : {}),
+          ...(dbData && typeof dbData === 'object' ? dbData : {})
+        };
+
+        const rawMachines = [
+          ...(selectedVendor.machines || []),
+          ...(intData?.machines || []),
+          ...(dbData?.machines || []),
+          ...(dbData?.assigned_machines || [])
+        ];
+        merged.machines = rawMachines;
+
+        const rawUsers = [
+          ...(selectedVendor.users || []),
+          ...(intData?.users || []),
+          ...(dbData?.users || [])
+        ];
+        merged.users = rawUsers;
+
+        setVendorDetail(merged);
+      })
+      .catch((err) => {
+        console.error('Failed to load full vendor detail:', err);
+      })
+      .finally(() => {
+        setLoadingDetail(false);
+      });
+  }, [selectedVendor]);
 
   const displayVendors = (!isAdmin && authVendors && authVendors.length > 0)
     ? vendors.filter(v => {
@@ -97,7 +156,35 @@ export const Vendors = () => {
 
   const renderVendorDetail = (v, extras = {}) => {
     if (!v) return null;
-    const machinesList = v.machines || v.assigned_machines || extras.machines || [];
+
+    const rawMachines = [
+      ...(Array.isArray(v.machines) ? v.machines : []),
+      ...(Array.isArray(v.assigned_machines) ? v.assigned_machines : []),
+      ...(Array.isArray(extras.machines) ? extras.machines : [])
+    ];
+
+    const machineMap = new Map();
+    rawMachines.forEach((m) => {
+      if (!m) return;
+      const key = String(
+        m.machineNo || m.machine_no || m.serial_number || m.machine_chassis_no || m.name || m.id || ''
+      ).trim().toLowerCase();
+      if (!key) return;
+
+      const existing = machineMap.get(key) || {};
+      machineMap.set(key, {
+        ...existing,
+        ...m,
+        id: m.id || existing.id,
+        code: m.code || m.model_code || m.model || existing.code,
+        machineNo: m.machineNo || m.machine_no || m.machine_chassis_no || m.serial_number || m.name || existing.machineNo,
+        engineNo: m.engineNo || m.engine_no || existing.engineNo,
+        status: m.status || existing.status || 'COMMISSIONED',
+        model_name: m.model_name || m.name || existing.model_name
+      });
+    });
+
+    const machinesList = Array.from(machineMap.values());
     const usersList = v.users || extras.users || [];
     const bank = v.bankAccount || v.bank_account || v.bank_details || {};
     const serviceAreas = v.serviceAreas || v.service_areas || (v.businessUnit ? [v.businessUnit] : ['FIBER']);
@@ -306,10 +393,11 @@ export const Vendors = () => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {machinesList.map((m, idx) => {
                 const code = m.code || m.model_code || m.model;
-                const machineNoStr = m.machineNo || m.machine_no || m.name || m.chassis_number || '600202608396';
-                const engine = m.engineNo || m.engine_no || 'TPHM106451';
-                const mId = m.id || '469c022b-b42c-40c1-9226-bd55d3ec8c6d';
+                const machineNoStr = m.machineNo || m.machine_no || m.machine_chassis_no || m.serial_number || m.name || 'N/A';
+                const engine = m.engineNo || m.engine_no || '';
+                const mId = m.id || '';
                 const statusStr = m.status ? String(m.status).toUpperCase() : 'COMMISSIONED';
+                const titleStr = m.model_name || m.name || `Machine (${machineNoStr})`;
 
                 return (
                   <div
@@ -320,22 +408,24 @@ export const Vendors = () => {
                       borderRadius: '12px',
                       border: '1px solid #bae6fd',
                       display: 'flex',
-                      justify: 'space-between',
+                      justifyContent: 'space-between',
                       alignItems: 'center'
                     }}
                   >
                     <div>
                       <div style={{ fontWeight: '800', color: '#0284c7', fontSize: '0.95rem' }}>
-                        Machine No: {machineNoStr} {code ? `(${code})` : ''}
+                        {titleStr !== machineNoStr ? titleStr : `Machine No: ${machineNoStr}`} {code ? `(${code})` : ''}
                       </div>
                       <div style={{ marginTop: '4px', fontSize: '0.8rem', color: '#64748b' }}>
-                        Engine No: <span style={{ fontWeight: '600', color: '#334155' }}>{engine}</span> | ID: <span style={{ fontWeight: '600', color: '#334155' }}>{mId}</span>
+                        Machine No: <span style={{ fontWeight: '600', color: '#334155' }}>{machineNoStr}</span>
+                        {engine ? <> | Engine No: <span style={{ fontWeight: '600', color: '#334155' }}>{engine}</span></> : null}
+                        {mId ? <> | ID: <span style={{ fontWeight: '600', color: '#334155' }}>{mId}</span></> : null}
                       </div>
                     </div>
                     <div>
                       <span
                         style={{
-                          background: '#0284c7',
+                          background: statusStr === 'IDLE' ? '#f59e0b' : statusStr === 'RUNNING' || statusStr === 'ONLINE' || statusStr === 'LIVE' ? '#10b981' : '#0284c7',
                           color: '#ffffff',
                           fontSize: '0.72rem',
                           fontWeight: '800',
@@ -385,6 +475,8 @@ export const Vendors = () => {
     );
   };
 
+  const currentInspectVendor = vendorDetail || selectedVendor;
+
   const inspectModal = selectedVendor && typeof document !== 'undefined'
     ? createPortal(
       <div className="modal-overlay" onClick={() => setSelectedVendor(null)} role="presentation">
@@ -398,12 +490,12 @@ export const Vendors = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
             <div>
               <h2 id="vendor-inspect-title" className="page-title" style={{ fontSize: '1rem' }}>
-                {display(selectedVendor.partnerName || selectedVendor.name)}
+                {display(currentInspectVendor?.partnerName || currentInspectVendor?.name)}
               </h2>
               <p className="page-subtitle" style={{ marginTop: 2 }}>
-                {display(selectedVendor.legalEntityType)}
-                {selectedVendor.contactName || selectedVendor.contact_person
-                  ? ` · ${selectedVendor.contactName || selectedVendor.contact_person}`
+                {display(currentInspectVendor?.legalEntityType)}
+                {currentInspectVendor?.contactName || currentInspectVendor?.contact_person
+                  ? ` · ${currentInspectVendor.contactName || currentInspectVendor.contact_person}`
                   : ''}
               </p>
             </div>
@@ -412,7 +504,13 @@ export const Vendors = () => {
             </button>
           </div>
           <div className="task-detail-modal-body">
-            {renderVendorDetail(selectedVendor)}
+            {loadingDetail && (!vendorDetail || !vendorDetail.machines) ? (
+              <div style={{ padding: '32px 20px', textAlign: 'center' }}>
+                <LoadingSpinner title="Loading Vendor Detail" subtitle="Fetching assigned machines and profile details..." />
+              </div>
+            ) : (
+              renderVendorDetail(currentInspectVendor)
+            )}
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 20px 16px', borderTop: '1px solid var(--border)' }}>
             <button type="button" className="btn-secondary" onClick={() => setSelectedVendor(null)}>Close</button>
@@ -499,7 +597,7 @@ export const Vendors = () => {
                       </td>
                       <td>{display(v.phoneNumber || v.phone)}</td>
                       <td>{display(v.email)}</td>
-                      <td>{v.machines?.length || v.assigned_machines?.length || 0}</td>
+                      <td>{v.machines_count || v.machines?.length || v.assigned_machines?.length || 0}</td>
                       <td style={{ textAlign: 'right' }}>
                         <button type="button" className="btn-ghost" onClick={() => setSelectedVendor(v)}>
                           Inspect
