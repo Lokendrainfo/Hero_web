@@ -74,6 +74,47 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
 
     level2_children_lists = fetch_children_batch(level1_flat)
 
+    # Parallel fetch execution telemetry for segment tasks to derive accurate covered length
+    all_raw_tasks = list(base_content) + list(level1_flat)
+    for l2_sub in level2_children_lists:
+        all_raw_tasks.extend(l2_sub)
+
+    seg_candidates = [
+        t for t in all_raw_tasks
+        if isinstance(t, dict) and (
+            str((t.get('routeSnapshot') if isinstance(t.get('routeSnapshot'), dict) else {}).get('level') or '').upper() == 'SEGMENT'
+            or t.get('depth') == 2
+            or not t.get('totalSegments')
+        )
+    ]
+
+    def fetch_exec(t):
+        tid = t.get('id')
+        if not tid:
+            return (t, None)
+        try:
+            e_res = client.get_task_execution(tid)
+            e_data = e_res.get('data') if isinstance(e_res, dict) else None
+            return (t, e_data)
+        except Exception:
+            return (t, None)
+
+    if seg_candidates:
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            exec_pairs = list(executor.map(fetch_exec, seg_candidates))
+
+        for task_obj, exec_data in exec_pairs:
+            if not task_obj or not isinstance(exec_data, dict):
+                continue
+            field_data = exec_data.get('fieldData') or exec_data.get('trenching') or exec_data
+            trenching = field_data.get('trenching') if isinstance(field_data, dict) else (field_data if isinstance(field_data, dict) else {})
+            shots = (trenching.get('hddShot') if isinstance(trenching, dict) else None) or exec_data.get('shots') or field_data.get('hddShot') or []
+
+            if isinstance(shots, list) and len(shots) > 0:
+                tot_m = sum(float(s.get('tentativeShotLength') or s.get('lengthMeters') or 0) for s in shots if isinstance(s, dict))
+                if tot_m > 0:
+                    task_obj['coveredLengthKm'] = round(tot_m / 1000.0, 3)
+
     known_map = {
         '6a852f2600cd99ac6337f4a9': 'HARPAL INFRA DEVELOPMENT',
         '6a7c2b4f8e16e804697f18b0': 'Gurukripa Enterprises',
@@ -96,21 +137,28 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
             return None, None
         seen_task_ids.add(tid)
 
+        v_snap = t.get('vendorSnapshot') if isinstance(t.get('vendorSnapshot'), dict) else {}
+        v_obj = t.get('vendor') if isinstance(t.get('vendor'), dict) else {}
+        exec_snap = t.get('taskExecution') if isinstance(t.get('taskExecution'), dict) else {}
+        field_snap = exec_snap.get('fieldData') if isinstance(exec_snap.get('fieldData'), dict) else {}
+        trench_snap = field_snap.get('trenching') if isinstance(field_snap.get('trenching'), dict) else {}
+        mach_snap = trench_snap.get('trenchingMachineDetails') if isinstance(trench_snap.get('trenchingMachineDetails'), dict) else {}
+
         vid = str(
             t.get('vendorId') or
             t.get('assignedVendorId') or
-            t.get('vendorSnapshot', {}).get('id') or
-            t.get('vendorSnapshot', {}).get('_id') or
-            t.get('vendor', {}).get('id') or
-            t.get('vendor') or
+            v_snap.get('id') or
+            v_snap.get('_id') or
+            v_obj.get('id') or
+            (t.get('vendor') if isinstance(t.get('vendor'), str) else '') or
             ''
         ).strip()
 
         raw_vname = (
             t.get('vendorName') or
-            t.get('vendorSnapshot', {}).get('partnerName') or
-            t.get('vendorSnapshot', {}).get('name') or
-            t.get('taskExecution', {}).get('fieldData', {}).get('trenching', {}).get('trenchingMachineDetails', {}).get('vendorName')
+            v_snap.get('partnerName') or
+            v_snap.get('name') or
+            mach_snap.get('vendorName')
         )
 
         eff_vid = vid if vid else (parent_vid or '')
@@ -122,11 +170,27 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         elif eff_vid:
             eff_vname = known_map.get(eff_vid.lower())
             if not eff_vname:
-                v_obj = Vendor.objects.filter(external_vendor_id=eff_vid).first()
-                if v_obj:
-                    eff_vname = v_obj.name
+                v_obj_db = Vendor.objects.filter(external_vendor_id=eff_vid).first()
+                if v_obj_db:
+                    eff_vname = v_obj_db.name
         else:
             eff_vname = None
+
+        from apps.common.progress import calculate_task_progress
+
+        r_snap = t.get('routeSnapshot') if isinstance(t.get('routeSnapshot'), dict) else {}
+        tot_km = float(t.get('totalLengthKm') or t.get('plannedLengthKm') or t.get('plannedScopeKm') or r_snap.get('lengthKm') or 0)
+        cov_km = float(t.get('coveredLengthKm') or t.get('coveredScopeKm') or 0)
+        raw_pct = float(t.get('progress_percent') or t.get('pct') or t.get('progressPercentage') or 0)
+        status_val = t.get('status') or t.get('taskStage')
+
+        p_info = calculate_task_progress(planned_distance=tot_km, covered_distance=cov_km, raw_pct=raw_pct, status=status_val)
+
+        t['planned_distance'] = p_info['planned_distance']
+        t['covered_distance'] = p_info['covered_distance']
+        t['remaining_distance'] = p_info['remaining_distance']
+        t['progress_percent'] = p_info['progress_percent']
+        t['pct'] = p_info['progress_percent']
 
         t['vendorId'] = eff_vid
         if eff_vname:

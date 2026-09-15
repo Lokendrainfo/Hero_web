@@ -550,17 +550,29 @@ export const Tasks = () => {
 
         if (segs.length > 0) {
           rTaskPlannedKm = segs.reduce((acc, s) => acc + (Number(s.totalLengthKm) || 0), 0);
-          rTaskCoveredKm = segs.reduce((acc, s) => acc + (Number(s.coveredLengthKm) || 0), 0);
-          if (rTaskPlannedKm > 0) {
+          rTaskCoveredKm = segs.reduce((acc, s) => {
+            let cov = Number(s.coveredLengthKm) || 0;
+            const sPctVal = Number(s.progress_percent || s.pct || s.rawPct || 0);
+            const totKm = Number(s.totalLengthKm) || 0;
+            if (cov === 0 && sPctVal > 0 && totKm > 0) {
+              cov = (totKm * sPctVal) / 100;
+            }
+            return acc + cov;
+          }, 0);
+
+          if (rTaskPlannedKm > 0 && rTaskCoveredKm > 0) {
             rTaskPct = Math.min(100, Math.round((rTaskCoveredKm / rTaskPlannedKm) * 100));
           } else {
-            const sumPcts = segs.reduce((acc, s) => acc + Number(s.progress_percent || s.pct || 0), 0);
+            const sumPcts = segs.reduce((acc, s) => acc + Number(s.progress_percent || s.pct || s.rawPct || 0), 0);
             rTaskPct = Math.min(100, Math.round(sumPcts / segs.length));
           }
         } else {
           rTaskPlannedKm = Number(rObj.ringTask?.totalLengthKm || 0);
           rTaskCoveredKm = Number(rObj.ringTask?.coveredLengthKm || 0);
-          rTaskPct = rTaskPlannedKm > 0 ? Math.min(100, Math.round((rTaskCoveredKm / rTaskPlannedKm) * 100)) : Number(rObj.ringTask?.progress_percent || rObj.ringTask?.pct || 0);
+          const rPctVal = Number(rObj.ringTask?.progress_percent || rObj.ringTask?.pct || 0);
+          rTaskPct = (rTaskPlannedKm > 0 && rTaskCoveredKm > 0)
+            ? Math.min(100, Math.round((rTaskCoveredKm / rTaskPlannedKm) * 100))
+            : rPctVal;
         }
 
         const updatedRingTask = {
@@ -587,7 +599,7 @@ export const Tasks = () => {
       if (rings.length > 0) {
         blockTotalKm = rings.reduce((acc, r) => acc + r.ringTotalKm, 0);
         blockCoveredKm = rings.reduce((acc, r) => acc + r.ringCoveredKm, 0);
-        if (blockTotalKm > 0) {
+        if (blockTotalKm > 0 && blockCoveredKm > 0) {
           blockPct = Math.min(100, Math.round((blockCoveredKm / blockTotalKm) * 100));
         } else {
           const sumRingPcts = rings.reduce((acc, r) => acc + r.ringPct, 0);
@@ -596,7 +608,10 @@ export const Tasks = () => {
       } else {
         blockTotalKm = Number(group.blockTask?.totalLengthKm || 0);
         blockCoveredKm = Number(group.blockTask?.coveredLengthKm || 0);
-        blockPct = blockTotalKm > 0 ? Math.min(100, Math.round((blockCoveredKm / blockTotalKm) * 100)) : Number(group.blockTask?.progress_percent || group.blockTask?.pct || 0);
+        const bPctVal = Number(group.blockTask?.progress_percent || group.blockTask?.pct || 0);
+        blockPct = (blockTotalKm > 0 && blockCoveredKm > 0)
+          ? Math.min(100, Math.round((blockCoveredKm / blockTotalKm) * 100))
+          : bPctVal;
       }
 
       const rawBTask = group.blockTask || {

@@ -80,13 +80,49 @@ export const normalizeTask = (t, vendorMasterMap = {}) => {
     const execMetersFromShots = Array.isArray(execShots) ? execShots.reduce((sum, s) => sum + (Number(s.lengthMeters || s.tentativeShotLength || 0) || 0), 0) : 0;
     const execKmFromShots = execMetersFromShots > 0 ? execMetersFromShots / 1000 : 0;
 
-    const rawPct = Number(t.progress_percent ?? t.progressPercentage ?? t.completionPercentage ?? t.progress ?? t.taskExecution?.progressPercentage ?? 0);
+    const candidatePcts = [];
+    const checkAndPush = (val) => {
+      if (val != null && !isNaN(Number(val))) {
+        const n = Number(val);
+        if (n >= 0) candidatePcts.push(n);
+      }
+    };
+
+    checkAndPush(t.progress_percent);
+    checkAndPush(t.pct);
+    checkAndPush(t.progressPercentage);
+    checkAndPush(t.progress_percentage);
+    checkAndPush(t.completionPercentage);
+    checkAndPush(t.completion_percentage);
+    checkAndPush(t.progress);
+    checkAndPush(t.percentage);
+    checkAndPush(t.percent);
+    checkAndPush(t.taskExecution?.progressPercentage);
+    checkAndPush(t.taskExecution?.progress_percent);
+    checkAndPush(t.taskExecution?.progress_percentage);
+    checkAndPush(t.taskExecution?.pct);
+    checkAndPush(t.taskExecution?.percentage);
+    checkAndPush(t.taskExecution?.completionPercentage);
+    checkAndPush(t.taskExecution?.fieldData?.trenching?.progress_percent);
+    checkAndPush(t.taskExecution?.fieldData?.progressPercentage);
+    checkAndPush(t.routeSnapshot?.progress_percent);
+    checkAndPush(t.routeSnapshot?.progressPercentage);
+    checkAndPush(t.routeSnapshot?.pct);
+
+    let rawPct = candidatePcts.length > 0 ? Math.max(...candidatePcts) : 0;
+
+    const statusStrUpper = String(t.status || t.taskStage || '').toUpperCase();
+    if (statusStrUpper === 'COMPLETED' || statusStrUpper === 'COMPLETE') {
+      rawPct = 100;
+    }
 
     let coveredLengthKm = 0;
     if (t.coveredLengthKm && Number(t.coveredLengthKm) > 0) {
       coveredLengthKm = Number(t.coveredLengthKm);
     } else if (t.coveredLengthMeters && Number(t.coveredLengthMeters) > 0) {
       coveredLengthKm = Number(t.coveredLengthMeters) / 1000;
+    } else if (t.coveredScopeKm && Number(t.coveredScopeKm) > 0) {
+      coveredLengthKm = Number(t.coveredScopeKm);
     } else if (execKmFromShots > 0) {
       coveredLengthKm = execKmFromShots;
     } else if (rawPct > 0 && totalLengthKm > 0) {

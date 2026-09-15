@@ -23,7 +23,22 @@ class DashboardSummaryView(APIView):
         
         user_name = user.get_full_name() or user.username if user.is_authenticated else "Operations Manager"
 
+        q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
+
         # Vendor Scoped Machine & Task Querysets
+        req_v = q_params.get('vendor_id') or q_params.get('vendor')
+        if (not req_v or str(req_v).lower() in ['all', 'none']) and user and getattr(user, 'is_authenticated', False):
+            role_str = str(getattr(user, 'role', '') or getattr(user, 'role_key', '')).upper()
+            is_user_vendor = 'VENDOR' in role_str
+            if not getattr(user, 'is_superuser', False) and is_user_vendor:
+                u_vid = getattr(user, 'vendor_id', None) or (user.vendor.external_vendor_id if getattr(user, 'vendor', None) else None)
+                if u_vid and hasattr(request, 'GET'):
+                    try:
+                        request.GET = request.GET.copy()
+                        request.GET['vendor_id'] = str(u_vid)
+                    except Exception:
+                        pass
+
         machines_qs = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
         tasks_qs = filter_queryset_by_vendor(Task.objects.all(), user, 'vendor_id', request=request)
 
@@ -45,7 +60,7 @@ class DashboardSummaryView(APIView):
         project_name = site_name if "Project" in site_name else f"{site_name} Project"
 
         # Current Dynamic Date filter from query params
-        date_param = request.query_params.get('date')
+        date_param = q_params.get('date')
         if date_param:
             try:
                 from datetime import datetime
@@ -62,21 +77,25 @@ class DashboardSummaryView(APIView):
         total_machines = machines_qs.count()
         running_machines = machines_qs.filter(status='RUNNING').count()
         active_alerts = Alert.objects.filter(is_read=False).count() if total_machines > 0 else 0
-        # Live tasks from single source of truth helper
+        # Live tasks and authoritative task statistics from single source of truth helper
         task_list_items = []
         authorized_tasks = []
+        pending_tasks = 0
+        task_stats = {"total": 0, "pending": 0, "completed": 0, "in_progress": 0, "created": 0}
+
         try:
-            from apps.common.task_scope import get_user_authorized_tasks
-            scoped_task_res = get_user_authorized_tasks(user=user, request=request, page=0, size=20)
-            authorized_tasks = scoped_task_res.get("results", []) if isinstance(scoped_task_res, dict) else []
-            
+            from apps.common.progress import get_task_statistics
+            task_stats = get_task_statistics(user=user, request=request, task_type='FIBER_TRENCHING_DUCTING_TASK', page_size=200)
+            authorized_tasks = task_stats.get("authorized_tasks", [])
+            pending_tasks = task_stats.get("pending", 0)
+
             for t_idx, t_item in enumerate(authorized_tasks[:5]):
                 t_code = t_item.get('taskCode') or t_item.get('task_code') or f'TASK-{t_idx+1}'
                 t_disp = t_item.get('displayName') or t_item.get('title') or 'Block Scope'
                 cov_km = safe_float(t_item.get('coveredLengthKm'), 0)
                 tot_km = safe_float(t_item.get('totalLengthKm'), 50.0)
                 pct = t_item.get('pct') if t_item.get('pct') is not None else (min(100, int((cov_km / tot_km) * 100)) if tot_km > 0 else 0)
-                
+
                 task_list_items.append({
                     "id": t_item.get('id', t_code),
                     "taskCode": t_code,
@@ -166,24 +185,15 @@ class DashboardSummaryView(APIView):
             "acknowledged_by": user_name
         }
 
-        # Count non-completed tasks (pending/created/in progress) from authorized tasks
-        if authorized_tasks:
-            seg_list = [
-                t for t in authorized_tasks
-                if str(t.get('routeSnapshot', {}).get('level') if isinstance(t.get('routeSnapshot'), dict) else '').upper() == 'SEGMENT'
-                or t.get('depth') == 2
-                or not t.get('routeSnapshot')
-            ]
-            t_count_list = seg_list if seg_list else authorized_tasks
-            pending_tasks = len([t for t in t_count_list if str(t.get('status')).upper() not in ['COMPLETED', 'APPROVED']])
-        else:
-            pending_tasks = tasks_qs.exclude(status__in=['COMPLETED', 'APPROVED']).count()
-
         quick_stats = {
             "total_machines": total_machines,
             "running_machines": running_machines,
             "shots_in_progress": 1 if total_machines > 0 else 0,
             "tasks_pending": pending_tasks,
+            "tasks_total": task_stats.get("total", 0),
+            "tasks_completed": task_stats.get("completed", 0),
+            "tasks_in_progress": task_stats.get("in_progress", 0),
+            "tasks_created": task_stats.get("created", 0),
             "alerts_count": active_alerts,
             "attendance_pct": 92 if total_machines > 0 else 0
         }
