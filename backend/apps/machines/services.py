@@ -59,8 +59,8 @@ def sync_fiberforce_machines():
 
         model_code = item.get('model_code') or 'A600'
         model_name = item.get('model_name') or f'APOLLO {model_code} V2'
-        site_name = item.get('site_name') or 'Sujangarh-SITE'
-        site_id = item.get('site_id') or 16
+        site_name = item.get('site_name') or ''
+        site_id = item.get('site_id')
         is_comm = bool(item.get('is_commissioned'))
         operator = item.get('operator')
         fuel_card = item.get('fuel_card')
@@ -74,21 +74,27 @@ def sync_fiberforce_machines():
 
         readable_name = f"{model_code} HDD ({chassis_no[-4:]})"
 
-        # Fetch 100% Real Live Telemetry Payload from FiberForce API
-        tele_res = client.get_live_telemetry(chassis_no)
+        # Fetch 100% Real Live Telemetry Payload from FiberForce API with explicit params
+        live_params = ["site_name", "circle_name", "district_name", "block_name", "fuel_litres", "fuel_pct", "is_online", "engine_on", "state_label", "rpm", "speed_kmph", "latitude", "longitude", "state", "fuel_consumed_today", "engine_hours_today", "engine_hours_total"]
+        tele_res = client.get_live_telemetry(chassis_no, params=live_params)
         tele_data = tele_res.get('data', {}) if isinstance(tele_res, dict) else {}
+        if not tele_data or 'is_online' not in tele_data:
+            tele_res = client.get_live_telemetry(chassis_no)
+            tele_data = tele_res.get('data', {}) if isinstance(tele_res, dict) else {}
 
-        # 22 machines are online (is_online=True)
+        real_site_name = tele_data.get('site_name') or tele_data.get('block_name') or tele_data.get('district_name') or item.get('site_name') or ""
+        real_site_id = tele_data.get('site_id') or tele_data.get('geo_block_id') or item.get('site_id') or None
+
         is_online = bool(tele_data.get('is_online')) if 'is_online' in tele_data else True
-        engine_on = bool(tele_data.get('engine_on'))
+        rpm_val = int(tele_data.get('rpm') or 0)
+        state_val = str(tele_data.get('state') or '').upper()
+        engine_on = bool(tele_data.get('engine_on')) or (rpm_val > 0) or (state_val in ['WORKING_RPM_LIMIT', 'DRILLING', 'MOVING', 'RUNNING'])
         state_label = tele_data.get('state_label') or tele_data.get('state') or ('working / drilling' if engine_on else 'stopped')
 
         if engine_on:
             status = 'RUNNING'
         elif not is_online:
             status = 'OFFLINE'
-        elif i in [7, 14, 21]:
-            status = 'MAINTENANCE'
         else:
             status = 'IDLE'
 
@@ -120,8 +126,8 @@ def sync_fiberforce_machines():
                 'engine_no': engine_no,
                 'model_code': model_code,
                 'model_name': model_name,
-                'site_id': site_id,
-                'site_name': site_name,
+                'site_id': real_site_id,
+                'site_name': real_site_name,
                 'is_commissioned': is_comm,
                 'vehicle_no': vehicle_no,
                 'fuel_card': fuel_card,
@@ -132,7 +138,7 @@ def sync_fiberforce_machines():
                 'is_online': is_online,
                 'engine_on': engine_on,
                 'state_label': state_label,
-                'location_name': f"{site_name}",
+                'location_name': real_site_name,
                 'runtime_str': runtime_str,
                 'engine_hours': hours_total,
                 'engine_hours_today': hours_today,

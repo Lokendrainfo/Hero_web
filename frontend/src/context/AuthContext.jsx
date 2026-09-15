@@ -1,5 +1,6 @@
 import React, { createContext, useState, useEffect } from 'react';
 import { authService } from '../services/authService';
+import { roleService } from '../services/roleService';
 import { VIEWER_FALLBACK_PERMS } from '../utils/permissions';
 
 export const AuthContext = createContext(null);
@@ -8,6 +9,9 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [vendor, setVendor] = useState(null);
   const [userVendorsList, setUserVendorsList] = useState([]);
+  const [rbacPermissions, setRbacPermissions] = useState([]);
+  const [rbacRoleCodes, setRbacRoleCodes] = useState([]);
+  const [dataScope, setDataScope] = useState('ALL_DATA');
   const [loading, setLoading] = useState(true);
 
   const fetchUserProfile = async () => {
@@ -20,6 +24,20 @@ export const AuthProvider = ({ children }) => {
       setUser(uData);
       setVendor(primaryVendor);
       setUserVendorsList(vData);
+
+      // Fetch RBAC permissions and effective data scope
+      try {
+        const permRes = await roleService.getMePermissions();
+        const meData = permRes.data || permRes;
+        if (meData && meData.permission_codes) {
+          setRbacPermissions(meData.permission_codes || []);
+          setRbacRoleCodes(meData.role_codes || []);
+          setDataScope(meData.data_scope || 'ALL_DATA');
+        }
+      } catch (permErr) {
+        console.warn("[AuthContext] Unable to fetch me-permissions, fallback to user model:", permErr);
+      }
+
       return uData;
     } catch (err) {
       console.error("[AuthContext] Failed to fetch user profile:", err);
@@ -28,6 +46,9 @@ export const AuthProvider = ({ children }) => {
       setUser(null);
       setVendor(null);
       setUserVendorsList([]);
+      setRbacPermissions([]);
+      setRbacRoleCodes([]);
+      setDataScope('ALL_DATA');
       return null;
     }
   };
@@ -70,32 +91,61 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
     setVendor(null);
     setUserVendorsList([]);
+    setRbacPermissions([]);
+    setRbacRoleCodes([]);
+    setDataScope('ALL_DATA');
   };
 
-  const userRoles = Array.isArray(user?.roles) ? user.roles : (user?.role ? [user.role] : []);
-  const userPermissions = Array.isArray(user?.permissions) ? user.permissions : [];
+  const userRoles = rbacRoleCodes.length > 0 
+    ? rbacRoleCodes 
+    : (Array.isArray(user?.roles) ? user.roles : (user?.role ? [user.role] : []));
+
+  const activePermissions = rbacPermissions.length > 0
+    ? rbacPermissions
+    : (Array.isArray(user?.permissions) ? user.permissions : []);
+
   const userVendors = userVendorsList.length > 0 ? userVendorsList : (Array.isArray(user?.vendors) ? user.vendors : []);
 
   const [selectedVendorId, setSelectedVendorId] = useState('all');
 
-  const isAdmin = userRoles.includes('ADMIN') || !!user?.is_superuser;
+  const isAdmin = userRoles.some(r => ['ADMIN', 'SUPER_ADMIN'].includes((r || '').toUpperCase())) || !!user?.is_superuser;
   const isVendor = userRoles.some(r => (r || '').toUpperCase().includes('VENDOR')) || userVendors.length > 0 || !!user?.vendor || !!user?.vendor_id;
   const hasNoVendors = !isAdmin && userVendors.length === 0;
 
-  const isAllViewer = userRoles.some(r => (r || '').toUpperCase() === 'ALL_VIEWER');
+  const isAllViewer = userRoles.some(r => (r || '').toUpperCase() === 'ALL_VIEWER' || (r || '').toUpperCase() === 'VIEWER');
 
   const hasPermission = (code) => {
     if (!user) return false;
     if (isAdmin) return true;
-    if (isAllViewer && (code.endsWith('.view') || code.includes('view'))) return true;
-    if (userPermissions.includes(code)) return true;
-    if (userPermissions.length === 0 && VIEWER_FALLBACK_PERMS.includes(code)) return true;
+    if (!code) return true;
+
+    const normCode = String(code).trim().toLowerCase();
+    const isViewOnlyReq = normCode.endsWith('.view') || normCode.includes('view');
+
+    if (isAllViewer && isViewOnlyReq) return true;
+
+    // Direct match or normalized match (e.g. tasks.view vs TASKS.VIEW vs tasks_view)
+    const matches = activePermissions.some(p => {
+      const pNorm = String(p).trim().toLowerCase();
+      return pNorm === normCode || pNorm.replace('.', '_') === normCode.replace('.', '_');
+    });
+
+    if (matches) return true;
+    if (activePermissions.length === 0 && VIEWER_FALLBACK_PERMS.includes(code)) return true;
+
     return false;
+  };
+
+  const hasScope = (scopeName) => {
+    if (!user) return false;
+    if (isAdmin) return true;
+    if (dataScope === 'ALL_DATA') return true;
+    return dataScope === scopeName;
   };
 
   const hasRole = (roleName) => {
     if (!user) return false;
-    if (user?.is_superuser && roleName === 'ADMIN') return true;
+    if (user?.is_superuser && (roleName === 'ADMIN' || roleName === 'SUPER_ADMIN')) return true;
     return userRoles.some(r => (r || '').toUpperCase() === (roleName || '').toUpperCase());
   };
 
@@ -105,7 +155,8 @@ export const AuthProvider = ({ children }) => {
       vendor,
       loading,
       roles: userRoles,
-      permissions: userPermissions,
+      permissions: activePermissions,
+      dataScope,
       vendors: userVendors,
       selectedVendorId,
       setSelectedVendorId,
@@ -113,6 +164,7 @@ export const AuthProvider = ({ children }) => {
       isVendor,
       hasNoVendors,
       hasPermission,
+      hasScope,
       hasRole,
       login,
       logout,

@@ -42,7 +42,7 @@ export const MachineDetails = () => {
   const status = (machine?.status || 'RUNNING').toUpperCase();
   const runtime = machine?.runtime_str || `${machine?.runtime_hours || 8}h ${machine?.runtime_minutes || 32}m`;
   const fuelPercent = machine?.fuel_percentage || machine?.fuel_level || 58;
-  const location = machine?.site_name || machine?.location_name || 'Sujangarh-SITE, HR';
+  const location = machine?.site_name || machine?.location_name || '';
 
   return (
     <div className="screen-container">

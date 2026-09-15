@@ -362,10 +362,6 @@ export const TrenchingMapViewPage = () => {
           <div className="kpi-label">Users</div>
           <div className="kpi-value">{usersSet.size}</div>
         </div>
-        <div className="kpi-cell kpi-cell-static">
-          <div className="kpi-label">Crews</div>
-          <div className="kpi-value">{executionCount}</div>
-        </div>
       </div>
 
       <div className="panel" style={{ padding: 0 }}>

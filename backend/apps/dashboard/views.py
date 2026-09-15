@@ -128,12 +128,23 @@ class DashboardSummaryView(APIView):
             "today_consumption": f"{today_consumption:.2f} L"
         }
 
+        today_refueled = safe_float(live_telemetry.get('fuel_refueled_today'), safe_float(active_m.today_refueled if active_m else 0))
+
         fuel_status_widget = {
             "percentage": int(fuel_pct),
             "current_fuel": f"{int(fuel_litres)} L",
+            "today_refueled": f"{today_refueled:.1f} L",
             "tank_capacity": f"{int(tank_capacity)} L",
             "filled_quantity": f"{active_m.last_filled_text if active_m else '24 Aug • 49 L'}",
             "filled_by": active_m.filled_by if active_m else "Operator"
+        }
+
+        fuel_theft_widget = {
+            "theft_alerts_count": 0,
+            "status": "Normal / Secured",
+            "audit_status": "Secured",
+            "last_audit": current_date_str,
+            "acknowledged_by": user_name
         }
 
         pending_tasks = len([t for t in authorized_tasks if str(t.get('status')).upper() not in ['COMPLETED', 'APPROVED']]) if authorized_tasks else 0
@@ -232,6 +243,7 @@ class DashboardSummaryView(APIView):
             "quick_stats": quick_stats,
             "machine_status_widget": machine_status_widget,
             "fuel_status_widget": fuel_status_widget,
+            "fuel_theft_widget": fuel_theft_widget,
             "fiber_tasks": fiber_tasks,
             "performance": performance,
             "my_shift": my_shift,

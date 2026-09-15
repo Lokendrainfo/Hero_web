@@ -47,6 +47,14 @@ class MachineViewSet(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         user = request.user
+        should_resync = request.query_params.get('resync', '').lower() in ['true', '1'] or request.query_params.get('refresh', '').lower() in ['true', '1']
+        if should_resync:
+            try:
+                from .services import sync_fiberforce_machines
+                sync_fiberforce_machines()
+            except Exception as e:
+                pass
+
         base_qs = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
 
         # Determine vendor assigned count & empty state code for non-admin users
@@ -181,7 +189,7 @@ class MachineViewSet(viewsets.ModelViewSet):
                 "machine_chassis_no": m.machine_chassis_no or getattr(m, 'chassis_number', getattr(m, 'serial_number', f"CH-{m.id}")),
                 "model_code": m.model_code or getattr(m, 'model', 'A600'),
                 "model_name": m.model_name or getattr(m, 'name', 'APOLLO A600 V2'),
-                "site_name": m.site_name or getattr(m, 'location', 'Sujangarh-SITE'),
+                "site_name": m.site_name or getattr(m, 'location_name', None) or getattr(m, 'location', "") or "",
                 "site_id": m.site_id,
                 "status": m.status or 'Online',
                 "is_commissioned": m.is_commissioned,
@@ -195,5 +203,11 @@ class MachineViewSet(viewsets.ModelViewSet):
                 "fuel_percentage": m.fuel_percentage or 0,
                 "engine_hours": float(m.engine_hours or 0.0)
             })
-        return Response({"success": True, "results": results, "count": len(results)}, status=status.HTTP_200_OK)
+        return Response({
+            "success": True,
+            "data": results,
+            "results": results,
+            "total": len(results),
+            "count": len(results)
+        }, status=status.HTTP_200_OK)
 

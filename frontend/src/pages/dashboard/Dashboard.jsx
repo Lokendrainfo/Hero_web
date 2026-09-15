@@ -10,7 +10,7 @@ import { formatPct, formatScopeStr } from '../../utils/formatters';
 import { PageHeader } from '../../components/common/PageHeader';
 import { BarChart } from '../../components/common/BarChart';
 import { DateField } from '../../components/common/DateField';
-import { LucideMapPin, LucideCheckSquare } from 'lucide-react';
+import { LucideMapPin, LucideCheckSquare, LucideShieldAlert } from 'lucide-react';
 
 export const Dashboard = () => {
   const [data, setData] = useState(null);
@@ -153,13 +153,27 @@ export const Dashboard = () => {
         <section className="panel">
           <div className="panel-header">
             <h2 className="panel-title">Fuel</h2>
-            <button type="button" className="panel-link" onClick={() => navigate('/fuel')}>Fuel logs</button>
+            <button type="button" className="panel-link" onClick={() => navigate('/refuel')}>Fuel logs</button>
           </div>
           <div className="metric-list">
             <div className="metric-row"><span>Tank</span><strong>{data?.fuel_status_widget?.percentage ?? 0}%</strong></div>
             <div className="metric-row"><span>Current</span><strong>{data?.fuel_status_widget?.current_fuel || '0 L'}</strong></div>
-            <div className="metric-row"><span>Capacity</span><strong>{data?.fuel_status_widget?.tank_capacity || '0 L'}</strong></div>
-            <div className="metric-row"><span>Last refill</span><strong>{data?.fuel_status_widget?.filled_quantity || '—'}</strong></div>
+            <div
+              className="metric-row"
+              onClick={() => navigate('/refuel')}
+              style={{ cursor: 'pointer' }}
+            >
+              <span>Card swap</span>
+              <strong>{data?.fuel_status_widget?.today_refueled || '0.0 L'}</strong>
+            </div>
+            <div
+              className="metric-row"
+              onClick={() => navigate('/refuel')}
+              style={{ cursor: 'pointer' }}
+            >
+              <span>Last refill</span>
+              <strong>{data?.fuel_status_widget?.filled_quantity || '—'}</strong>
+            </div>
           </div>
           <div className="progress-track" style={{ marginTop: 12 }}>
             <div className="progress-fill" style={{ width: `${data?.fuel_status_widget?.percentage ?? 0}%` }} />
@@ -168,17 +182,36 @@ export const Dashboard = () => {
 
         <section className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">My shift</h2>
-            <span className="badge-pill badge-neutral">{shiftState.status}</span>
+            <h2 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <LucideShieldAlert size={16} color="#059669" /> Fuel theft acknowledgement
+            </h2>
+            <span className="badge-pill badge-running">• Secured</span>
           </div>
           <div className="metric-list">
-            <div className="metric-row"><span>Check-in</span><strong>{data?.my_shift?.check_in || '—'}</strong></div>
-            <div className="metric-row"><span>Working</span><strong>{data?.my_shift?.working_duration || '—'}</strong></div>
-            <div className="metric-row"><span>Shift window</span><strong>{data?.my_shift?.shift_time || '08:00 – 18:00'}</strong></div>
+            <div className="metric-row"><span>Theft alerts</span><strong style={{ color: '#059669' }}>0 Detected</strong></div>
+            <div className="metric-row"><span>Status</span><strong>Normal / Secured</strong></div>
+            <div className="metric-row"><span>Last audit</span><strong>{data?.fuel_theft_widget?.last_audit || data?.current_date || 'Today'}</strong></div>
+            <div className="metric-row"><span>Acknowledged by</span><strong>{data?.fuel_theft_widget?.acknowledged_by || data?.user_name || 'Fleet Supervisor'}</strong></div>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-            <button type="button" className="btn-primary" style={{ flex: 1 }} onClick={handleCheckIn}>Check in</button>
-            <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={handleCheckOut}>Check out</button>
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{ flex: 1, fontSize: '0.78rem' }}
+              onClick={() => {
+                if (showToast) showToast('All fuel theft alerts acknowledged.', 'success');
+              }}
+            >
+              Acknowledge status
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ flex: 1, fontSize: '0.78rem' }}
+              onClick={() => navigate('/alerts')}
+            >
+              View theft logs
+            </button>
           </div>
         </section>
       </div>

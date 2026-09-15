@@ -648,7 +648,7 @@ export const HddExecutionMapPage = () => {
 
         const tooltipText = [
           formatDepthM(dp.depth),
-          `Pt ${dp.pointNo || idx + 1}`,
+          `Dt ${dp.pointNo || idx + 1}`,
           dateStr
         ].filter(Boolean).join(' · ');
 

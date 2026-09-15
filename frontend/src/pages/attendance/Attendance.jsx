@@ -289,13 +289,10 @@ export const Attendance = () => {
       else groups[resolvedName].stats.not_marked += 1;
     });
 
-    // 3. Filter vendor team groups: for non-admin vendor users, only keep groups with members
+    // Filter vendor team groups: keep groups that have members
     const groupList = Object.values(groups);
-    if (!isAdmin || isVendorUser) {
-      return groupList.filter(g => g.members && g.members.length > 0);
-    }
-    return groupList;
-  }, [teamMembers, vendors, vendorList, vendorDetailsMap, isAdmin, isVendorUser]);
+    return groupList.filter(g => g.members && g.members.length > 0);
+  }, [teamMembers, vendors, vendorList, vendorDetailsMap]);
 
   const vendorTeamList = useMemo(() => {
     return groupedVendorTeams.map(g => ({
@@ -305,6 +302,26 @@ export const Attendance = () => {
       key: g.vendorName
     }));
   }, [groupedVendorTeams]);
+
+  const activeSummaryStats = useMemo(() => {
+    let filtered = groupedVendorTeams;
+    if (selectedVendorFilter && selectedVendorFilter !== 'ALL') {
+      filtered = groupedVendorTeams.filter(
+        g => g.vendorName.toLowerCase() === selectedVendorFilter.toLowerCase()
+      );
+    }
+
+    const res = { total: 0, present: 0, absent: 0, half_day: 0, leave: 0, not_marked: 0 };
+    (filtered || []).forEach(g => {
+      res.total += (g.stats?.total || 0);
+      res.present += (g.stats?.present || 0);
+      res.absent += (g.stats?.absent || 0);
+      res.half_day += (g.stats?.half_day || 0);
+      res.leave += (g.stats?.leave || 0);
+      res.not_marked += (g.stats?.not_marked || 0);
+    });
+    return res;
+  }, [groupedVendorTeams, selectedVendorFilter]);
 
   useEffect(() => {
     if (activeTab === 'daily') {
@@ -542,7 +559,7 @@ export const Attendance = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', boxSizing: 'border-box' }}>
-      
+
       <div className="page-header">
         <div>
           <h1 className="page-title">Attendance</h1>
@@ -571,37 +588,37 @@ export const Attendance = () => {
         <>
           <div className="kpi-strip" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
             <div className="kpi-cell">
-              <div className="kpi-label">Team</div>
-              <div className="kpi-value">{summaryStats.total}</div>
+              <div className="kpi-label">Team members</div>
+              <div className="kpi-value">{activeSummaryStats.total}</div>
             </div>
             <div className="kpi-cell">
               <div className="kpi-label">Present</div>
-              <div className="kpi-value">{summaryStats.present}</div>
+              <div className="kpi-value">{activeSummaryStats.present}</div>
             </div>
             <div className="kpi-cell">
               <div className="kpi-label">Absent</div>
-              <div className="kpi-value">{summaryStats.absent}</div>
+              <div className="kpi-value">{activeSummaryStats.absent}</div>
             </div>
 
             <div className="kpi-cell">
               <div className="kpi-label">Half day</div>
-              <div className="kpi-value">{summaryStats.half_day}</div>
+              <div className="kpi-value">{activeSummaryStats.half_day}</div>
             </div>
             <div className="kpi-cell">
               <div className="kpi-label">Leave</div>
-              <div className="kpi-value">{summaryStats.leave}</div>
+              <div className="kpi-value">{activeSummaryStats.leave}</div>
             </div>
             <div className="kpi-cell">
               <div className="kpi-label">Not marked</div>
-              <div className="kpi-value">{summaryStats.not_marked}</div>
+              <div className="kpi-value">{activeSummaryStats.not_marked}</div>
             </div>
           </div>
 
           {/* Control Bar: Date Selector, Filters, Bulk Buttons */}
           <div className="app-card" style={{ padding: '14px 18px', background: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
-            
+
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', flex: 1 }}>
-              
+
               {/* Vendor Team Dropdown Filter */}
               <SearchableSelect
                 value={selectedVendorFilter}
@@ -618,7 +635,7 @@ export const Attendance = () => {
                   minWidth: '220px'
                 }}
               >
-                <option value="ALL">All Vendor Teams ({summaryStats.total})</option>
+                <option value="ALL">All Vendor Teams ({activeSummaryStats.total})</option>
                 {vendorTeamList.map(v => (
                   <option key={v.key} value={v.name}>{v.name} ({v.count} members)</option>
                 ))}
@@ -1107,12 +1124,12 @@ export const Attendance = () => {
       {/* TAB 2: ATTENDANCE HISTORY & REPORTS */}
       {activeTab === 'history' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          
+
           {/* History Controls Bar */}
           <div className="app-card" style={{ padding: '14px 18px', background: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', justifyContent: 'space-between' }}>
-            
+
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center', flex: 1 }}>
-              
+
               {/* Date From */}
               <DateField
                 value={historyDateFrom}

@@ -110,7 +110,7 @@ export const filterHddExecutionByDate = (data, selectedDate) => {
   let latestPosition = null;
   if (filteredDepthPoints.length > 0) {
     const lastDp = filteredDepthPoints[filteredDepthPoints.length - 1];
-    latestPosition = { lat: lastDp.lat, lng: lastDp.lng, label: `Latest Depth Pt ${lastDp.pointNo} (${lastDp.depth}m)` };
+    latestPosition = { lat: lastDp.lat, lng: lastDp.lng, label: `Latest Depth Dt ${lastDp.pointNo} (${lastDp.depth}m)` };
   } else if (filteredPits.length > 0) {
     const lastPit = filteredPits[filteredPits.length - 1];
     latestPosition = { lat: lastPit.lat, lng: lastPit.lng, label: `Latest Pit ${lastPit.id}` };

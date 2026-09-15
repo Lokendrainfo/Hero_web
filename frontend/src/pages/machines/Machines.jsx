@@ -23,11 +23,12 @@ export const Machines = () => {
   const [search, setSearch] = useState('');
   const navigate = useNavigate();
 
-  const fetchMachines = () => {
+  const fetchMachines = (shouldResync = false) => {
     setLoading(true);
     const params = {};
     if (search.trim()) params.search = search.trim();
     if (activeFilter && activeFilter !== 'All') params.status = activeFilter;
+    if (shouldResync) params.resync = 'true';
 
     machineService.getAll(params)
       .then(res => {
@@ -83,7 +84,7 @@ export const Machines = () => {
         title="Machines"
         subtitle={`${counts.All} units from FiberForce (${counts.Live} live), scoped to your vendor`}
         actions={
-          <button type="button" className="btn-secondary" onClick={fetchMachines}>
+          <button type="button" className="btn-secondary" onClick={() => fetchMachines(true)}>
             <LucideRefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>
@@ -105,9 +106,6 @@ export const Machines = () => {
         {[
           { label: 'All', count: counts.All },
           { label: 'Live', count: counts.Live },
-          { label: 'Commissioned', count: counts.Commissioned },
-          { label: 'A600', count: counts.A600 },
-          { label: 'A800', count: counts.A800 },
           { label: 'Running', count: counts.Running },
           { label: 'Idle', count: counts.Idle },
           { label: 'Maintenance', count: counts.Maintenance }
@@ -136,7 +134,6 @@ export const Machines = () => {
                 <th>Chassis</th>
                 <th>Status</th>
                 <th>Site</th>
-                <th>Operator</th>
                 <th>Fuel</th>
                 <th>Runtime</th>
               </tr>
@@ -158,7 +155,6 @@ export const Machines = () => {
                       <div className="page-subtitle">{m.is_online ? 'Online' : 'Offline'}</div>
                     </td>
                     <td>{m.site_name || m.location_name || '—'}</td>
-                    <td>{m.operator_name || (typeof m.operator === 'string' ? m.operator : m.operator?.name) || 'Ravi Kumar'}</td>
                     <td style={{ minWidth: 110 }}>
                       <div style={{ fontSize: '0.75rem', marginBottom: 4 }}>{fuelPercent}%</div>
                       <div className="fuel-bar-track">

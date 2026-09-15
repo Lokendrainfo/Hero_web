@@ -11,7 +11,7 @@ const ROUTE_TITLES = {
   '/tracking': 'Live Tracking',
   '/tasks': 'Tasks',
   '/map-view': 'Map View',
-  '/chart-view': 'Chart View',
+  '/chart-view': 'Depth View',
   '/team': 'Team',
   '/attendance': 'Attendance',
   '/expenses': 'Expenses',

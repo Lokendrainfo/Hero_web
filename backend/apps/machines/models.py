@@ -13,7 +13,7 @@ class Machine(models.Model):
     model_code = models.CharField(max_length=50, default="A600")
     model_name = models.CharField(max_length=100, default="APOLLO A600 V2")
     site_id = models.IntegerField(null=True, blank=True, default=16)
-    site_name = models.CharField(max_length=255, default="Sujangarh-SITE", null=True, blank=True)
+    site_name = models.CharField(max_length=255, default="Anupgarh-SITE", null=True, blank=True)
     is_commissioned = models.BooleanField(default=False)
     vehicle_no = models.CharField(max_length=100, null=True, blank=True)
     fuel_card = models.JSONField(null=True, blank=True)
@@ -24,7 +24,7 @@ class Machine(models.Model):
     category = models.CharField(max_length=100, default='HDD')
     status = models.CharField(max_length=50, default='RUNNING') # RUNNING, IDLE, MAINTENANCE, BREAKDOWN
     is_online = models.BooleanField(default=True)
-    location_name = models.CharField(max_length=255, default="Sujangarh-SITE, HR", null=True, blank=True)
+    location_name = models.CharField(max_length=255, default="Anupgarh-SITE, RJ", null=True, blank=True)
     runtime_str = models.CharField(max_length=50, default="08h 32m")
     engine_hours = models.IntegerField(default=1250)
     fuel_capacity = models.DecimalField(max_digits=10, decimal_places=2, default=500.0)

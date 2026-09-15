@@ -41,79 +41,7 @@ export const Breakdowns = () => {
     location: ''
   });
 
-  // Default demo breakdown history logs
-  const demoBreakdowns = [
-    {
-      id: 101,
-      ticket_code: 'BD-2026-0891',
-      machine_code: 'A800 HDD (8593)',
-      machine_model: 'A800 HDD Heavy Rig',
-      vendor_name: 'Naveen Telecom Network 2',
-      description: 'Mud pump pressure drop during deep trenching. Hydraulic pressure valve replacement required.',
-      severity: 'HIGH',
-      status: 'IN_PROGRESS',
-      reported_by: 'Swarnim Mittal (Operator)',
-      location: 'Sujangarh-SITE (Ch: 12+400)',
-      reported_at: '2026-09-07T14:30:00Z',
-      downtime_hours: '4.5 hrs'
-    },
-    {
-      id: 104,
-      ticket_code: 'BD-2026-0914',
-      machine_code: 'A800 HDD (8593)',
-      machine_model: 'A800 HDD Heavy Rig',
-      vendor_name: 'Naveen Telecom Network 2',
-      description: 'Cooling system temperature warning during prolonged drilling operation. Radiator flushed.',
-      severity: 'MEDIUM',
-      status: 'RESOLVED',
-      reported_by: 'Dalveer choudhary (Operator)',
-      location: 'Sujangarh-SITE (Ch: 14+200)',
-      reported_at: '2026-09-04T11:00:00Z',
-      downtime_hours: '1.5 hrs'
-    },
-    {
-      id: 105,
-      ticket_code: 'BD-2026-0925',
-      machine_code: 'A800 HDD (8593)',
-      machine_model: 'A800 HDD Heavy Rig',
-      vendor_name: 'Naveen Telecom Network 2',
-      description: 'Drill rod thread inspection required before starting Ring 02 HDD pullback section.',
-      severity: 'LOW',
-      status: 'OPEN',
-      reported_by: 'Jugal kishor (Tracker)',
-      location: 'Sujangarh Ring Route',
-      reported_at: '2026-09-08T08:00:00Z',
-      downtime_hours: '0.5 hrs'
-    },
-    {
-      id: 102,
-      ticket_code: 'BD-2026-0854',
-      machine_code: 'XCMG 320 (7421)',
-      machine_model: 'XCMG 320 HDD Rig',
-      vendor_name: 'Gurukripa Enterprises',
-      description: 'Hydraulic hose leak near primary carriage motor assembly. Hose replaced and fluid refilled.',
-      severity: 'MEDIUM',
-      status: 'RESOLVED',
-      reported_by: 'HDD OP Mahaveer',
-      location: 'Chhitroli Block (Ch: 04+120)',
-      reported_at: '2026-09-05T09:15:00Z',
-      downtime_hours: '2.0 hrs'
-    },
-    {
-      id: 103,
-      ticket_code: 'BD-2026-0812',
-      machine_code: 'VERMEER D24x40 (9102)',
-      machine_model: 'Vermeer D24x40 III',
-      vendor_name: 'HARPAL INFRA DEVELOPMENT',
-      description: 'Radiator fan belt snapped under heavy load. Maintenance crew dispatched with replacement belt.',
-      severity: 'HIGH',
-      status: 'OPEN',
-      reported_by: 'Harpal Singh',
-      location: 'Bagru Ring Route 01',
-      reported_at: '2026-09-08T06:00:00Z',
-      downtime_hours: '8.0 hrs'
-    }
-  ];
+
 
   useEffect(() => {
     if (isAdmin) {
@@ -148,15 +76,11 @@ export const Breakdowns = () => {
         } else if (raw && Array.isArray(raw.data)) {
           list = raw.data;
         }
-        if (list.length === 0) {
-          setBreakdowns(demoBreakdowns);
-        } else {
-          setBreakdowns(list);
-        }
+        setBreakdowns(list);
       })
       .catch(err => {
         console.error("Error fetching breakdowns:", err);
-        setBreakdowns(demoBreakdowns);
+        setBreakdowns([]);
       })
       .finally(() => setLoading(false));
   };
@@ -377,10 +301,10 @@ export const Breakdowns = () => {
           Fetching breakdown ticket history...
         </div>
       ) : filteredBreakdowns.length === 0 ? (
-        <div className="app-card" style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
-          <LucideWrench size={32} style={{ margin: '0 auto 8px', color: '#9ca3af' }} />
-          <div style={{ fontSize: '0.95rem', fontWeight: '600' }}>No breakdown tickets found</div>
-          <div style={{ fontSize: '0.8rem', color: '#9ca3af' }}>Try adjusting status filters or search query.</div>
+        <div className="app-card" style={{ padding: '48px 20px', textAlign: 'center', color: '#6b7280' }}>
+          <LucideAlertOctagon size={36} style={{ margin: '0 auto 12px', color: '#9ca3af', opacity: 0.6 }} />
+          <div style={{ fontSize: '1rem', fontWeight: '600', color: '#374151' }}>No breakdowns in this view.</div>
+          <div style={{ fontSize: '0.82rem', color: '#9ca3af', marginTop: '4px' }}>Report a breakdown to start tracking downtime.</div>
         </div>
       ) : (
         <div className="table-container app-card" style={{ padding: 0, overflowX: 'auto' }}>

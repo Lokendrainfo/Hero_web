@@ -31,7 +31,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
         { label: 'Live Tracking', path: '/tracking', icon: LucideNavigation, perm: 'tracking.view' },
         { label: 'Tasks', path: '/tasks', icon: LucideCheckSquare, perm: 'tasks.view' },
         { label: 'Map View', path: '/map-view', icon: LucideGlobe, perm: 'mapview.view' },
-        { label: 'Chart View', path: '/chart-view', icon: LucideLineChart, perm: 'chartview.view' },
+        { label: 'Depth View', path: '/chart-view', icon: LucideLineChart, perm: 'chartview.view' },
         { label: 'Attendance', path: '/attendance', icon: LucideCalendarCheck, perm: 'attendance.view' }
       ]
     },

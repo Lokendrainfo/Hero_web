@@ -505,11 +505,8 @@ export const Tasks = () => {
 
       <div className="filter-row">
         {[
-          { key: 'ALL', title: 'All', count: (isAdmin && activeVendorFilter === 'ALL') ? totalAllCount : vendorScopedTasks.length },
-          { key: 'GP_SURVEY', title: 'GP Survey', count: (isAdmin && activeVendorFilter === 'ALL' && typeCounts?.GP_SURVEY !== undefined) ? typeCounts.GP_SURVEY : vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('GP')).length },
-          { key: 'OTDR_SURVEY', title: 'OTDR', count: (isAdmin && activeVendorFilter === 'ALL' && typeCounts?.OTDR_SURVEY !== undefined) ? typeCounts.OTDR_SURVEY : vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('OTDR')).length },
-          { key: 'FIBER_SURVEY', title: 'Fiber Survey', count: (isAdmin && activeVendorFilter === 'ALL' && typeCounts?.FIBER_SURVEY !== undefined) ? typeCounts.FIBER_SURVEY : vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('FIBER')).length },
-          { key: 'FIBER_TRENCHING_DUCTING_TASK', title: 'Trenching', count: (isAdmin && activeVendorFilter === 'ALL' && typeCounts?.FIBER_TRENCHING_DUCTING_TASK !== undefined) ? typeCounts.FIBER_TRENCHING_DUCTING_TASK : vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('TRENCH')).length }
+          { key: 'ALL', title: 'All Execution Tasks', count: vendorScopedTasks.length || totalElements },
+          { key: 'FIBER_TRENCHING_DUCTING_TASK', title: 'Trenching & Ducting', count: vendorScopedTasks.filter(t => (t.taskType || t.type || '').toUpperCase().includes('TRENCH') || (t.taskType || t.type || '').toUpperCase().includes('DUCTING')).length || vendorScopedTasks.length || totalElements }
         ].map(card => (
           <button
             key={card.key}

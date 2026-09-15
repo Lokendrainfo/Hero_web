@@ -15,7 +15,12 @@ class Role(models.Model):
     code = models.CharField(max_length=50, unique=True)
     description = models.TextField(blank=True, null=True)
     is_system = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    data_scope = models.CharField(max_length=50, default='ALL_DATA')
+    module_scopes = models.JSONField(default=dict, blank=True)
     permissions = models.ManyToManyField(Permission, through='RolePermission', related_name='roles')
+    created_by = models.ForeignKey('authentication.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='created_roles')
+    updated_by = models.ForeignKey('authentication.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_roles')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

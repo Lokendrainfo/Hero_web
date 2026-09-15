@@ -10,7 +10,7 @@ export const MachineCard = ({ machine }) => {
   const chassisNo = machine.machine_chassis_no || machine.serial_number || 'N/A';
   const modelName = machine.model_name || `APOLLO ${machine.model_code || 'A600'} V2`;
   const modelCode = machine.model_code || 'A600';
-  const siteName = machine.site_name || machine.location_name || 'Sujangarh-SITE';
+  const siteName = machine.site_name || machine.location_name || '';
   const isCommissioned = machine.is_commissioned !== undefined ? machine.is_commissioned : false;
   const operatorName = machine.operator?.name || (machine.operator ? 'Mapped' : 'No Operator');
   const fuelCard = machine.fuel_card;

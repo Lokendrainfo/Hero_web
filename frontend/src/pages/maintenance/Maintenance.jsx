@@ -41,62 +41,6 @@ export const Maintenance = () => {
     details: ''
   });
 
-  const demoSchedules = [
-    {
-      id: 1,
-      title: '500 Hour Engine Oil & Filter Service',
-      machine_code: 'A600 HDD (8396)',
-      machine_name: 'A600 HDD (8396)',
-      vendor_name: 'Naveen Telecom Network 2',
-      maintenance_type: 'ROUTINE_SERVICE',
-      scheduled_date: '2026-09-20',
-      status: 'SCHEDULED',
-      cost: '18500.00',
-      location: 'Sujangarh-SITE',
-      details: 'Replace engine oil, fuel filters, and hydraulic Return Line filter.'
-    },
-    {
-      id: 2,
-      title: 'Hydraulic System High Pressure Valve Check',
-      machine_code: 'A800 HDD (8593)',
-      machine_name: 'A800 HDD (8593)',
-      vendor_name: 'Naveen Telecom Network 2',
-      maintenance_type: 'HYDRAULIC_FLUSH',
-      scheduled_date: '2026-09-12',
-      status: 'IN_PROGRESS',
-      cost: '24000.00',
-      location: 'Sujangarh-SITE (Ch: 12+400)',
-      details: 'Pressure testing primary carriage motor valves.'
-    },
-    {
-      id: 3,
-      title: 'Mud Pump Seal & Diaphragm Replacement',
-      machine_code: 'XCMG 320 (7421)',
-      machine_name: 'XCMG 320 (7421)',
-      vendor_name: 'Gurukripa Enterprises',
-      maintenance_type: 'PREVENTIVE_MAINTENANCE',
-      scheduled_date: '2026-09-05',
-      completed_date: '2026-09-06',
-      status: 'COMPLETED',
-      cost: '32000.00',
-      location: 'Chhitroli Block',
-      details: 'Mud pump seals overhauled and tested up to 80 bar pressure.'
-    },
-    {
-      id: 4,
-      title: 'Cooling System Radiator Flush & Hose Check',
-      machine_code: 'VERMEER D24x40 (9102)',
-      machine_name: 'VERMEER D24x40 (9102)',
-      vendor_name: 'HARPAL INFRA DEVELOPMENT',
-      maintenance_type: 'ROUTINE_SERVICE',
-      scheduled_date: '2026-09-01',
-      status: 'OVERDUE',
-      cost: '12000.00',
-      location: 'Bagru Ring Route 01',
-      details: 'Radiator flushed and fan belt replaced.'
-    }
-  ];
-
   useEffect(() => {
     if (isAdmin) {
       vendorService.getVendors({ page: 0, size: 50 })
@@ -130,15 +74,11 @@ export const Maintenance = () => {
         } else if (raw && Array.isArray(raw.data)) {
           list = raw.data;
         }
-        if (list.length === 0) {
-          setSchedules(demoSchedules);
-        } else {
-          setSchedules(list);
-        }
+        setSchedules(list);
       })
       .catch(err => {
         console.error("Error fetching maintenance schedules:", err);
-        setSchedules(demoSchedules);
+        setSchedules([]);
       })
       .finally(() => setLoading(false));
   };

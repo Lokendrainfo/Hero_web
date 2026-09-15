@@ -148,7 +148,7 @@ export const LeafletMap = ({
           <div style="font-size: 0.78rem; color: #4b5563; line-height: 1.5;">
             📍 Latitude: <strong>${lat.toFixed(6)}</strong><br/>
             📍 Longitude: <strong>${lng.toFixed(6)}</strong><br/>
-            📍 Site: <strong>${m.site_name || m.location_name || 'Sujangarh-SITE'}</strong><br/>
+            📍 Site: <strong>${m.site_name || m.location_name || ''}</strong><br/>
             👤 Operator: <strong>${m.operator_name || (m.operator?.name) || 'Swarnim Mittal'}</strong><br/>
             ⛽ Fuel Level: <strong>${m.fuel_level || m.current_fuel_level || 6} L</strong>
           </div>

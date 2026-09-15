@@ -33,7 +33,7 @@ export const MachineTracking = () => {
   const isOnline = machine?.is_online !== undefined ? machine?.is_online : true;
   const status = (machine?.status || 'RUNNING').toUpperCase();
   const speed = status === 'RUNNING' ? '18.5 km/h' : '0.0 km/h';
-  const siteName = machine?.site_name || machine?.location_name || 'Sujangarh-SITE, HR';
+  const siteName = machine?.site_name || machine?.location_name || '';
 
   return (
     <div className="map-fill-page">

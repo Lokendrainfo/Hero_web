@@ -47,7 +47,82 @@ export const ChartViewPage = () => {
 
   // Filters State
   const dateParam = searchParams.get('date');
-  const [selectedDate, setSelectedDate] = useState(dateParam || '');
+  const [selectedDate, setSelectedDate] = useState(dateParam || (() => new Date().toISOString().split('T')[0]));
+  const [selectedState, setSelectedState] = useState('ALL');
+  const [selectedDistrict, setSelectedDistrict] = useState('ALL');
+  const [selectedBlock, setSelectedBlock] = useState('ALL');
+
+  // Auto-lock state/district filters for Advance User scope
+  useEffect(() => {
+    if (isAdvanceUser && assignedCircle) {
+      setSelectedState(assignedCircle);
+      if (assignedDistrict) {
+        setSelectedDistrict(assignedDistrict);
+      }
+    }
+  }, [isAdvanceUser, assignedCircle, assignedDistrict]);
+
+  // Memoized available states dynamically
+  const availableStates = useMemo(() => {
+    if (isAdvanceUser && assignedCircle) {
+      return [assignedCircle];
+    }
+    const statesSet = new Set(
+      executionsList
+        .map(ex => (ex.state || ex.circle || '').toUpperCase())
+        .filter(Boolean)
+    );
+    ['RAJASTHAN', 'HARYANA', 'ASSAM', 'PUNJAB', 'DELHI'].forEach(s => statesSet.add(s));
+    return Array.from(statesSet).sort();
+  }, [executionsList, isAdvanceUser, assignedCircle]);
+
+  // Memoized available districts
+  const availableDistricts = useMemo(() => {
+    return Array.from(
+      new Set(
+        executionsList
+          .filter(ex => selectedState === 'ALL' || (ex.state || ex.circle || '').toUpperCase() === selectedState.toUpperCase())
+          .map(ex => ex.district)
+          .filter(Boolean)
+      )
+    ).sort();
+  }, [executionsList, selectedState]);
+
+  // Memoized available blocks
+  const availableBlocks = useMemo(() => {
+    return Array.from(
+      new Set(
+        executionsList
+          .filter(ex => {
+            if (selectedState !== 'ALL' && (ex.state || ex.circle || '').toUpperCase() !== selectedState.toUpperCase()) {
+              return false;
+            }
+            if (selectedDistrict !== 'ALL' && (ex.district || '').toUpperCase() !== selectedDistrict.toUpperCase()) {
+              return false;
+            }
+            return true;
+          })
+          .map(ex => ex.block)
+          .filter(Boolean)
+      )
+    ).sort();
+  }, [executionsList, selectedState, selectedDistrict]);
+
+  // Memoized filtered executions by selectedState, selectedDistrict & selectedBlock
+  const filteredExecutionsList = useMemo(() => {
+    return executionsList.filter(ex => {
+      if (selectedState !== 'ALL' && (ex.state || ex.circle || '').toUpperCase() !== selectedState.toUpperCase()) {
+        return false;
+      }
+      if (selectedDistrict !== 'ALL' && (ex.district || '').toUpperCase() !== selectedDistrict.toUpperCase()) {
+        return false;
+      }
+      if (selectedBlock !== 'ALL' && (ex.block || '').toUpperCase() !== selectedBlock.toUpperCase()) {
+        return false;
+      }
+      return true;
+    });
+  }, [executionsList, selectedState, selectedDistrict, selectedBlock]);
 
   // Tooltip & Lightbox state
   const [activeHoverPoint, setActiveHoverPoint] = useState(null);
@@ -202,7 +277,7 @@ export const ChartViewPage = () => {
     return (
       <div className="screen-container">
         <EmptyState
-          title="Chart view is not available"
+          title="Depth view is not available"
           subtitle="This module is not available on vendor accounts."
         >
           <button type="button" className="btn-primary" onClick={() => navigate('/tasks')}>
@@ -258,7 +333,7 @@ export const ChartViewPage = () => {
   return (
     <div className="screen-container">
       <PageHeader
-        title="Chart View"
+        title="Depth View"
         subtitle="Depth profile & bore data points visualization"
         actions={
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -285,55 +360,107 @@ export const ChartViewPage = () => {
         }
       />
 
-      {/* Task & Date Filter Bar */}
-      <div className="card" style={{ padding: '14px 20px' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center', flex: 1, minWidth: 280 }}>
-            <div style={{ minWidth: 260, flex: 1 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, display: 'block' }}>
-                Select Task / Execution
-              </label>
+      {/* Task & Geography Filter Bar */}
+      <div className="card" style={{ padding: '14px 20px', background: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+          
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', flex: 1 }}>
+            {/* State Filter */}
+            <div style={{ minWidth: 150 }}>
+              <SearchableSelect
+                value={selectedState}
+                onChange={(e) => {
+                  setSelectedState(e.target.value);
+                  setSelectedDistrict('ALL');
+                  setSelectedBlock('ALL');
+                }}
+                style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '500', color: '#0f172a' }}
+              >
+                <option value="ALL">All states</option>
+                {availableStates.map(st => (
+                  <option key={st} value={st}>{st}</option>
+                ))}
+              </SearchableSelect>
+            </div>
+
+            {/* District Filter */}
+            <div style={{ minWidth: 150 }}>
+              <SearchableSelect
+                value={selectedDistrict}
+                onChange={(e) => {
+                  setSelectedDistrict(e.target.value);
+                  setSelectedBlock('ALL');
+                }}
+                style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '500', color: '#0f172a' }}
+              >
+                <option value="ALL">All districts</option>
+                {availableDistricts.map(dt => (
+                  <option key={dt} value={dt}>{dt}</option>
+                ))}
+              </SearchableSelect>
+            </div>
+
+            {/* Block Filter */}
+            <div style={{ minWidth: 150 }}>
+              <SearchableSelect
+                value={selectedBlock}
+                onChange={(e) => setSelectedBlock(e.target.value)}
+                style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.85rem', fontWeight: '500', color: '#0f172a' }}
+              >
+                <option value="ALL">All blocks</option>
+                {availableBlocks.map(bl => (
+                  <option key={bl} value={bl}>{bl}</option>
+                ))}
+              </SearchableSelect>
+            </div>
+
+            {/* Date Field */}
+            <div style={{ minWidth: 160 }}>
+              <DateField
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                placeholder="Select date"
+              />
+            </div>
+
+            {/* Execution Task Dropdown Filter */}
+            <div style={{ minWidth: 220, flex: 1 }}>
               <SearchableSelect
                 value={selectedExecId}
                 onChange={(e) => handleExecChange(e.target.value)}
                 placeholder="Choose execution task..."
                 options={[
-                  ...executionsList.map(exec => ({
+                  ...filteredExecutionsList.map(exec => ({
                     value: String(exec.id),
                     label: `${exec.user || 'Machine Execution'} (${exec.block || exec.district || 'HDD'}, ${exec.trench?.formattedDistance || '0m'})`
                   }))
                 ]}
               />
             </div>
-
-            <div style={{ width: 180 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, display: 'block' }}>
-                Filter Date
-              </label>
-              <DateField
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                placeholder="All Dates"
-              />
-            </div>
           </div>
 
-          {currentExecution && (
-            <div style={{ display: 'flex', gap: 16, alignItems: 'center', fontSize: 13, color: 'var(--text-secondary)' }}>
-              <div>
-                <span style={{ color: 'var(--text-muted)' }}>District:</span>{' '}
-                <strong style={{ color: 'var(--text-primary)' }}>{currentExecution.district || '—'}</strong>
-              </div>
-              <div>
-                <span style={{ color: 'var(--text-muted)' }}>Block:</span>{' '}
-                <strong style={{ color: 'var(--text-primary)' }}>{currentExecution.block || '—'}</strong>
-              </div>
-              <div>
-                <span style={{ color: 'var(--text-muted)' }}>User:</span>{' '}
-                <strong style={{ color: 'var(--text-primary)' }}>{currentExecution.user || '—'}</strong>
-              </div>
-            </div>
-          )}
+          {/* Refresh Button */}
+          <button
+            type="button"
+            onClick={fetchExecutions}
+            disabled={loading}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              color: '#0f172a',
+              fontSize: '0.82rem',
+              fontWeight: '600',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              cursor: 'pointer'
+            }}
+          >
+            <LucideRefreshCw size={15} className={loading ? 'spin' : ''} />
+            <span>Refresh</span>
+          </button>
         </div>
       </div>
 

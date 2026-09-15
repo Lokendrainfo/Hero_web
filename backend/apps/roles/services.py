@@ -3,171 +3,260 @@ from apps.roles.models import Permission, Role, RolePermission, UserRole
 SYSTEM_PERMISSIONS = [
     # Dashboard & Analytics
     ("dashboard.view", "View Dashboard", "Dashboard", "View dashboard analytics and financial KPI statistics"),
+    ("dashboard.export", "Export Dashboard Data", "Dashboard", "Export dashboard data and charts"),
 
-    # Machinery & Fleet
-    ("machines.view", "View Machinery", "Machines", "View fleet machinery list and equipment details"),
-    ("machines.manage", "Manage Machinery", "Machines", "Add, update, or decommission fleet machinery"),
-
-    # GPS Telemetry & GIS Mapping
-    ("tracking.view", "View Live GPS Tracking", "Tracking", "View live machine locations and route history"),
+    # Map View & Execution Topology
     ("mapview.view", "View Map View & Topology", "Map View", "View GIS map view and trenching / HDD execution topology"),
-    ("chartview.view", "View Chart View", "Map View", "View GIS chart view and execution analytics"),
+    ("chartview.view", "View Depth/Chart View", "Map View", "View GIS depth/chart view and execution analytics"),
+    ("mapview.export", "Export Map Data", "Map View", "Export spatial and execution topology data"),
 
     # Work Tasks & Operations
     ("tasks.view", "View Work Tasks", "Tasks", "View work tasks and site assignments"),
     ("tasks.create", "Create Work Tasks", "Tasks", "Create new HDD and fiber work tasks"),
-    ("tasks.update", "Update Work Tasks", "Tasks", "Update task status and execution details"),
+    ("tasks.edit", "Edit Work Tasks", "Tasks", "Update task status, parameters, and details"),
     ("tasks.delete", "Delete Work Tasks", "Tasks", "Delete tasks"),
+    ("tasks.approve", "Approve Work Tasks", "Tasks", "Approve completed tasks"),
+    ("tasks.reject", "Reject Work Tasks", "Tasks", "Reject completed tasks"),
     ("tasks.assign", "Assign Vendor Tasks", "Tasks", "Assign tasks to vendor organizations"),
+    ("tasks.reassign", "Reassign Tasks", "Tasks", "Reassign work tasks to different vendors or operators"),
+    ("tasks.export", "Export Tasks Data", "Tasks", "Export work tasks to CSV/Excel"),
+    ("tasks.import", "Import Tasks", "Tasks", "Import work tasks via CSV/Excel template"),
+    ("tasks.manage", "Manage Tasks System", "Tasks", "Full management of work tasks"),
+
+    # Vendors & Contracting
+    ("vendors.view", "View Vendors", "Vendors", "View vendor profiles and contracts"),
+    ("vendors.create", "Create Vendors", "Vendors", "Register new vendor organizations"),
+    ("vendors.edit", "Edit Vendors", "Vendors", "Update vendor profiles, contracts, and contact info"),
+    ("vendors.delete", "Delete Vendors", "Vendors", "Delete vendor entries"),
+    ("vendors.activate", "Activate Vendors", "Vendors", "Activate vendor status"),
+    ("vendors.deactivate", "Deactivate Vendors", "Vendors", "Deactivate vendor status"),
+    ("vendors.manage", "Manage Vendors", "Vendors", "Full administration of vendor network"),
+
+    # Machinery & Fleet
+    ("machines.view", "View Machinery", "Machines", "View fleet machinery list and equipment details"),
+    ("machines.create", "Create Machinery", "Machines", "Add new machinery and drill rigs to fleet"),
+    ("machines.edit", "Edit Machinery", "Machines", "Update equipment specs, status, and telemetry settings"),
+    ("machines.delete", "Delete Machinery", "Machines", "Remove equipment from fleet"),
+    ("machines.assign", "Assign Machine", "Machines", "Assign machine to vendors, operators, or tasks"),
+    ("machines.manage", "Manage Machinery", "Machines", "Full administration of machinery fleet"),
 
     # Team & Roster Management
     ("team.view", "View Team", "Team", "View team members, operators, and supervisor profiles"),
-    ("team.manage", "Manage Team Members", "Team", "Add, edit, or reassign team members and operators"),
+    ("team.create", "Create Team Member", "Team", "Add new team member or operator profile"),
+    ("team.edit", "Edit Team Member", "Team", "Update team member details and reporting manager"),
+    ("team.delete", "Delete Team Member", "Team", "Remove team member from system"),
+    ("team.assign", "Assign Team Roster", "Team", "Assign team members to machines or tasks"),
+    ("team.manage", "Manage Team Roster", "Team", "Full administration of workforce team roster"),
+
+    # GPS Telemetry & Live Tracking
+    ("tracking.view", "View Live GPS Tracking", "Live Tracking", "View live machine locations, geofences, and route history"),
+    ("tracking.manage", "Manage GPS Telemetry", "Live Tracking", "Configure GPS devices, polling frequency, and alerts"),
 
     # Attendance & Geo-Verification
     ("attendance.view", "View Attendance", "Attendance", "View employee check-in/out and geo-attendance logs"),
     ("attendance.create", "Log Attendance", "Attendance", "Perform self and team check-in/out"),
+    ("attendance.edit", "Edit Attendance", "Attendance", "Modify historical attendance records"),
     ("attendance.approve", "Approve Attendance", "Attendance", "Approve or reject supervisor/operator attendance logs"),
-    ("attendance.manage", "Manage Attendance Settings", "Attendance", "Configure attendance policies and rosters"),
+    ("attendance.reject", "Reject Attendance", "Attendance", "Reject invalid attendance submissions"),
+    ("attendance.export", "Export Attendance Data", "Attendance", "Export attendance logs to Excel"),
+    ("attendance.manage", "Manage Attendance Settings", "Attendance", "Configure attendance policies, shift timing, and rosters"),
 
-    # Operational Expenses & Expense Masters
+    # Operational Expenses
     ("expenses.view", "View Expenses", "Expenses", "View site expenses and financial logs"),
     ("expenses.create", "Create Expense Logs", "Expenses", "Log operational site expenses and upload receipts"),
-    ("expenses.approve", "Approve Expenses", "Expenses", "Review and approve/reject expense claims"),
-    ("expenses.pay", "Process Expense Payments", "Expenses", "Mark approved expenses as paid/settled"),
-    ("expenses.manage", "Manage Expense Records", "Expenses", "Full control to edit or delete expense records"),
-    ("expense_categories.view", "View Expense Masters", "Expense Masters", "View expense master categories and rates"),
-    ("expense_categories.manage", "Manage Expense Masters", "Expense Masters", "Create and edit expense category masters"),
+    ("expenses.edit", "Edit Expense Logs", "Expenses", "Edit expense details before payout"),
+    ("expenses.delete", "Delete Expenses", "Expenses", "Delete expense entries"),
+    ("expenses.approve", "Approve Expenses", "Expenses", "Review and approve expense claims"),
+    ("expenses.reject", "Reject Expenses", "Expenses", "Reject expense claims with comments"),
+    ("expenses.export", "Export Expenses", "Expenses", "Export expense reports to Excel/PDF"),
+    ("expenses.manage", "Manage Expense Records", "Expenses", "Full control over site expenses"),
 
-    # Fuel & Refuel Workflows
-    ("fuel.view", "View Fuel Records", "Fuel", "View fuel consumption logs and machine fuel efficiency"),
-    ("fuel.manage", "Manage Fuel Records", "Fuel", "Add, update, or audit fuel logs"),
-    ("refuel.view", "View Refuel Requests", "Refuel", "View refuel request logs"),
-    ("refuel.create", "Request Refuel", "Refuel", "Create machine refuel requests"),
+    # Refuel & Fuel Management
+    ("refuel.view", "View Fuel & Refuel Records", "Refuel", "View fuel consumption logs and machine fuel efficiency"),
+    ("refuel.create", "Request Refuel", "Refuel", "Create machine refuel requests and log fuel dispensing"),
+    ("refuel.edit", "Edit Refuel Entry", "Refuel", "Edit fuel dispenser logs and quantities"),
     ("refuel.approve", "Approve Refuel Requests", "Refuel", "Approve or reject refuel requests"),
+    ("refuel.reject", "Reject Refuel Requests", "Refuel", "Reject refuel requests with reasons"),
     ("refuel.manage", "Manage Refuel Operations", "Refuel", "Full management of fuel dispensing and logs"),
 
-    # Maintenance & Machine Repairs
-    ("maintenance.view", "View Maintenance Logs", "Maintenance", "View preventive maintenance schedules"),
-    ("maintenance.create", "Log Maintenance", "Maintenance", "Create maintenance and service entries"),
-    ("maintenance.manage", "Manage Maintenance", "Maintenance", "Update and complete maintenance schedules"),
+    # System Alerts & Warnings
+    ("alerts.view", "View System Alerts", "Alerts", "View operational warnings, breakdown notifications, and geofence alerts"),
+    ("alerts.manage", "Manage Alert Rules", "Alerts", "Configure thresholds and clear system alert rules"),
 
     # Breakdown Incident Reports
     ("breakdowns.view", "View Breakdown Reports", "Breakdowns", "View machine breakdown incident reports"),
     ("breakdowns.create", "Report Breakdown", "Breakdowns", "Log machine breakdown incidents"),
+    ("breakdowns.edit", "Edit Breakdown Log", "Breakdowns", "Update breakdown status and service logs"),
     ("breakdowns.manage", "Manage Breakdown Resolution", "Breakdowns", "Assign technicians and resolve breakdown incidents"),
-
-    # Spare Parts & Inventory
-    ("inventory.view", "View Inventory/Stock", "Inventory", "View spare parts and inventory items"),
-    ("inventory.manage", "Manage Inventory/Stock", "Inventory", "Manage stock items, issuance, and warehouse levels"),
-
-    # Vendor Management
-    ("vendors.view", "View Vendors", "Vendors", "View vendor profiles and contracts"),
-    ("vendors.manage", "Manage Vendors", "Vendors", "Add and edit vendor organizations and user links"),
-
-    # User Access & Roles
-    ("users.view", "View Platform Users", "Users", "View platform users and vendor accounts"),
-    ("users.manage", "Manage Users", "Users", "Create users, reset passwords, and assign roles"),
-    ("roles.view", "View Roles & Permissions", "Roles", "View role configurations"),
-    ("roles.manage", "Manage Roles & Permissions", "Roles", "Create and edit custom roles and permissions"),
 
     # System Reports & Analytics
     ("reports.view", "View Operational Reports", "Reports", "Generate and view performance reports"),
     ("reports.export", "Export Reports & Data", "Reports", "Export system data and CSV/PDF audit reports"),
+    ("reports.download", "Download Custom Reports", "Reports", "Download detailed custom performance reports"),
 
-    # Alerts & Notifications
-    ("alerts.view", "View System Alerts", "Alerts", "View operational warnings and system alerts"),
-    ("alerts.manage", "Manage Alert Rules", "Alerts", "Configure and clear system alert rules"),
-    ("notifications.view", "View Notifications", "Notifications", "Receive operational notifications"),
+    # Users & Staff Access
+    ("users.view", "View Platform Users", "Users", "View platform users, supervisors, and vendor user accounts"),
+    ("users.create", "Create Platform Users", "Users", "Create new platform user accounts"),
+    ("users.edit", "Edit Platform Users", "Users", "Update user profile, status, and assigned vendor"),
+    ("users.delete", "Delete Users", "Users", "Deactivate or delete user accounts"),
+    ("users.activate", "Activate Users", "Users", "Activate user account"),
+    ("users.deactivate", "Deactivate Users", "Users", "Deactivate user account"),
+    ("users.manage", "Manage Users System", "Users", "Full administration of users"),
 
-    # Integration Sync
+    # Roles & RBAC Configuration
+    ("roles.view", "View Roles & Permissions", "Roles", "View role configurations, permission matrix, and scope settings"),
+    ("roles.create", "Create Roles", "Roles", "Create custom roles with permissions and scopes"),
+    ("roles.edit", "Edit Roles", "Roles", "Update existing custom roles and permissions"),
+    ("roles.delete", "Delete Roles", "Roles", "Delete custom roles"),
+    ("roles.activate", "Activate Roles", "Roles", "Activate roles"),
+    ("roles.deactivate", "Deactivate Roles", "Roles", "Deactivate roles"),
+    ("roles.manage", "Manage Roles System", "Roles", "Full administration of roles and permissions"),
+
+    # Masters Configuration
+    ("masters.view", "View Masters Data", "Masters", "View system masters (expense categories, machine types, task types)"),
+    ("masters.create", "Create Master Items", "Masters", "Add new master categories and reference data"),
+    ("masters.edit", "Edit Master Items", "Masters", "Edit master categories and rates"),
+    ("masters.delete", "Delete Master Items", "Masters", "Remove master reference data"),
+    ("masters.manage", "Manage Masters System", "Masters", "Full management of system master data"),
+
+    # External Integrations
     ("integrations.view", "View External Integrations", "Integrations", "View iLync enterprise integration sync status"),
     ("integrations.manage", "Manage Integrations", "Integrations", "Trigger external data sync and API connections"),
 
+    # System Audit Logs
+    ("audit.view", "View Audit Logs", "Audit Logs", "View administrative change audit logs and security activity"),
+    ("audit.export", "Export Audit Logs", "Audit Logs", "Export security audit trail"),
+
     # System Settings
-    ("settings.view", "View Platform Settings", "Settings", "View system configuration settings"),
-    ("settings.manage", "Manage Platform Settings", "Settings", "Manage global system parameters"),
+    ("settings.view", "View Platform Settings", "System Settings", "View global platform parameters and branding"),
+    ("settings.manage", "Manage Platform Settings", "System Settings", "Manage global system parameters and integrations"),
 ]
 
 DEFAULT_ROLES = {
-    "ADMIN": {
-        "code": "ADMIN",
-        "description": "Full System Administrator with unrestricted access to all modules and configurations",
+    "SUPER_ADMIN": {
+        "code": "SUPER_ADMIN",
+        "description": "Super Administrator with complete unrestricted access to all system modules, scopes, and security settings",
         "is_system": True,
+        "data_scope": "ALL_DATA",
         "permission_codes": [p[0] for p in SYSTEM_PERMISSIONS]
     },
-    "PROJECT_MANAGER": {
-        "code": "PROJECT_MANAGER",
-        "description": "Project Manager overseeing fleet operations, tasks, team, expenses, and site analytics",
+    "ADMIN": {
+        "code": "ADMIN",
+        "description": "Platform Administrator managing standard operations, vendors, fleet, users, and roles",
         "is_system": True,
+        "data_scope": "ALL_DATA",
+        "permission_codes": [p[0] for p in SYSTEM_PERMISSIONS]
+    },
+    "CORPORATE_MANAGER": {
+        "code": "CORPORATE_MANAGER",
+        "description": "Corporate Manager with enterprise-wide visibility across all vendors, regions, tasks, and reports",
+        "is_system": True,
+        "data_scope": "ALL_DATA",
+        "permission_codes": [p[0] for p in SYSTEM_PERMISSIONS if not p[0].startswith("settings.") and not p[0].startswith("roles.")]
+    },
+    "REGIONAL_MANAGER": {
+        "code": "REGIONAL_MANAGER",
+        "description": "Regional Manager overseeing regional operations, tasks, vendors, and machinery in their geographic area",
+        "is_system": True,
+        "data_scope": "OWN_GEOGRAPHY",
         "permission_codes": [
-            "dashboard.view", "machines.view", "machines.manage", "tracking.view", "mapview.view", "chartview.view",
-            "tasks.view", "tasks.create", "tasks.update", "tasks.delete", "tasks.assign",
-            "team.view", "team.manage", "attendance.view", "attendance.approve",
-            "expenses.view", "expenses.create", "expenses.approve", "expense_categories.view",
-            "fuel.view", "fuel.manage", "refuel.view", "refuel.create", "refuel.approve",
-            "maintenance.view", "maintenance.create", "maintenance.manage",
-            "breakdowns.view", "breakdowns.create", "breakdowns.manage",
-            "inventory.view", "inventory.manage", "vendors.view", "users.view",
-            "reports.view", "reports.export", "alerts.view", "notifications.view", "settings.view"
+            "dashboard.view", "dashboard.export", "mapview.view", "chartview.view", "mapview.export",
+            "tasks.view", "tasks.create", "tasks.edit", "tasks.approve", "tasks.reject", "tasks.assign", "tasks.reassign", "tasks.export",
+            "vendors.view", "machines.view", "machines.edit", "machines.assign",
+            "team.view", "team.create", "team.edit", "team.assign", "tracking.view",
+            "attendance.view", "attendance.approve", "attendance.reject", "attendance.export",
+            "expenses.view", "expenses.approve", "expenses.reject", "expenses.export",
+            "refuel.view", "refuel.approve", "refuel.reject", "alerts.view", "breakdowns.view", "breakdowns.manage",
+            "reports.view", "reports.export", "reports.download", "users.view", "masters.view"
         ]
     },
-    "ENGINEER": {
-        "code": "ENGINEER",
-        "description": "Site Engineer managing machinery, task updates, technical maintenance, and breakdown resolution",
+    "CIRCLE_MANAGER": {
+        "code": "CIRCLE_MANAGER",
+        "description": "Circle Manager monitoring operational circle progress, team rosters, and site tasks",
         "is_system": True,
+        "data_scope": "OWN_GEOGRAPHY",
         "permission_codes": [
-            "dashboard.view", "machines.view", "tracking.view", "mapview.view", "chartview.view",
-            "tasks.view", "tasks.create", "tasks.update",
-            "maintenance.view", "maintenance.create", "maintenance.manage",
-            "breakdowns.view", "breakdowns.create", "breakdowns.manage",
-            "inventory.view", "reports.view", "alerts.view", "notifications.view"
+            "dashboard.view", "mapview.view", "chartview.view",
+            "tasks.view", "tasks.edit", "tasks.approve", "tasks.assign", "tasks.export",
+            "vendors.view", "machines.view", "team.view", "team.edit", "tracking.view",
+            "attendance.view", "attendance.approve", "expenses.view", "expenses.approve",
+            "refuel.view", "refuel.approve", "alerts.view", "breakdowns.view", "reports.view"
         ]
     },
-    "SUPERVISOR": {
-        "code": "SUPERVISOR",
-        "description": "Field Supervisor monitoring daily machine progress, team attendance, and refuel entries",
+    "REPORTING_MANAGER": {
+        "code": "REPORTING_MANAGER",
+        "description": "Direct Manager with reporting scope to manage tasks, attendance, and expenses for direct subordinates",
         "is_system": True,
+        "data_scope": "REPORTING_HIERARCHY",
         "permission_codes": [
-            "dashboard.view", "machines.view", "tracking.view", "mapview.view", "chartview.view",
-            "tasks.view", "tasks.update", "team.view",
-            "attendance.view", "attendance.create", "attendance.approve",
-            "expenses.view", "expenses.create", "fuel.view", "refuel.view", "refuel.create",
-            "breakdowns.view", "breakdowns.create", "notifications.view"
+            "dashboard.view", "mapview.view", "chartview.view",
+            "tasks.view", "tasks.edit", "tasks.assign",
+            "team.view", "team.edit", "attendance.view", "attendance.approve", "attendance.create",
+            "expenses.view", "expenses.create", "expenses.approve",
+            "refuel.view", "refuel.create", "refuel.approve", "breakdowns.view", "breakdowns.create", "reports.view"
+        ]
+    },
+    "VENDOR_ADMIN": {
+        "code": "VENDOR_ADMIN",
+        "description": "Vendor Administrator managing vendor team members, assigned tasks, equipment, attendance, and expenses",
+        "is_system": True,
+        "data_scope": "OWN_VENDOR",
+        "permission_codes": [
+            "dashboard.view", "mapview.view", "chartview.view",
+            "tasks.view", "tasks.edit", "tasks.export",
+            "machines.view", "team.view", "team.create", "team.edit", "team.assign", "tracking.view",
+            "attendance.view", "attendance.create", "attendance.approve", "attendance.export",
+            "expenses.view", "expenses.create", "expenses.export",
+            "refuel.view", "refuel.create", "refuel.approve", "breakdowns.view", "breakdowns.create", "reports.view"
+        ]
+    },
+    "VENDOR_USER": {
+        "code": "VENDOR_USER",
+        "description": "Vendor Staff member updating assigned vendor tasks, field attendance, and operational fuel entries",
+        "is_system": True,
+        "data_scope": "OWN_VENDOR",
+        "permission_codes": [
+            "dashboard.view", "mapview.view", "chartview.view",
+            "tasks.view", "tasks.edit", "machines.view", "team.view",
+            "attendance.view", "attendance.create", "expenses.view", "expenses.create",
+            "refuel.view", "refuel.create", "breakdowns.view", "breakdowns.create"
         ]
     },
     "OPERATOR": {
         "code": "OPERATOR",
         "description": "Machine Operator logging machine runtime, attendance check-in, refuel requests, and breakdown reports",
         "is_system": True,
+        "data_scope": "OWN_TASKS",
         "permission_codes": [
-            "dashboard.view", "machines.view", "tasks.view", "tasks.update",
-            "attendance.view", "attendance.create", "fuel.view", "refuel.view", "refuel.create",
+            "dashboard.view", "machines.view", "tasks.view", "tasks.edit",
+            "attendance.view", "attendance.create", "refuel.view", "refuel.create",
             "breakdowns.view", "breakdowns.create"
         ]
     },
-    "VENDOR": {
-        "code": "VENDOR",
-        "description": "Vendor representative managing assigned fleet, logged expenses, refuel requests, and maintenance status",
+    "TRACKER": {
+        "code": "TRACKER",
+        "description": "Data Entry Tracker responsible for updating daily trenching/HDD progress meters and site logs",
         "is_system": True,
+        "data_scope": "OWN_TASKS",
         "permission_codes": [
-            "dashboard.view", "machines.view", "tasks.view", "attendance.view",
-            "expenses.view", "expenses.create", "expense_categories.view",
-            "fuel.view", "refuel.view", "refuel.create", "maintenance.view", "breakdowns.view"
+            "dashboard.view", "mapview.view", "chartview.view", "tasks.view", "tasks.edit",
+            "attendance.view", "attendance.create", "refuel.view", "refuel.create"
+        ]
+    },
+    "LABOUR": {
+        "code": "LABOUR",
+        "description": "Site Labourer with mobile attendance check-in and basic task status view",
+        "is_system": True,
+        "data_scope": "OWN_TASKS",
+        "permission_codes": [
+            "dashboard.view", "tasks.view", "attendance.view", "attendance.create"
         ]
     },
     "VIEWER": {
         "code": "VIEWER",
-        "description": "Read-only Viewer account with basic dashboard, machine, tracking, and report access",
+        "description": "Read-only Viewer account with view-only access across all operational modules",
         "is_system": True,
-        "permission_codes": [
-            "dashboard.view", "machines.view", "tracking.view", "mapview.view", "chartview.view", "reports.view"
-        ]
-    },
-    "ALL_VIEWER": {
-        "code": "ALL_VIEWER",
-        "description": "Read-only Global Viewer with view-only permissions across all standard and customized modules",
-        "is_system": True,
+        "data_scope": "ALL_DATA",
         "permission_codes": [p[0] for p in SYSTEM_PERMISSIONS if p[0].endswith('.view')]
     }
 }
@@ -188,21 +277,22 @@ def seed_roles_and_permissions():
         )
         perm_objs[code] = p
 
-    for role_name, config in DEFAULT_ROLES.items():
+    for role_code, config in DEFAULT_ROLES.items():
         role, _ = Role.objects.get_or_create(
             code=config["code"],
             defaults={
-                "name": role_name,
+                "name": role_code.replace("_", " ").title(),
                 "description": config["description"],
-                "is_system": config["is_system"]
+                "is_system": config["is_system"],
+                "data_scope": config.get("data_scope", "ALL_DATA")
             }
         )
-        role.name = role_name
+        role.name = role_code.replace("_", " ").title()
         role.is_system = config["is_system"]
+        role.data_scope = config.get("data_scope", "ALL_DATA")
         role.save()
 
         target_perms = [perm_objs[c] for c in config["permission_codes"] if c in perm_objs]
         role.permissions.set(target_perms)
 
     return True
-
