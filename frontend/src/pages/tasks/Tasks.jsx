@@ -830,17 +830,24 @@ export const Tasks = () => {
                   const nodes = activeModalTask.routeSnapshot?.nodes || activeModalTask.nodes || [];
                   const loc = activeModalTask.locationSnapshot || activeModalTask.location || {};
                   const childRoutes = Array.isArray(activeModalTask.routeSnapshot?.routes) ? activeModalTask.routeSnapshot.routes : [];
+                  const covered = Number(activeModalTask.coveredLengthKm || 0);
+                  const total = Number(activeModalTask.totalLengthKm || activeModalTask.plannedScopeKm || 10.5);
+                  const pct = total > 0 ? Math.min(100, Math.round((covered / total) * 100)) : 0;
+
                   return (
                     <TaskRouteMap
                       planName={activeModalTask.routeSnapshot?.routeName || activeModalTask.displayName || `${loc.blockName || 'ANUPGARH'} - ${loc.district || 'GANGANAGAR'} - ${loc.circle || 'RAJASTHAN'}`}
                       circle={loc.circle || 'RAJASTHAN'}
                       district={loc.district || 'GANGANAGAR'}
                       block={loc.blockName || loc.block || 'ANUPGARH'}
-                      gpCount={nodes.length || childRoutes.length || 31}
+                      gpCount={nodes.length || childRoutes.length || 2}
                       routeNodes={nodes}
                       currentNode={activeModalTask.routeSnapshot?.currentNode}
                       nextNode={activeModalTask.routeSnapshot?.nextNode}
                       childRoutes={childRoutes}
+                      coveredKm={covered}
+                      plannedScopeKm={total}
+                      progressPct={pct}
                       height="460px"
                     />
                   );

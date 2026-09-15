@@ -869,7 +869,7 @@ export const TaskDetailPage = () => {
         circle={locCircle}
         district={locDistrict}
         block={locBlock}
-        gpCount={childRoutes.length || routeNodes.length || 31}
+        gpCount={childRoutes.length || routeNodes.length || 2}
         routeNodes={routeNodes}
         currentNode={currentNode}
         nextNode={nextNode}
@@ -878,6 +878,9 @@ export const TaskDetailPage = () => {
         selectedRouteIndex={selectedRouteIndex}
         pits={activePits.length > 0 ? activePits : (trenching?.pitDetails || [])}
         depthCaptures={activeDepthPoints.length > 0 ? activeDepthPoints : (trenching?.hddShot?.[0]?.depthCapture || [])}
+        coveredKm={coveredKm}
+        plannedScopeKm={plannedScopeKm}
+        progressPct={pct}
         height="680px"
         title="Route map"
         onOpenPhotos={openLightbox}

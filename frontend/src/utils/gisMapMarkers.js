@@ -66,7 +66,6 @@ export function bindGisZoomLabels(map) {
 
 const START_PIN = `
   <div style="position:relative;display:inline-flex;align-items:center;justify-content:center;">
-    <div class="gis-pulse-ring"></div>
     <svg class="gis-pin-svg" width="28" height="36" viewBox="0 0 24 32" fill="none" aria-hidden="true">
       <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="#10b981" stroke="#ffffff" stroke-width="2.2"/>
       <circle cx="12" cy="11" r="5.2" fill="none" stroke="#ffffff" stroke-width="2"/>
@@ -112,7 +111,6 @@ const PURPLE_DEPTH_PIN = `
 
 const GREEN_LIVE_PIN = `
   <div style="position:relative;display:inline-flex;align-items:center;justify-content:center;">
-    <div class="gis-pulse-ring"></div>
     <svg class="gis-pin-svg" width="26" height="34" viewBox="0 0 24 32" fill="none">
       <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="#10b981" stroke="#ffffff" stroke-width="2"/>
       <circle cx="12" cy="11" r="5" fill="none" stroke="#ffffff" stroke-width="2"/>

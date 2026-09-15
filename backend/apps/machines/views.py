@@ -155,23 +155,45 @@ class MachineViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='assigned')
     def assigned_machines(self, request):
         user = request.user
+        should_resync = request.query_params.get('resync', '').lower() in ['true', '1']
+        
+        # Auto-resync from external APIs (FiberForce & Ilync) if DB is empty or explicitly requested
+        if should_resync or not Machine.objects.exists():
+            try:
+                from .services import sync_fiberforce_machines
+                sync_fiberforce_machines()
+            except Exception as e:
+                pass
+
         allowed_vendor_ids = get_user_vendor_ids(user)
         if allowed_vendor_ids is None:
-            machines = Machine.objects.all()[:50]
+            machines = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
         elif not allowed_vendor_ids:
             machines = Machine.objects.none()
         else:
-            machines = Machine.objects.filter(vendor_id__in=allowed_vendor_ids)
+            machines = Machine.objects.filter(vendor_id__in=allowed_vendor_ids).order_by('id')
 
         results = []
         for m in machines:
+            vendor_name = m.vendor.name if m.vendor else "Unassigned Vendor"
             results.append({
                 "id": m.id,
-                "machine_chassis_no": getattr(m, 'chassis_number', getattr(m, 'serial_number', getattr(m, 'machine_chassis_no', f"CH-{m.id}"))),
-                "model_code": getattr(m, 'model', getattr(m, 'model_code', getattr(m, 'name', 'JCB-3DX'))),
-                "model_name": getattr(m, 'model_name', getattr(m, 'name', 'JCB 3DX EcoXcellence')),
-                "site_name": getattr(m, 'site_name', getattr(m, 'location', 'Main Project Site')),
-                "status": getattr(m, 'status', 'Online')
+                "machine_chassis_no": m.machine_chassis_no or getattr(m, 'chassis_number', getattr(m, 'serial_number', f"CH-{m.id}")),
+                "model_code": m.model_code or getattr(m, 'model', 'A600'),
+                "model_name": m.model_name or getattr(m, 'name', 'APOLLO A600 V2'),
+                "site_name": m.site_name or getattr(m, 'location', 'Sujangarh-SITE'),
+                "site_id": m.site_id,
+                "status": m.status or 'Online',
+                "is_commissioned": m.is_commissioned,
+                "is_online": m.is_online,
+                "vendor_id": m.vendor_id,
+                "vendor_name": vendor_name,
+                "engine_no": m.engine_no or '',
+                "vehicle_no": m.vehicle_no,
+                "fuel_card": m.fuel_card,
+                "current_fuel_level": float(m.current_fuel_level or 0.0),
+                "fuel_percentage": m.fuel_percentage or 0,
+                "engine_hours": float(m.engine_hours or 0.0)
             })
-        return Response({"results": results}, status=status.HTTP_200_OK)
+        return Response({"success": True, "results": results, "count": len(results)}, status=status.HTTP_200_OK)
 
