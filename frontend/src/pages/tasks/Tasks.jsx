@@ -342,8 +342,26 @@ export const Tasks = () => {
     return tasks;
   }, [tasks, isAdmin, activeVendorFilter, availableVendorOptions]);
 
-  const statusCounts = useMemo(() => {
+  // Deduplicate 3-level Block -> Ring -> Segment hierarchy tasks to count as 1 task per work unit
+  const primaryTasks = useMemo(() => {
     const list = Array.isArray(vendorScopedTasks) ? vendorScopedTasks : [];
+    const hasSegments = list.some(t => {
+      const level = String(t.routeSnapshot?.level || '').toUpperCase();
+      return level === 'SEGMENT' || t.depth === 2;
+    });
+
+    if (!hasSegments) return list;
+
+    return list.filter(t => {
+      const level = String(t.routeSnapshot?.level || '').toUpperCase();
+      if (level === 'SEGMENT' || t.depth === 2) return true;
+      if (!t.routeSnapshot?.level && t.depth === undefined && !t.isSynthetic) return true;
+      return false;
+    });
+  }, [vendorScopedTasks]);
+
+  const statusCounts = useMemo(() => {
+    const list = Array.isArray(primaryTasks) ? primaryTasks : [];
     let completed = 0;
     let inProgress = 0;
     let created = 0;
@@ -374,7 +392,7 @@ export const Tasks = () => {
       inProgress,
       created
     };
-  }, [vendorScopedTasks]);
+  }, [primaryTasks]);
 
   const filteredTasks = useMemo(() => {
     if (!Array.isArray(vendorScopedTasks)) return [];
@@ -651,19 +669,19 @@ export const Tasks = () => {
     ));
   }, [tasks]);
 
-  // Compute dynamic task counts per type strictly from vendorScopedTasks
+  // Compute dynamic task counts per type strictly from primaryTasks
   const dynamicCounts = useMemo(() => {
     const counts = {};
-    (vendorScopedTasks || []).forEach(t => {
+    (primaryTasks || []).forEach(t => {
       const type = t.taskType || t.type || 'OTHER';
       counts[type] = (counts[type] || 0) + 1;
     });
     return counts;
-  }, [vendorScopedTasks]);
+  }, [primaryTasks]);
 
   const totalTaskCount = (isAdmin && activeVendorFilter === 'ALL' && typeCounts)
     ? Object.values(typeCounts).reduce((a, b) => a + Number(b || 0), 0)
-    : vendorScopedTasks.length;
+    : primaryTasks.length;
 
   const getCardCount = (key) => {
     if (isAdmin && activeVendorFilter === 'ALL' && typeCounts && typeCounts[key] !== undefined) {
