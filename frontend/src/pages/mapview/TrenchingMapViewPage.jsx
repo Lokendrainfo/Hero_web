@@ -110,33 +110,11 @@ export const TrenchingMapViewPage = () => {
       const resData = res?.data || res;
       const rawTasks = resData?.results || resData?.content || (Array.isArray(resData) ? resData : []);
 
-      // Step 2: Instantly process and display root tasks (Instant UI Render!)
+      // Step 2: Instantly process and display root tasks without firing hundreds of automatic background calls
+      setRawTasksList(rawTasks);
       processAndSetExecutions(rawTasks);
-      setLoading(false); // Screen is rendered immediately!
-
-      // Step 3: Fetch child tasks progressively in background
-      setIsBackgroundLoading(true);
-      const accumulatedTasks = [...rawTasks];
-
-      const fetchChildrenInBackground = async () => {
-        for (const rootTask of rawTasks) {
-          if (!rootTask.id) continue;
-          try {
-            const childRes = await taskService.getTaskChildren(rootTask.id);
-            const childData = childRes?.data || childRes;
-            const children = Array.isArray(childData) ? childData : (childData?.results || childData?.content || []);
-            if (children.length > 0) {
-              accumulatedTasks.push(...children);
-              processAndSetExecutions(accumulatedTasks); // Update UI progressively as data arrives
-            }
-          } catch (e) {
-            // Ignore individual child fetch errors
-          }
-        }
-        setIsBackgroundLoading(false);
-      };
-
-      fetchChildrenInBackground();
+      setLoading(false);
+      setIsBackgroundLoading(false);
 
     } catch (err) {
       console.error('[TrenchingMapViewPage] Error fetching HDD execution data:', err);
@@ -236,12 +214,70 @@ export const TrenchingMapViewPage = () => {
     };
   }, [filteredExecutions]);
 
-  const toggleDistrict = (dName) => {
-    setExpandedDistricts(prev => ({ ...prev, [dName]: !prev[dName] }));
+  // Raw Tasks & On-Demand Children Fetching State
+  const [rawTasksList, setRawTasksList] = useState([]);
+  const [fetchedChildrenTaskIds, setFetchedChildrenTaskIds] = useState(new Set());
+
+  const fetchChildrenForTasks = async (targetTasks) => {
+    if (!targetTasks || targetTasks.length === 0) return;
+    const tasksToFetch = targetTasks.filter(t => t && t.id && !fetchedChildrenTaskIds.has(t.id));
+    if (tasksToFetch.length === 0) return;
+
+    setIsBackgroundLoading(true);
+    const newChildTasks = [];
+    const nextFetchedIds = new Set(fetchedChildrenTaskIds);
+
+    for (const rootTask of tasksToFetch) {
+      nextFetchedIds.add(rootTask.id);
+      try {
+        const childRes = await taskService.getTaskChildren(rootTask.id);
+        const childData = childRes?.data || childRes;
+        const children = Array.isArray(childData) ? childData : (childData?.results || childData?.content || []);
+        if (children.length > 0) {
+          newChildTasks.push(...children);
+        }
+      } catch (e) {
+        // Ignore individual errors
+      }
+    }
+
+    setFetchedChildrenTaskIds(nextFetchedIds);
+    if (newChildTasks.length > 0) {
+      setRawTasksList(prev => {
+        const updated = [...prev, ...newChildTasks];
+        processAndSetExecutions(updated);
+        return updated;
+      });
+    }
+    setIsBackgroundLoading(false);
   };
 
-  const toggleBlock = (bKey) => {
+  const toggleDistrict = async (dName) => {
+    const isOpening = !expandedDistricts[dName];
+    setExpandedDistricts(prev => ({ ...prev, [dName]: !prev[dName] }));
+
+    if (isOpening) {
+      const districtTasks = rawTasksList.filter(t => {
+        const dist = (t.district || t.circle || t.address?.district || '').toUpperCase();
+        return dist === dName.toUpperCase() || dName === 'OTHER';
+      });
+      await fetchChildrenForTasks(districtTasks);
+    }
+  };
+
+  const toggleBlock = async (bKey) => {
+    const isOpening = !expandedBlocks[bKey];
     setExpandedBlocks(prev => ({ ...prev, [bKey]: !prev[bKey] }));
+
+    if (isOpening) {
+      const [dName, bName] = bKey.split('_');
+      const blockTasks = rawTasksList.filter(t => {
+        const dist = (t.district || t.circle || '').toUpperCase();
+        const blk = (t.block || '').toUpperCase();
+        return (dist === (dName || '').toUpperCase() || dName === 'OTHER') && (blk === (bName || '').toUpperCase() || bName === 'OTHER');
+      });
+      await fetchChildrenForTasks(blockTasks);
+    }
   };
 
 

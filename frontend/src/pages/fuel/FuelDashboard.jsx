@@ -53,7 +53,7 @@ export const FuelDashboard = () => {
     fetchLogs();
     const interval = setInterval(() => {
       fetchLogs();
-    }, 3000);
+    }, 10000);
     return () => clearInterval(interval);
   }, [selectedVendorId, selectedMachineId]);
 

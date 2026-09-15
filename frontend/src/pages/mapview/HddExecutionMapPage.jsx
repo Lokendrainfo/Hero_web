@@ -149,7 +149,7 @@ export const HddExecutionMapPage = () => {
     return normalized;
   };
 
-  const resolveExecutionData = async (targetId, maxDepth = 3) => {
+  const resolveExecutionData = async (targetId, maxDepth = 1) => {
     if (!targetId || maxDepth <= 0) return null;
 
     try {

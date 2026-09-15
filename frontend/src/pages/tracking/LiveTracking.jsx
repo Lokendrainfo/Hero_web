@@ -37,7 +37,7 @@ export const LiveTracking = () => {
     // Continuous 3-second live telemetry polling for real-time fleet movement
     const pollInterval = setInterval(() => {
       fetchTrackingData(false);
-    }, 3000);
+    }, 10000);
 
     // WebSocket real-time telemetry socket
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

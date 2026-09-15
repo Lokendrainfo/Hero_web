@@ -96,7 +96,7 @@ export const Refuel = () => {
     fetchRefuels();
     const interval = setInterval(() => {
       fetchRefuels();
-    }, 3000);
+    }, 10000);
     return () => clearInterval(interval);
   }, [fetchRefuels]);
 
