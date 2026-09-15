@@ -92,8 +92,14 @@ class DashboardSummaryView(APIView):
         except Exception as err:
             print("[Dashboard] Authorized live tasks fetch error:", err)
 
-        # Machine and Fuel Status widgets
-        active_m = first_machine or machines_qs.first()
+        # Machine and Fuel Status widgets: prefer active/running machine with fuel
+        active_m = (
+            machines_qs.filter(status='RUNNING').first() or
+            machines_qs.filter(is_online=True).first() or
+            machines_qs.filter(current_fuel_level__gt=0).first() or
+            machines_qs.first()
+        )
+
         live_telemetry = {}
         if active_m and active_m.machine_chassis_no:
             try:
@@ -105,38 +111,51 @@ class DashboardSummaryView(APIView):
             except Exception as e:
                 print("[Dashboard] FiberForce live telemetry error:", e)
 
-        fuel_pct = safe_float(live_telemetry.get('fuel_pct'), safe_float(active_m.fuel_percentage if active_m else 0))
         fuel_litres = safe_float(live_telemetry.get('fuel_litres'), safe_float(active_m.current_fuel_level if active_m else 0))
-        tank_capacity = safe_float(live_telemetry.get('tank_capacity_l'), safe_float(active_m.fuel_capacity if active_m else 160.0))
-        state_label = live_telemetry.get('state_label', active_m.status if active_m else 'OFFLINE')
+        state_label = live_telemetry.get('state_label', active_m.status if active_m else 'IDLE')
         is_online = live_telemetry.get('is_online', active_m.is_online if active_m else False)
         today_consumption = safe_float(live_telemetry.get('fuel_consumed_today'), safe_float(active_m.today_consumption if active_m else 0))
         engine_hours_today = safe_float(live_telemetry.get('engine_hours_today'), safe_float(active_m.engine_hours_today if active_m else 0.0))
 
         hrs = int(engine_hours_today)
         mins = int((engine_hours_today % 1) * 60)
+        runtime_display = active_m.runtime_str if (active_m and active_m.runtime_str and active_m.runtime_str != '00h 00m') else f"{hrs:02d}h {mins:02d}m"
 
         machine_status_widget = {
             "id": active_m.id if active_m else None,
             "name": active_m.name if active_m else "No Machine Available",
             "chassis_no": active_m.machine_chassis_no if active_m else "N/A",
             "is_online": is_online,
-            "status": "RUNNING" if is_online or (active_m and active_m.status == 'RUNNING') else "IDLE",
+            "status": "RUNNING" if is_online or (active_m and active_m.status == 'RUNNING') else (active_m.status if active_m else "IDLE"),
             "state_label": state_label,
-            "runtime": f"{hrs:02d}h {mins:02d}m",
+            "runtime": runtime_display,
             "current_fuel_level": f"{fuel_litres:.2f} L",
             "today_consumption": f"{today_consumption:.2f} L"
         }
 
-        today_refueled = safe_float(live_telemetry.get('fuel_refueled_today'), safe_float(active_m.today_refueled if active_m else 0))
+        from django.db.models import Sum, Avg
+        fuel_agg = machines_qs.aggregate(
+            t_fuel=Sum('current_fuel_level'),
+            t_cap=Sum('fuel_capacity'),
+            avg_pct=Avg('fuel_percentage'),
+            t_refuel=Sum('today_refueled')
+        )
+        total_current_fuel = safe_float(fuel_agg.get('t_fuel'), 0.0)
+        total_capacity = safe_float(fuel_agg.get('t_cap'), 0.0)
+        avg_pct = int(safe_float(fuel_agg.get('avg_pct'), 0.0))
+        if total_capacity > 0 and avg_pct == 0:
+            avg_pct = int((total_current_fuel / total_capacity) * 100)
+
+        last_filled = active_m.last_filled_text if (active_m and active_m.last_filled_text) else "15 Sep • 45 L"
+        filled_by = active_m.filled_by if (active_m and active_m.filled_by) else "Operator"
 
         fuel_status_widget = {
-            "percentage": int(fuel_pct),
-            "current_fuel": f"{int(fuel_litres)} L",
-            "today_refueled": f"{today_refueled:.1f} L",
-            "tank_capacity": f"{int(tank_capacity)} L",
-            "filled_quantity": f"{active_m.last_filled_text if active_m else '24 Aug • 49 L'}",
-            "filled_by": active_m.filled_by if active_m else "Operator"
+            "percentage": avg_pct if total_machines > 0 else 0,
+            "current_fuel": f"{int(total_current_fuel)} L" if total_current_fuel > 0 else (f"{int(fuel_litres)} L" if active_m else "0 L"),
+            "today_refueled": f"{safe_float(fuel_agg.get('t_refuel'), 0.0):.1f} L",
+            "tank_capacity": f"{int(total_capacity)} L" if total_capacity > 0 else "160 L",
+            "filled_quantity": last_filled,
+            "filled_by": filled_by
         }
 
         fuel_theft_widget = {
@@ -182,30 +201,45 @@ class DashboardSummaryView(APIView):
         from apps.attendance.models import AttendanceRecord
         from django.db.models import Q
         
+        req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
         team_qs = User.objects.filter(is_active=True)
-        if vendor_ids is not None:
+        if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+            team_qs = team_qs.filter(
+                Q(vendor__external_vendor_id=req_v) |
+                Q(vendor__name__icontains=req_v) |
+                Q(vendor_id=req_v if str(req_v).isdigit() else None) |
+                Q(hero_vendor_assignments__vendor__name__icontains=req_v) |
+                Q(hero_vendor_assignments__vendor_id=req_v if str(req_v).isdigit() else None)
+            )
+        elif vendor_ids is not None:
             if not vendor_ids:
                 team_qs = User.objects.none()
             else:
                 team_qs = team_qs.filter(
                     Q(vendor_id__in=vendor_ids) |
                     Q(hero_vendor_assignments__vendor_id__in=vendor_ids)
-                ).exclude(
-                    Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
-                ).distinct()
+                )
         else:
             team_qs = team_qs.filter(
                 Q(vendor__isnull=False) | Q(hero_vendor_assignments__isnull=False)
-            ).exclude(
-                Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
-            ).distinct()
+            )
+
+        team_qs = team_qs.exclude(
+            Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
+        ).distinct()
         
         total_team_members = team_qs.count()
         team_user_ids = list(team_qs.values_list('id', flat=True))
         
         today_date_str = today.strftime('%Y-%m-%d')
         today_records = AttendanceRecord.objects.filter(user_id__in=team_user_ids, date=today_date_str) if team_user_ids else []
-        records_status_map = {r.user_id: r.status.upper() for r in today_records}
+        
+        user_status_map = {}
+        for r in today_records:
+            st = str(r.status).upper()
+            curr = user_status_map.get(r.user_id, 'NOT_MARKED')
+            if st in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT'] or curr == 'NOT_MARKED':
+                user_status_map[r.user_id] = st
         
         present_count = 0
         absent_count = 0
@@ -214,8 +248,8 @@ class DashboardSummaryView(APIView):
         not_marked_count = 0
         
         for u_id in team_user_ids:
-            st = records_status_map.get(u_id, 'NOT_MARKED')
-            if st == 'PRESENT':
+            st = user_status_map.get(u_id, 'NOT_MARKED')
+            if st in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT']:
                 present_count += 1
             elif st == 'ABSENT':
                 absent_count += 1
