@@ -20,8 +20,32 @@ class RefuelEntry(models.Model):
         return f"{self.machine.name} - {self.quantity_liters}L on {self.refuel_date}"
 
     def save(self, *args, **kwargs):
-        if not self.total_cost or self.total_cost == 0:
+        if not self.total_cost or float(self.total_cost) == 0:
             qty = float(self.quantity_liters or 0)
             price = float(self.price_per_liter or 95.0)
             self.total_cost = round(qty * price, 2)
         super().save(*args, **kwargs)
+
+        # Auto-sync with FuelLog
+        try:
+            from apps.fuel.models import FuelLog
+            fuel_dt = self.refuel_date.date() if hasattr(self.refuel_date, 'date') else self.refuel_date
+            perf_name = self.performed_by.get_full_name() if (self.performed_by and hasattr(self.performed_by, 'get_full_name')) else 'Operator'
+            site_info = getattr(self.machine, 'location', 'Site')
+            rem = self.notes or f"Field refueling at {site_info} by {perf_name}"
+
+            log = FuelLog.objects.filter(machine=self.machine, fuel_date=fuel_dt, liters=self.quantity_liters).first()
+            if not log:
+                FuelLog.objects.create(
+                    machine=self.machine,
+                    liters=self.quantity_liters,
+                    cost=self.total_cost,
+                    fuel_date=fuel_dt,
+                    remarks=rem
+                )
+            else:
+                log.cost = self.total_cost
+                log.remarks = rem
+                log.save()
+        except Exception as e:
+            print(f"[RefuelEntry] Auto-sync to FuelLog exception: {e}")

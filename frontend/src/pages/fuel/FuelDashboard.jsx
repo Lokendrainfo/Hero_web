@@ -51,6 +51,10 @@ export const FuelDashboard = () => {
 
   useEffect(() => {
     fetchLogs();
+    const interval = setInterval(() => {
+      fetchLogs();
+    }, 3000);
+    return () => clearInterval(interval);
   }, [selectedVendorId, selectedMachineId]);
 
   const totalLiters = logs.reduce((acc, l) => acc + (parseFloat(l.liters) || 0), 0);

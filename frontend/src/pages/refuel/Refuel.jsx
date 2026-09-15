@@ -94,6 +94,10 @@ export const Refuel = () => {
 
   useEffect(() => {
     fetchRefuels();
+    const interval = setInterval(() => {
+      fetchRefuels();
+    }, 3000);
+    return () => clearInterval(interval);
   }, [fetchRefuels]);
 
   const handleCreateRefuel = async (e) => {
