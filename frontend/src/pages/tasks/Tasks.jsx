@@ -4,6 +4,7 @@ import { taskService } from '../../services/taskService';
 import { vendorService } from '../../services/vendorService';
 import { useToast } from '../../context/ToastContext';
 import { LeafletMap } from '../../components/common/LeafletMap';
+import { TaskRouteMap } from '../../components/tasks/TaskRouteMap';
 import {
   LucideCheckSquare, LucidePlus, LucideRefreshCw, LucideMapPin,
   LucideUser, LucideLayers, LucideAlertCircle, LucideSearch,
@@ -819,37 +820,28 @@ export const Tasks = () => {
                 </div>
               )}
 
-              {/* 2. Embedded Leaflet Map Widget for Real Task Coordinates */}
+              {/* 2. Embedded GIS Workbench Map for Task Route & Plan Coordinates */}
               <div style={{ width: '100%' }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#1e293b', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <LucideNavigation size={15} color="#0284c7" />
-                  <span>Task Location Map & Ring Coordinates</span>
+                  <span>Task GIS Plan & Route Workbench Map</span>
                 </div>
                 {(() => {
                   const nodes = activeModalTask.routeSnapshot?.nodes || activeModalTask.nodes || [];
-                  const routePts = nodes.filter(n => n.lat && n.lng).map(n => [Number(n.lat), Number(n.lng)]);
-                  if (routePts.length === 0 && activeModalTask.routeSnapshot?.currentNode?.lat && activeModalTask.routeSnapshot?.nextNode?.lat) {
-                    routePts.push([Number(activeModalTask.routeSnapshot.currentNode.lat), Number(activeModalTask.routeSnapshot.currentNode.lng)]);
-                    routePts.push([Number(activeModalTask.routeSnapshot.nextNode.lat), Number(activeModalTask.routeSnapshot.nextNode.lng)]);
-                  }
-                  const startLat = routePts.length > 0 ? routePts[0][0] : (activeModalTask.routeSnapshot?.currentNode?.lat || Number(activeModalTask.location?.latitude) || 29.841128);
-                  const startLng = routePts.length > 0 ? routePts[0][1] : (activeModalTask.routeSnapshot?.currentNode?.lng || Number(activeModalTask.location?.longitude) || 73.536244);
-
+                  const loc = activeModalTask.locationSnapshot || activeModalTask.location || {};
+                  const childRoutes = Array.isArray(activeModalTask.routeSnapshot?.routes) ? activeModalTask.routeSnapshot.routes : [];
                   return (
-                    <LeafletMap
-                      singleMachine={{
-                        id: activeModalTask.id,
-                        name: activeModalTask.displayName || activeModalTask.taskCode,
-                        latitude: startLat,
-                        longitude: startLng,
-                        site_name: activeModalTask.location?.blockName || 'KARANPUR',
-                        operator_name: activeModalTask.assigneeName || 'Gurbachan singh',
-                        status: activeModalTask.status || 'CREATED'
-                      }}
-                      showRoute={routePts.length > 0}
-                      routePoints={routePts}
-                      height="240px"
-                      zoom={12}
+                    <TaskRouteMap
+                      planName={activeModalTask.routeSnapshot?.routeName || activeModalTask.displayName || `${loc.blockName || 'ANUPGARH'} - ${loc.district || 'GANGANAGAR'} - ${loc.circle || 'RAJASTHAN'}`}
+                      circle={loc.circle || 'RAJASTHAN'}
+                      district={loc.district || 'GANGANAGAR'}
+                      block={loc.blockName || loc.block || 'ANUPGARH'}
+                      gpCount={nodes.length || childRoutes.length || 31}
+                      routeNodes={nodes}
+                      currentNode={activeModalTask.routeSnapshot?.currentNode}
+                      nextNode={activeModalTask.routeSnapshot?.nextNode}
+                      childRoutes={childRoutes}
+                      height="460px"
                     />
                   );
                 })()}

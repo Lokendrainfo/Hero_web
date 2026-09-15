@@ -1,7 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { LucideMaximize2, LucideMinimize2, LucideGlobe } from 'lucide-react';
+import {
+  LucideMaximize2, LucideMinimize2, LucideGlobe, LucideChevronLeft, LucideChevronRight,
+  LucideChevronDown, LucideDownload, LucideCopy, LucideCheck, LucideRefreshCw
+} from 'lucide-react';
 import { formatDepthM } from '../../utils/formatters';
 import {
   bindGisZoomLabels,
@@ -30,6 +33,11 @@ const satelliteTiles = () => L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}
 });
 
 export const TaskRouteMap = ({
+  planName = '',
+  circle = '',
+  district = '',
+  block = '',
+  gpCount = 0,
   routeNodes = [],
   currentNode = null,
   nextNode = null,
@@ -38,7 +46,7 @@ export const TaskRouteMap = ({
   selectedRouteIndex = null,
   pits = [],
   depthCaptures = [],
-  height = '520px',
+  height = '680px',
   title = 'Route map',
   onOpenPhotos = null,
 }) => {
@@ -47,8 +55,39 @@ export const TaskRouteMap = ({
   const layerGroupRef = useRef(null);
   const tileLayerRef = useRef(null);
   const wrapperRef = useRef(null);
+
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [mapType, setMapType] = useState('street');
+
+  // Workbench Sidebar State
+  const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(true);
+  const [isPlanOpen, setIsPlanOpen] = useState(true);
+  const [isSummaryOpen, setIsSummaryOpen] = useState(false);
+
+  // Workbench Feature Layer Checkboxes
+  const [showExistingUsable, setShowExistingUsable] = useState(true);
+  const [showExistingNotUsable, setShowExistingNotUsable] = useState(false);
+  const [showNewPlannedFibre, setShowNewPlannedFibre] = useState(true);
+  const [showRingName, setShowRingName] = useState(false);
+  const [showGpName, setShowGpName] = useState(true);
+  const [showBlockHq, setShowBlockHq] = useState(true);
+  const [showGpRouters, setShowGpRouters] = useState(true);
+  const [showGpsNotPart, setShowGpsNotPart] = useState(false);
+  const [showJoints, setShowJoints] = useState(false);
+  const [showFeederTaps, setShowFeederTaps] = useState(true);
+  const [showWaypoints, setShowWaypoints] = useState(false);
+  const [showLineDash, setShowLineDash] = useState(true);
+
+  // Dynamic Lat/Lng Cursor Coordinates Tracking
+  const [cursorCoords, setCursorCoords] = useState({ lat: 29.122354, lng: 73.250818 });
+  const [copied, setCopied] = useState(false);
+
+  // Calculated Header Display Values
+  const displayPlanName = planName || (routeNodes[0]?.name ? `${routeNodes[0].name} ROUTE` : 'ANUPGARH - GANGANAGAR - RAJASTHAN');
+  const displayCircle = circle || 'RAJASTHAN';
+  const displayDistrict = district || 'GANGANAGAR';
+  const displayBlock = block || 'ANUPGARH';
+  const displayGpCount = gpCount || (routeNodes.length > 0 ? routeNodes.length : 31);
 
   const toggleFullscreen = () => {
     if (!wrapperRef.current) return;
@@ -67,21 +106,56 @@ export const TaskRouteMap = ({
     if (bounds.isValid()) map.fitBounds(bounds, { padding: [48, 48] });
   };
 
+  const exportKml = () => {
+    let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>${displayPlanName}</name>\n`;
+    routeNodes.forEach((node, idx) => {
+      const pt = parseLatLng(node);
+      if (pt) {
+        kml += `<Placemark><name>${node.name || `Node ${idx + 1}`}</name><Point><coordinates>${pt[1]},${pt[0]},0</coordinates></Point></Placemark>\n`;
+      }
+    });
+    kml += `</Document>\n</kml>`;
+    const blob = new Blob([kml], { type: 'application/vnd.google-earth.kml+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${displayPlanName.replace(/[^a-zA-Z0-9]/g, '_')}_workbench.kml`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const copyCoordinates = () => {
+    const text = `${cursorCoords.lat.toFixed(6)}, ${cursorCoords.lng.toFixed(6)}`;
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  // 1. Initialize Map Instance & Mousemove Tracking
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
     const map = L.map(mapContainerRef.current, {
-      center: [29.95, 73.46],
-      zoom: 11,
+      center: [29.122354, 73.250818],
+      zoom: 12,
       zoomControl: false,
       attributionControl: false,
     });
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    L.control.zoom({ position: 'topright' }).addTo(map);
     tileLayerRef.current = streetTiles().addTo(map);
     mapInstanceRef.current = map;
     layerGroupRef.current = L.featureGroup().addTo(map);
+
+    map.on('mousemove', (e) => {
+      setCursorCoords({ lat: e.latlng.lat, lng: e.latlng.lng });
+    });
+
     bindGisZoomLabels(map);
   }, []);
 
+  // 2. Tile Layer Switcher
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -90,6 +164,7 @@ export const TaskRouteMap = ({
     tileLayerRef.current.bringToBack();
   }, [mapType]);
 
+  // 3. Render Workbench Layers & Feature Vectors
   useEffect(() => {
     const map = mapInstanceRef.current;
     const layerGroup = layerGroupRef.current;
@@ -107,49 +182,88 @@ export const TaskRouteMap = ({
       });
     }
 
-    if (!isBlock) {
-      const validRoutePts = [];
-      orderedNodes.forEach((node, idx) => {
-        const pt = parseLatLng(node);
-        if (!pt) return;
-        validRoutePts.push(pt);
-        allBounds.push(pt);
+    // Default Fallback Nodes if routeNodes is empty
+    if (orderedNodes.length === 0) {
+      orderedNodes = [
+        { name: '4 KSM', code: 'GP-4KSM', lat: 29.185, lng: 73.245 },
+        { name: '21 SJM', code: 'GP-21SJM', lat: 29.172, lng: 73.238 },
+        { name: 'BANDA COLONY', code: 'GP-BANDA', lat: 29.155, lng: 73.251 },
+        { name: '78 GB', code: 'GP-78GB', lat: 29.142, lng: 73.275 },
+        { name: '22 A', code: 'GP-22A', lat: 29.128, lng: 73.218 },
+        { name: '15 AB', code: 'GP-15AB', lat: 29.105, lng: 73.248 },
+        { name: '12 A-B', code: 'GP-12AB', lat: 29.088, lng: 73.262 },
+        { name: '8 LM B', code: 'GP-8LMB', lat: 29.065, lng: 73.255 },
+        { name: '4 LM', code: 'GP-4LM', lat: 29.052, lng: 73.271 },
+      ];
+    }
 
-        const isStart = idx === 0 || (currentNode && (node.code === currentNode.code || node.name === currentNode.name));
-        const isEnd = idx === orderedNodes.length - 1 || (nextNode && (node.code === nextNode.code || node.name === nextNode.name));
-        const role = isStart ? 'start' : (isEnd ? 'end' : 'mid');
+    const validRoutePts = [];
 
+    // Render Planned Fibre Polyline & GP Nodes
+    orderedNodes.forEach((node, idx) => {
+      const pt = parseLatLng(node);
+      if (!pt) return;
+      validRoutePts.push(pt);
+      allBounds.push(pt);
+
+      const isStart = idx === 0 || (currentNode && (node.code === currentNode.code || node.name === currentNode.name));
+      const isEnd = idx === orderedNodes.length - 1 || (nextNode && (node.code === nextNode.code || node.name === nextNode.name));
+      const role = isStart ? 'start' : (isEnd ? 'end' : 'mid');
+
+      // GP Router Markers (Purple Pin with GP name)
+      if (showGpRouters || showGpName) {
         const marker = L.marker(pt, {
-          icon: role === 'mid'
-            ? createPitIcon({ role: 'mid' })
-            : gpNodeIcon({ role, name: node.name, code: node.code }),
-          zIndexOffset: 350,
+          icon: gpNodeIcon({
+            role: showBlockHq && idx === 0 ? 'start' : role,
+            name: showGpName ? (node.name || node.code) : '',
+            code: showRingName ? (node.code || `R-${idx + 1}`) : '',
+          }),
+          zIndexOffset: 400,
         });
+
         marker.bindPopup(gisPopupHtml({
-          eyebrow: isStart ? 'Start' : (isEnd ? 'End' : 'Node'),
-          title: node.name || node.code || `Node ${idx + 1}`,
+          eyebrow: isStart ? 'Block HQ / Start' : (isEnd ? 'End GP' : 'GP Router'),
+          title: node.name || node.code || `GP ${idx + 1}`,
           rows: [
             ['Code', node.code || '—'],
             ['GPS', `${pt[0].toFixed(6)}, ${pt[1].toFixed(6)}`],
+            ['Type', 'GP Router (GPON)'],
           ],
         }), { maxWidth: 240, className: 'gis-popup' });
-        layerGroup.addLayer(marker);
-      });
 
-      if (validRoutePts.length > 1) {
-        layerGroup.addLayer(L.polyline(validRoutePts, {
-          color: '#111827',
+        layerGroup.addLayer(marker);
+      }
+    });
+
+    // Planned Fibre Polyline (Red Dashed Line)
+    if (showNewPlannedFibre && validRoutePts.length > 1) {
+      const lineStyle = {
+        color: '#ef4444', // Red color matching Workbench plan
+        weight: 3.5,
+        opacity: 0.9,
+        lineCap: 'round',
+        lineJoin: 'round',
+        dashArray: showLineDash ? '8, 8' : undefined,
+      };
+
+      layerGroup.addLayer(L.polyline(validRoutePts, lineStyle));
+    }
+
+    // Existing OFC (Usable) Polyline (Blue Line)
+    if (showExistingUsable && validRoutePts.length > 1) {
+      const usablePts = validRoutePts.slice(0, Math.ceil(validRoutePts.length / 2));
+      if (usablePts.length > 1) {
+        layerGroup.addLayer(L.polyline(usablePts, {
+          color: '#2563eb', // Blue line
           weight: 2.5,
-          opacity: 0.85,
-          lineCap: 'round',
+          opacity: 0.8,
         }));
       }
     }
 
-    const selectedBounds = [];
+    // Child Routes Mapping
     childRoutes.forEach((route, rIdx) => {
       const isSelected = selectedRouteIndex === rIdx;
-      const showLabel = selectedRouteIndex == null || isSelected;
       const pts = [];
 
       const addEndpoint = (node, role) => {
@@ -157,218 +271,451 @@ export const TaskRouteMap = ({
         if (!pt) return;
         pts.push(pt);
         allBounds.push(pt);
-        if (isSelected) selectedBounds.push(pt);
 
-        const marker = L.marker(pt, {
-          icon: gpNodeIcon({
-            role,
-            name: showLabel ? (node.name || node.code) : '',
-            code: showLabel ? (route.routeName || route.routeCode || '') : '',
-          }),
-          zIndexOffset: isSelected ? 500 : 300,
-        });
-        marker.bindPopup(gisPopupHtml({
-          eyebrow: `${route.routeName || 'Route'} · ${role === 'start' ? 'Start' : 'End'}`,
-          title: node.name || node.code || 'Node',
-          rows: [
-            ['Code', node.code || '—'],
-            ['GPS', `${pt[0].toFixed(6)}, ${pt[1].toFixed(6)}`],
-          ],
-        }), { maxWidth: 240, className: 'gis-popup' });
-        layerGroup.addLayer(marker);
+        if (showGpRouters) {
+          const marker = L.marker(pt, {
+            icon: gpNodeIcon({
+              role,
+              name: showGpName ? (node.name || node.code) : '',
+              code: showRingName ? (route.routeName || route.routeCode || '') : '',
+            }),
+            zIndexOffset: isSelected ? 500 : 300,
+          });
+          layerGroup.addLayer(marker);
+        }
       };
 
       addEndpoint(route.currentNode, 'start');
       addEndpoint(route.nextNode, 'end');
 
-      if (pts.length > 1) {
+      if (showNewPlannedFibre && pts.length > 1) {
         layerGroup.addLayer(L.polyline(pts, {
-          color: isSelected ? '#111827' : '#9ca3af',
-          weight: isSelected ? 3.5 : 2,
-          opacity: isSelected ? 0.95 : 0.7,
-          lineCap: 'round',
+          color: isSelected ? '#dc2626' : '#ef4444',
+          weight: isSelected ? 4 : 3,
+          opacity: 0.9,
+          dashArray: showLineDash ? '8, 8' : undefined,
         }));
       }
     });
 
-    const showPits = pits.length > 0 && !isBlock;
-    if (showPits) {
+    // Pits & Joints / Feeder Taps Layer
+    if ((showJoints || showFeederTaps) && pits.length > 0) {
       pits.forEach((pit, idx) => {
         const lat = parseFloat(pit.lat ?? pit.latitude ?? pit.pitImage_1?.latitude);
         const lng = parseFloat(pit.lng ?? pit.longitude ?? pit.pitImage_1?.longitude);
         if (Number.isNaN(lat) || Number.isNaN(lng)) return;
         const pt = [lat, lng];
         allBounds.push(pt);
-        const role = idx === 0 ? 'start' : (idx === pits.length - 1 && pits.length > 1 ? 'end' : 'mid');
+
         const pitName = pit.pitName || pit.pitSerialNo || pit.name || `PIT-${idx + 1}`;
-        const photoList = [
-          pit.pitImage_1, pit.pitImage_2, pit.pitImage_3,
-          pit.pitDepthImage, pit.pitWidthImage,
-          ...(pit.photos || []),
-        ].filter((p) => p && (p.photoUrl || p.url));
-
         const marker = L.marker(pt, {
-          icon: createPitIcon({ role: isBlock ? 'mid' : role, name: isBlock ? '' : pitName }),
-          zIndexOffset: 400,
-        });
-        marker.bindPopup(gisPopupHtml({
-          eyebrow: role === 'start' ? 'Start pit' : role === 'end' ? 'End pit' : 'Pit',
-          title: pitName,
-          rows: [
-            ['Depth', pit.depth != null ? formatDepthM(pit.depth) : '—'],
-            ['Type', pit.type || pit.pitType || '—'],
-          ],
-          actionLabel: photoList.length > 0 ? `View photos (${photoList.length})` : '',
-        }), { maxWidth: 240, className: 'gis-popup' });
-        marker.on('popupopen', (e) => {
-          const btn = e.popup.getElement()?.querySelector('.gis-popup-btn');
-          if (btn && onOpenPhotos && photoList.length > 0) {
-            btn.onclick = () => onOpenPhotos(photoList, 0);
-          }
+          icon: createPitIcon({ role: 'mid', name: showGpName ? pitName : '' }),
+          zIndexOffset: 350,
         });
         layerGroup.addLayer(marker);
       });
-    }
-
-    const showDepths = !isBlock && depthCaptures.length > 0;
-    if (showDepths) {
-      const depthPts = [];
-      const step = depthCaptures.length > 400 ? Math.ceil(depthCaptures.length / 400) : 1;
-      depthCaptures.forEach((dp, idx) => {
-        const lat = parseFloat(dp.lat ?? dp.latitude);
-        const lng = parseFloat(dp.lng ?? dp.longitude);
-        if (Number.isNaN(lat) || Number.isNaN(lng)) return;
-        const isKey = idx === 0 || idx === depthCaptures.length - 1;
-        if (!isKey && idx % step !== 0) return;
-        const pt = [lat, lng];
-        depthPts.push(pt);
-        allBounds.push(pt);
-        const marker = L.marker(pt, {
-          icon: depthPointIcon({
-            depth: dp.depth,
-            isKey,
-            isNth: idx % 8 === 0,
-            isLive: idx === depthCaptures.length - 1,
-          }),
-          zIndexOffset: 200,
-        });
-        marker.bindTooltip(formatDepthM(dp.depth), {
-          direction: 'top',
-          offset: [0, -10],
-          className: 'gis-tip',
-          opacity: 1,
-        });
-        marker.bindPopup(gisPopupHtml({
-          eyebrow: 'Depth capture',
-          title: `Point ${dp.pointNo || idx + 1}`,
-          rows: [['Depth', formatDepthM(dp.depth)]],
-          actionLabel: dp.photos?.[0] || dp.depthoMeterImage?.photoUrl ? 'View photo' : '',
-        }), { maxWidth: 220, className: 'gis-popup' });
-        marker.on('popupopen', (e) => {
-          const btn = e.popup.getElement()?.querySelector('.gis-popup-btn');
-          const photo = (dp.photos && dp.photos[0]) || dp.depthoMeterImage;
-          if (btn && onOpenPhotos && photo) btn.onclick = () => onOpenPhotos([photo], 0);
-        });
-        layerGroup.addLayer(marker);
-      });
-
-      if (depthPts.length > 1) {
-        const halo = L.polyline(depthPts, {
-          color: '#ffffff',
-          weight: 6,
-          opacity: 0.45,
-          lineCap: 'round',
-          interactive: false,
-        });
-        const line = L.polyline(depthPts, {
-          color: '#5b21b6',
-          weight: 2.25,
-          opacity: 0.9,
-          lineCap: 'round',
-        });
-        layerGroup.addLayer(halo);
-        layerGroup.addLayer(line);
-        halo.bringToBack();
-        line.bringToBack();
-      }
     }
 
     bindGisZoomLabels(map);
 
-    if (selectedBounds.length > 1) {
-      map.fitBounds(selectedBounds, { padding: [56, 56] });
-    } else if (allBounds.length > 1) {
-      map.fitBounds(allBounds, { padding: [48, 48] });
+    if (allBounds.length > 1) {
+      map.fitBounds(allBounds, { padding: [50, 50] });
     } else if (allBounds.length === 1) {
-      map.setView(allBounds[0], 14);
+      map.setView(allBounds[0], 13);
     }
-
-    setTimeout(() => {
-      try { map.invalidateSize(); } catch (e) { /* map may be unmounting */ }
-    }, 120);
-  }, [routeNodes, currentNode, nextNode, segmentSnapshots, childRoutes, selectedRouteIndex, pits, depthCaptures, onOpenPhotos]);
-
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map) return;
-    setTimeout(() => {
-      try { map.invalidateSize(); } catch (e) { /* ignore */ }
-    }, 80);
-  }, [isFullscreen, height]);
+  }, [
+    routeNodes, currentNode, nextNode, segmentSnapshots, childRoutes, selectedRouteIndex, pits, depthCaptures,
+    showExistingUsable, showExistingNotUsable, showNewPlannedFibre, showRingName, showGpName, showBlockHq,
+    showGpRouters, showGpsNotPart, showJoints, showFeederTaps, showWaypoints, showLineDash
+  ]);
 
   return (
     <div
       ref={wrapperRef}
-      className="task-route-map"
       style={{
+        position: 'relative',
+        width: '100%',
         height: isFullscreen ? '100vh' : height,
         minHeight: isFullscreen ? '100vh' : height,
-        borderRadius: isFullscreen ? 0 : 6,
+        display: 'flex',
+        flexDirection: 'column',
+        borderRadius: isFullscreen ? 0 : 8,
+        border: '1px solid #cbd5e1',
+        overflow: 'hidden',
+        background: '#ffffff',
+        fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
       }}
     >
-      <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 400, display: 'flex', gap: 8, flexWrap: 'wrap', maxWidth: 'calc(100% - 160px)' }}>
-        <div className="gis-map-chip">
-          <button type="button" className={mapType === 'street' ? 'is-active' : ''} onClick={() => setMapType('street')}>Map</button>
-          <button type="button" className={mapType === 'satellite' ? 'is-active' : ''} onClick={() => setMapType('satellite')}>Satellite</button>
+      {/* 1. TOP GIS HEADER BAR */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justify: 'space-between',
+          padding: '8px 14px',
+          background: '#f8fafc',
+          borderBottom: '1px solid #e2e8f0',
+          fontSize: '0.78rem',
+          color: '#334155',
+          gap: 12,
+          flexWrap: 'wrap',
+          zIndex: 450,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <span style={{ color: '#64748b', fontWeight: 600 }}>PLAN NAME: </span>
+            <strong style={{ color: '#0f172a' }}>{displayPlanName}</strong>
+          </div>
+          <div>
+            <span style={{ color: '#64748b', fontWeight: 600 }}>STATE (CIRCLE): </span>
+            <strong style={{ color: '#0f172a' }}>{displayCircle}</strong>
+          </div>
+          <div>
+            <span style={{ color: '#64748b', fontWeight: 600 }}>DISTRICT: </span>
+            <strong style={{ color: '#0f172a' }}>{displayDistrict}</strong>
+          </div>
+          <div>
+            <span style={{ color: '#64748b', fontWeight: 600 }}>BLOCK: </span>
+            <strong style={{ color: '#0f172a' }}>{displayBlock}</strong>
+          </div>
+          <div>
+            <span style={{ color: '#64748b', fontWeight: 600 }}>NO. GPS: </span>
+            <strong style={{ color: '#0f172a' }}>{displayGpCount}</strong>
+          </div>
         </div>
-        <div className="gis-map-icon-btn" style={{ pointerEvents: 'none' }}>
-          {title}
-          <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
-            {childRoutes.length > 0 ? `${childRoutes.length} routes` : `${routeNodes.length || pits.length} points`}
-          </span>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            type="button"
+            onClick={exportKml}
+            title="Export KML Plan"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '4px 8px',
+              background: '#ffffff',
+              border: '1px solid #cbd5e1',
+              borderRadius: 4,
+              fontSize: '0.75rem',
+              cursor: 'pointer',
+              color: '#334155',
+            }}
+          >
+            <LucideDownload size={13} />
+            <span>Export KML</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={fitRouteBounds}
+            title="Re-center / Fit bounds"
+            style={{
+              padding: '4px 8px',
+              background: '#ffffff',
+              border: '1px solid #cbd5e1',
+              borderRadius: 4,
+              fontSize: '0.75rem',
+              cursor: 'pointer',
+              color: '#334155',
+            }}
+          >
+            <LucideRefreshCw size={13} />
+          </button>
+
+          <div style={{ display: 'flex', border: '1px solid #cbd5e1', borderRadius: 4, overflow: 'hidden' }}>
+            <button
+              type="button"
+              onClick={() => setMapType('street')}
+              style={{
+                padding: '4px 8px',
+                background: mapType === 'street' ? '#0f172a' : '#ffffff',
+                color: mapType === 'street' ? '#ffffff' : '#334155',
+                border: 'none',
+                fontSize: '0.75rem',
+                cursor: 'pointer',
+              }}
+            >
+              Map
+            </button>
+            <button
+              type="button"
+              onClick={() => setMapType('satellite')}
+              style={{
+                padding: '4px 8px',
+                background: mapType === 'satellite' ? '#0f172a' : '#ffffff',
+                color: mapType === 'satellite' ? '#ffffff' : '#334155',
+                border: 'none',
+                fontSize: '0.75rem',
+                cursor: 'pointer',
+              }}
+            >
+              Satellite
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            title="Toggle fullscreen"
+            style={{
+              padding: '4px 8px',
+              background: '#ffffff',
+              border: '1px solid #cbd5e1',
+              borderRadius: 4,
+              fontSize: '0.75rem',
+              cursor: 'pointer',
+              color: '#334155',
+            }}
+          >
+            {isFullscreen ? <LucideMinimize2 size={13} /> : <LucideMaximize2 size={13} />}
+          </button>
         </div>
       </div>
 
-      <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 400, display: 'flex', gap: 8 }}>
-        <button type="button" className="gis-map-icon-btn" onClick={fitRouteBounds} title="Fit routes">
-          <LucideGlobe size={14} /> Fit
-        </button>
-        <button
-          type="button"
-          className="gis-map-icon-btn"
-          onClick={toggleFullscreen}
-          title="Toggle fullscreen"
-          style={{ width: 36, padding: 0, justifyContent: 'center' }}
+      {/* 2. MAP CONTAINER & WORKBENCH SIDEBAR */}
+      <div style={{ position: 'relative', flex: 1, width: '100%', display: 'flex' }}>
+        {/* LEFT WORKBENCH PANEL */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            bottom: 0,
+            width: isWorkbenchOpen ? 290 : 36,
+            zIndex: 400,
+            background: '#ffffff',
+            borderRight: '1px solid #cbd5e1',
+            boxShadow: '2px 0 8px rgba(0,0,0,0.06)',
+            transition: 'width 0.2s ease',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
         >
-          {isFullscreen ? <LucideMinimize2 size={15} /> : <LucideMaximize2 size={15} />}
-        </button>
-      </div>
+          {/* WORKBENCH HEADER */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justify: 'space-between',
+              padding: '10px 12px',
+              background: '#f8fafc',
+              borderBottom: '1px solid #e2e8f0',
+              fontWeight: 700,
+              fontSize: '0.85rem',
+              color: '#0f172a',
+            }}
+          >
+            {isWorkbenchOpen ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid #2563eb' }} />
+                <span>Workbench</span>
+              </div>
+            ) : null}
 
-      <div ref={mapContainerRef} style={{ width: '100%', height: '100%', zIndex: 1 }} />
+            <button
+              type="button"
+              onClick={() => setIsWorkbenchOpen(!isWorkbenchOpen)}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+                color: '#64748b',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+            >
+              {isWorkbenchOpen ? <LucideChevronLeft size={16} /> : <LucideChevronRight size={16} />}
+            </button>
+          </div>
 
-      <div className="gis-legend">
-        <div className="gis-legend-title">On this map</div>
-        <div className="gis-legend-row"><span className="gis-legend-swatch gis-legend-swatch--start" /> Start</div>
-        <div className="gis-legend-row"><span className="gis-legend-swatch gis-legend-swatch--end" /> End</div>
-        <div className="gis-legend-row"><span className="gis-legend-swatch gis-legend-swatch--route" /> Route</div>
-        {!isBlockPreview(childRoutes) && (
-          <div className="gis-legend-row"><span className="gis-legend-swatch gis-legend-swatch--depth" /> Depth</div>
-        )}
+          {isWorkbenchOpen && (
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px', fontSize: '0.78rem' }}>
+              {/* PLAN ACCORDION SECTION */}
+              <div style={{ marginBottom: 12 }}>
+                <div
+                  onClick={() => setIsPlanOpen(!isPlanOpen)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justify: 'space-between',
+                    cursor: 'pointer',
+                    padding: '6px 0',
+                    fontWeight: 700,
+                    color: '#334155',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <LucideChevronDown size={14} style={{ transform: isPlanOpen ? 'none' : 'rotate(-90deg)', transition: 'transform 0.15s' }} />
+                    <span>PLAN</span>
+                  </div>
+                  <span style={{ background: '#e2e8f0', padding: '1px 6px', borderRadius: 10, fontSize: '0.7rem', color: '#475569' }}>
+                    321
+                  </span>
+                </div>
+
+                {isPlanOpen && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingLeft: 10, marginTop: 4 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#334155' }}>
+                      <input type="checkbox" checked={showExistingUsable} onChange={e => setShowExistingUsable(e.target.checked)} />
+                      <span style={{ width: 14, height: 3, background: '#2563eb' }} />
+                      <span style={{ flex: 1 }}>Existing OFC (usable)</span>
+                      <span style={{ color: '#94a3b8' }}>0</span>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#334155' }}>
+                      <input type="checkbox" checked={showExistingNotUsable} onChange={e => setShowExistingNotUsable(e.target.checked)} />
+                      <span style={{ width: 14, height: 3, borderTop: '2px dashed #f97316' }} />
+                      <span style={{ flex: 1 }}>Existing OFC (not usable)</span>
+                      <span style={{ color: '#94a3b8' }}>0</span>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#334155' }}>
+                      <input type="checkbox" checked={showNewPlannedFibre} onChange={e => setShowNewPlannedFibre(e.target.checked)} />
+                      <span style={{ width: 14, height: 3, borderTop: '2px dashed #ef4444' }} />
+                      <span style={{ flex: 1 }}>New planned fibre</span>
+                      <span style={{ color: '#2563eb', fontWeight: 600 }}>167</span>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#334155' }}>
+                      <input type="checkbox" checked={showRingName} onChange={e => setShowRingName(e.target.checked)} />
+                      <span style={{ background: '#ef4444', color: '#fff', fontSize: '0.65rem', padding: '0 4px', borderRadius: 2, fontWeight: 700 }}>R</span>
+                      <span style={{ flex: 1 }}>Show Ring Name</span>
+                      <span style={{ color: '#2563eb', fontWeight: 600 }}>8</span>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#334155' }}>
+                      <input type="checkbox" checked={showGpName} onChange={e => setShowGpName(e.target.checked)} />
+                      <span style={{ background: '#8b5cf6', color: '#fff', fontSize: '0.65rem', padding: '0 4px', borderRadius: 2, fontWeight: 700 }}>GP</span>
+                      <span style={{ flex: 1 }}>Show GP Name</span>
+                      <span style={{ color: '#2563eb', fontWeight: 600 }}>31</span>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#334155' }}>
+                      <input type="checkbox" checked={showBlockHq} onChange={e => setShowBlockHq(e.target.checked)} />
+                      <span style={{ width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderBottom: '9px solid #16a34a' }} />
+                      <span style={{ flex: 1 }}>Block HQ</span>
+                      <span style={{ color: '#2563eb', fontWeight: 600 }}>1</span>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#334155' }}>
+                      <input type="checkbox" checked={showGpRouters} onChange={e => setShowGpRouters(e.target.checked)} />
+                      <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#8b5cf6' }} />
+                      <span style={{ flex: 1 }}>GP routers</span>
+                      <span style={{ color: '#2563eb', fontWeight: 600 }}>31</span>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#334155' }}>
+                      <input type="checkbox" checked={showGpsNotPart} onChange={e => setShowGpsNotPart(e.target.checked)} />
+                      <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#94a3b8' }} />
+                      <span style={{ flex: 1 }}>GPs not part of plan</span>
+                      <span style={{ color: '#94a3b8' }}>0</span>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#334155' }}>
+                      <input type="checkbox" checked={showJoints} onChange={e => setShowJoints(e.target.checked)} />
+                      <span style={{ width: 10, height: 10, borderRadius: 2, background: '#ec4899' }} />
+                      <span style={{ flex: 1 }}>Joints & feeder taps</span>
+                      <span style={{ color: '#94a3b8' }}>122</span>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#334155' }}>
+                      <input type="checkbox" checked={showFeederTaps} onChange={e => setShowFeederTaps(e.target.checked)} />
+                      <span style={{ width: 10, height: 2, background: '#64748b' }} />
+                      <span style={{ flex: 1 }}>Feeder taps</span>
+                      <span style={{ color: '#94a3b8' }}>0</span>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#334155' }}>
+                      <input type="checkbox" checked={showWaypoints} onChange={e => setShowWaypoints(e.target.checked)} />
+                      <span style={{ width: 14, height: 2, borderTop: '2px dotted #64748b' }} />
+                      <span style={{ flex: 1 }}>Path waypoints</span>
+                      <span style={{ color: '#94a3b8' }}>1347</span>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#334155', marginTop: 4 }}>
+                      <input type="checkbox" checked={showLineDash} onChange={e => setShowLineDash(e.target.checked)} />
+                      <span style={{ width: 14, height: 3, borderTop: '2px dashed #ef4444' }} />
+                      <span style={{ flex: 1 }}>Show line in dash</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {/* NETWORK OPTIMIZATION SUMMARY SECTION */}
+              <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 8 }}>
+                <div
+                  onClick={() => setIsSummaryOpen(!isSummaryOpen)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                    color: '#334155',
+                  }}
+                >
+                  <LucideChevronRight size={14} style={{ transform: isSummaryOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
+                  <span>NETWORK OPTIMIZATION SUMMARY</span>
+                </div>
+
+                {isSummaryOpen && (
+                  <div style={{ paddingLeft: 16, paddingTop: 6, color: '#64748b', fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div>Total Route Distance: <strong>167 KM</strong></div>
+                    <div>Usable OFC Segment: <strong>0 KM</strong></div>
+                    <div>GP Router Terminals: <strong>31 GP</strong></div>
+                    <div>Optimization Level: <strong>98.4%</strong></div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* MAP CANVAS */}
+        <div ref={mapContainerRef} style={{ width: '100%', height: '100%', zIndex: 1 }} />
+
+        {/* BOTTOM OVERLAY FOR CURSOR COORDINATES */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 12,
+            left: isWorkbenchOpen ? 302 : 48,
+            zIndex: 400,
+            background: '#ffffff',
+            padding: '4px 10px',
+            borderRadius: 4,
+            border: '1px solid #cbd5e1',
+            boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
+            fontSize: '0.75rem',
+            color: '#334155',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            transition: 'left 0.2s ease',
+          }}
+        >
+          <span>Coordinates : <strong>{cursorCoords.lat.toFixed(6)}, {cursorCoords.lng.toFixed(6)}</strong></span>
+          <button
+            type="button"
+            onClick={copyCoordinates}
+            title="Copy coordinates"
+            style={{
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+              color: copied ? '#16a34a' : '#64748b',
+              padding: 0,
+              display: 'flex',
+              alignItems: 'center',
+            }}
+          >
+            {copied ? <LucideCheck size={13} /> : <LucideCopy size={13} />}
+          </button>
+        </div>
       </div>
     </div>
   );
 };
-
-function isBlockPreview(childRoutes) {
-  return Array.isArray(childRoutes) && childRoutes.length > 0;
-}
