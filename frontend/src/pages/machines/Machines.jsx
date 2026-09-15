@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { machineService } from '../../services/machineService';
 import { LucideRefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -13,8 +13,23 @@ const statusClass = (status) => {
   return 'badge-offline';
 };
 
+const unwrapMachines = (res) => {
+  const payload = res?.data && !Array.isArray(res.data) && (res.data.results || res.data.status_counts)
+    ? res.data
+    : (res?.data && !res.results && !res.status_counts ? res.data : res) || {};
+  const list = Array.isArray(payload)
+    ? payload
+    : (payload.results || (Array.isArray(payload.data) ? payload.data : []) || []);
+  return {
+    list: Array.isArray(list) ? list : [],
+    statusCounts: payload.status_counts || payload.data?.status_counts || null,
+    emptyStateCode: payload.empty_state_code || payload.data?.empty_state_code || null,
+    emptyStateMessage: payload.empty_state_message || payload.data?.empty_state_message || '',
+  };
+};
+
 export const Machines = () => {
-  const [machines, setMachines] = useState([]);
+  const [allMachines, setAllMachines] = useState([]);
   const [statusCounts, setStatusCounts] = useState(null);
   const [emptyStateCode, setEmptyStateCode] = useState(null);
   const [emptyStateMessage, setEmptyStateMessage] = useState('');
@@ -26,20 +41,15 @@ export const Machines = () => {
   const fetchMachines = (shouldResync = false) => {
     setLoading(true);
     const params = {};
-    if (search.trim()) params.search = search.trim();
-    if (activeFilter && activeFilter !== 'All') params.status = activeFilter;
     if (shouldResync) params.resync = 'true';
 
     machineService.getAll(params)
-      .then(res => {
-        const payload = res.data || res;
-        const list = Array.isArray(payload)
-          ? payload
-          : (payload.results || payload.data?.results || (Array.isArray(payload.data) ? payload.data : []));
-        setMachines(list);
-        setStatusCounts(payload.status_counts || payload.data?.status_counts || null);
-        setEmptyStateCode(payload.empty_state_code || payload.data?.empty_state_code || null);
-        setEmptyStateMessage(payload.empty_state_message || payload.data?.empty_state_message || '');
+      .then((res) => {
+        const next = unwrapMachines(res);
+        setAllMachines(next.list);
+        setStatusCounts(next.statusCounts);
+        setEmptyStateCode(next.emptyStateCode);
+        setEmptyStateMessage(next.emptyStateMessage);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -47,23 +57,38 @@ export const Machines = () => {
 
   useEffect(() => {
     fetchMachines();
-  }, [activeFilter, search]);
+  }, []);
 
   const counts = {
-    All: statusCounts?.ALL ?? machines.length,
-    Live: statusCounts?.LIVE ?? machines.filter(m => m.is_online).length,
-    Commissioned: statusCounts?.COMMISSIONED ?? machines.filter(m => m.is_commissioned).length,
-    A600: machines.filter(m => (m.model_code || m.model || '').toUpperCase() === 'A600').length,
-    A800: machines.filter(m => (m.model_code || m.model || '').toUpperCase() === 'A800').length,
-    Running: statusCounts?.RUNNING ?? machines.filter(m => (m.status || '').toUpperCase() === 'RUNNING').length,
-    Idle: statusCounts?.IDLE ?? machines.filter(m => (m.status || '').toUpperCase() === 'IDLE').length,
-    Maintenance: statusCounts?.MAINTENANCE ?? machines.filter(m => (m.status || '').toUpperCase() === 'MAINTENANCE').length
+    All: statusCounts?.ALL ?? allMachines.length,
+    Live: statusCounts?.LIVE ?? allMachines.filter((m) => m.is_online).length,
+    Running: statusCounts?.RUNNING ?? allMachines.filter((m) => (m.status || '').toUpperCase() === 'RUNNING').length,
+    Idle: statusCounts?.IDLE ?? allMachines.filter((m) => (m.status || '').toUpperCase() === 'IDLE').length,
+    Maintenance: statusCounts?.MAINTENANCE ?? allMachines.filter((m) => (m.status || '').toUpperCase() === 'MAINTENANCE').length,
   };
+
+  const machines = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return allMachines.filter((m) => {
+      if (activeFilter === 'Live' && !m.is_online) return false;
+      if (activeFilter === 'Running' && (m.status || '').toUpperCase() !== 'RUNNING') return false;
+      if (activeFilter === 'Idle' && (m.status || '').toUpperCase() !== 'IDLE') return false;
+      if (activeFilter === 'Maintenance' && (m.status || '').toUpperCase() !== 'MAINTENANCE') return false;
+      if (!q) return true;
+      const hay = [
+        m.model_name, m.name, m.model_code, m.machine_chassis_no,
+        m.serial_number, m.site_name, m.location_name, m.operator_name,
+      ].join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }, [allMachines, activeFilter, search]);
 
   const renderEmptyMessage = () => {
     let title = 'No machines found';
     let body = emptyStateMessage || 'Nothing matches this filter or search.';
-    if (emptyStateCode === 'NO_ASSIGNED_MACHINES') {
+    if (allMachines.length > 0) {
+      body = 'Nothing matches this filter or search.';
+    } else if (emptyStateCode === 'NO_ASSIGNED_MACHINES') {
       title = 'No machines assigned';
       body = 'This vendor has no machines in ILYNC.';
     } else if (emptyStateCode === 'NOT_IN_FIBERFORCE') {

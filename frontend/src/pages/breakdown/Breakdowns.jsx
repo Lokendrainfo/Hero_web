@@ -1,381 +1,589 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { breakdownService } from '../../services/breakdownService';
-import { vendorService } from '../../services/vendorService';
 import { machineService } from '../../services/machineService';
 import { useAuth } from '../../hooks/useAuth';
 import {
-  LucideWrench,
-  LucideAlertOctagon,
-  LucideCheckCircle2,
-  LucideClock,
   LucidePlus,
-  LucideSearch,
   LucideRefreshCw,
-  LucideBuilding2,
-  LucideTruck,
+  LucideSearch,
   LucideX,
-  LucideFileText,
-  LucideAlertTriangle
+  LucideWrench,
+  LucideClock,
 } from 'lucide-react';
-import '../../styles/screens.css';
+import { PageHeader } from '../../components/common/PageHeader';
+import { EmptyState } from '../../components/common/EmptyState';
 import { SearchableSelect } from '../../components/common/Select';
+import { DateField } from '../../components/common/DateField';
+import '../../styles/screens.css';
+
+const unwrapMachines = (res) => {
+  const payload = res?.data && !Array.isArray(res.data) && (res.data.results || res.data.status_counts)
+    ? res.data
+    : (res?.data && !res.results && !res.status_counts ? res.data : res) || {};
+  const list = Array.isArray(payload)
+    ? payload
+    : (payload.results || (Array.isArray(payload.data) ? payload.data : []) || []);
+  return Array.isArray(list) ? list : [];
+};
+
+const statusOf = (row) => String(row?.status || '').toUpperCase();
+
+const formatWhen = (value) => {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+};
+
+const formatMinutes = (mins) => {
+  if (mins == null || mins === '') return '—';
+  const n = Number(mins);
+  if (!Number.isFinite(n)) return '—';
+  if (n < 60) return `${Math.round(n)}m`;
+  const h = Math.floor(n / 60);
+  const m = Math.round(n % 60);
+  if (h >= 24) {
+    const d = Math.floor(h / 24);
+    const rh = h % 24;
+    return rh ? `${d}d ${rh}h` : `${d}d`;
+  }
+  return m ? `${h}h ${m}m` : `${h}h`;
+};
+
+const keyLabels = (keys, fallback) => {
+  if (Array.isArray(keys) && keys.length) {
+    return keys.map((k) => k.label || k.code || k).filter(Boolean).join(', ');
+  }
+  return fallback || '—';
+};
+
+const toIso = (localValue) => {
+  if (!localValue) return undefined;
+  const date = new Date(localValue);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toISOString();
+};
+
+const statusBadge = (status) => {
+  const s = String(status || '').toUpperCase();
+  if (s === 'OPEN') return 'badge-breakdown';
+  if (s === 'SEEN' || s === 'ACCEPTED') return 'badge-maintenance';
+  if (s === 'RESOLVED' || s === 'CLOSED') return 'badge-running';
+  return 'badge-idle';
+};
+
+const severityBadge = (severity) => {
+  const s = String(severity || '').toUpperCase();
+  if (s === 'CRITICAL' || s === 'HIGH') return 'badge-breakdown';
+  if (s === 'MEDIUM') return 'badge-maintenance';
+  return 'badge-idle';
+};
+
+const OEM_STATUSES = [
+  { value: 'ALL', label: 'All' },
+  { value: 'OPEN', label: 'Open' },
+  { value: 'SEEN', label: 'Seen' },
+  { value: 'ACCEPTED', label: 'Accepted' },
+  { value: 'RESOLVED', label: 'Resolved' },
+  { value: 'CLOSED', label: 'Closed' },
+];
+
+const OPS_STATUSES = [
+  { value: 'ALL', label: 'All' },
+  { value: 'OPEN', label: 'Open' },
+  { value: 'CLOSED', label: 'Closed' },
+];
+
+const emptyOemForm = {
+  machine_chassis_no: '',
+  reason: '',
+  reason_key_ids: [],
+  severity: 'MEDIUM',
+  occurred_at: '',
+  ref_id: '',
+};
+
+const emptyOpsForm = {
+  machine_chassis_no: '',
+  note: '',
+  reason_key_ids: [],
+  started_at: '',
+  ref_id: '',
+};
+
+const emptyOemClose = {
+  resolution_note: '',
+  resolution_key_ids: [],
+  solved_by: 'INTERNAL',
+  resolved_at: '',
+};
+
+const emptyOpsClose = {
+  close_note: '',
+  closed_at: '',
+};
+
+const toggleId = (list, id) => (
+  list.includes(id) ? list.filter((item) => item !== id) : [...list, id]
+);
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+const TIME_SLOTS = Array.from({ length: 96 }, (_, i) => {
+  const h = Math.floor(i / 4);
+  const m = (i % 4) * 15;
+  const value = `${pad2(h)}:${pad2(m)}`;
+  const hour12 = ((h + 11) % 12) + 1;
+  const suffix = h < 12 ? 'AM' : 'PM';
+  return { value, label: `${hour12}:${pad2(m)} ${suffix}` };
+});
+
+const nearestSlot = (hhmm) => {
+  const [hRaw, mRaw] = String(hhmm || '').split(':');
+  const h = Number(hRaw);
+  const m = Number(mRaw);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return '09:00';
+  const rounded = Math.round((h * 60 + m) / 15) * 15;
+  const wrap = ((rounded % 1440) + 1440) % 1440;
+  return `${pad2(Math.floor(wrap / 60))}:${pad2(wrap % 60)}`;
+};
+
+const splitDt = (value) => {
+  if (!value) return { date: '', time: '' };
+  const [date, rest = ''] = String(value).split('T');
+  return { date: date.slice(0, 10), time: rest.slice(0, 5) };
+};
+
+const nowTime = () => {
+  const d = new Date();
+  return nearestSlot(`${pad2(d.getHours())}:${pad2(d.getMinutes())}`);
+};
+
+const DateTimeField = ({ value, onChange, datePlaceholder = 'Select date' }) => {
+  const { date, time } = splitDt(value);
+  const selectedTime = time ? nearestSlot(time) : '';
+
+  return (
+    <div className="datetime-field">
+      <DateField
+        value={date}
+        placeholder={datePlaceholder}
+        onChange={(e) => {
+          const nextDate = e.target.value;
+          if (!nextDate) {
+            onChange('');
+            return;
+          }
+          onChange(`${nextDate}T${selectedTime || nowTime()}`);
+        }}
+      />
+      <SearchableSelect
+        value={selectedTime}
+        placeholder="Time"
+        onChange={(e) => {
+          const nextTime = e.target.value;
+          if (!nextTime) return;
+          const d = new Date();
+          const localDate = date || `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+          onChange(`${localDate}T${nextTime}`);
+        }}
+      >
+        {TIME_SLOTS.map((slot) => (
+          <option key={slot.value} value={slot.value}>{slot.label}</option>
+        ))}
+      </SearchableSelect>
+    </div>
+  );
+};
+
+const StatusPill = ({ status }) => {
+  const value = status || '—';
+  const open = String(status || '').toUpperCase() === 'OPEN';
+  return (
+    <span className={`badge-pill ${statusBadge(status)}`}>
+      {open ? <span className="status-blink" aria-hidden /> : null}
+      {value}
+    </span>
+  );
+};
 
 export const Breakdowns = () => {
-  const { user, isAdmin, vendors } = useAuth();
-  const [breakdowns, setBreakdowns] = useState([]);
+  const { isAdmin } = useAuth();
+  const [tab, setTab] = useState('oem');
+  const [machines, setMachines] = useState([]);
+  const [rows, setRows] = useState([]);
+  const [options, setOptions] = useState({
+    reason_keys: [],
+    resolution_keys: [],
+    severities: [],
+    statuses: [],
+    solved_by: [],
+  });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
-  const [selectedVendor, setSelectedVendor] = useState('all');
-  const [vendorList, setVendorList] = useState([]);
-  const [machineList, setMachineList] = useState([]);
+  const [chassis, setChassis] = useState('');
+  const [days, setDays] = useState(90);
+  const [error, setError] = useState('');
 
-  // Modal state for Report New Breakdown
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [detailRow, setDetailRow] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [formData, setFormData] = useState({
-    machine_id: '',
-    description: '',
-    severity: 'HIGH',
-    reported_by: '',
-    location: ''
-  });
+  const [oemForm, setOemForm] = useState(emptyOemForm);
+  const [opsForm, setOpsForm] = useState(emptyOpsForm);
+  const [oemClose, setOemClose] = useState(emptyOemClose);
+  const [opsClose, setOpsClose] = useState(emptyOpsClose);
+  const [closingRow, setClosingRow] = useState(null);
 
+  const isOem = tab === 'oem';
+  const statusChips = isOem ? OEM_STATUSES : OPS_STATUSES;
+  const accessibleMachines = useMemo(
+    () => machines.filter((m) => String(m.machine_chassis_no || '').trim()),
+    [machines]
+  );
 
+  const loadMachines = useCallback(() => {
+    machineService.getAll({ page_size: 200 })
+      .then((res) => setMachines(unwrapMachines(res)))
+      .catch(() => setMachines([]));
+  }, []);
 
-  useEffect(() => {
-    if (isAdmin) {
-      vendorService.getVendors({ page: 0, size: 50 })
-        .then(res => {
-          const list = res.data?.data?.results || res.data?.results || res.data?.content || res.data || [];
-          setVendorList(Array.isArray(list) ? list : []);
-        })
-        .catch(console.error);
-    }
-    machineService.getAll({ page: 0, size: 50 })
-      .then(res => {
-        const list = res.data?.results || res.data?.data || res.data || [];
-        setMachineList(Array.isArray(list) ? list : []);
-      })
-      .catch(console.error);
-  }, [isAdmin]);
+  const loadOptions = useCallback((kind) => {
+    const req = kind === 'oem' ? breakdownService.oemOptions() : breakdownService.opsOptions();
+    req.then((data) => {
+      setOptions({
+        reason_keys: Array.isArray(data?.reason_keys) ? data.reason_keys : [],
+        resolution_keys: Array.isArray(data?.resolution_keys) ? data.resolution_keys : [],
+        severities: Array.isArray(data?.severities) ? data.severities : [],
+        statuses: Array.isArray(data?.statuses) ? data.statuses : [],
+        solved_by: Array.isArray(data?.solved_by) ? data.solved_by : [],
+      });
+    }).catch(() => {
+      setOptions({ reason_keys: [], resolution_keys: [], severities: [], statuses: [], solved_by: [] });
+    });
+  }, []);
 
-  const fetchBreakdowns = () => {
+  const fetchRows = useCallback(() => {
     setLoading(true);
-    const params = {};
-    if (selectedVendor && selectedVendor !== 'all') params.vendor_id = selectedVendor;
-
-    breakdownService.getAll(params)
-      .then(res => {
-        const raw = res.data?.data !== undefined ? res.data.data : (res.data !== undefined ? res.data : res);
-        let list = [];
-        if (Array.isArray(raw)) {
-          list = raw;
-        } else if (raw && Array.isArray(raw.results)) {
-          list = raw.results;
-        } else if (raw && Array.isArray(raw.data)) {
-          list = raw.data;
-        }
-        setBreakdowns(list);
-      })
-      .catch(err => {
-        console.error("Error fetching breakdowns:", err);
-        setBreakdowns([]);
-      })
-      .finally(() => setLoading(false));
-  };
+    setError('');
+    const params = { status: 'all', days, limit: chassis ? 200 : 500 };
+    if (chassis) params.machine_chassis_no = chassis;
+    const req = isOem ? breakdownService.listOem(params) : breakdownService.listOps(params);
+    req.then((payload) => {
+      setRows(Array.isArray(payload.results) ? payload.results : []);
+    }).catch((err) => {
+      setRows([]);
+      setError(err?.message || 'Could not load tickets.');
+    }).finally(() => setLoading(false));
+  }, [isOem, chassis, days]);
 
   useEffect(() => {
-    fetchBreakdowns();
-  }, [selectedVendor]);
+    loadMachines();
+  }, [loadMachines]);
 
-  const handleFormSubmit = (e) => {
-    e.preventDefault();
-    setSubmitting(true);
-    const payload = {
-      ...formData,
-      ticket_code: `BD-2026-${Math.floor(1000 + Math.random() * 9000)}`,
-      status: 'OPEN',
-      reported_at: new Date().toISOString()
-    };
+  useEffect(() => {
+    setStatusFilter('ALL');
+    setSearch('');
+    setDetailRow(null);
+    setRows([]);
+    setLoading(true);
+    loadOptions(tab);
+  }, [tab, loadOptions]);
 
-    breakdownService.create(payload)
-      .then(() => {
-        setIsModalOpen(false);
-        fetchBreakdowns();
-      })
-      .catch(() => {
-        // Fallback local update
-        const newTicket = {
-          id: Date.now(),
-          ...payload,
-          machine_code: machineList.find(m => String(m.id) === String(formData.machine_id))?.code || 'HDD RIG',
-          vendor_name: activeVendorName,
-          downtime_hours: '0.5 hrs'
-        };
-        setBreakdowns(prev => [newTicket, ...prev]);
-        setIsModalOpen(false);
-      })
-      .finally(() => setSubmitting(false));
+  useEffect(() => {
+    fetchRows();
+  }, [fetchRows]);
+
+  const counts = useMemo(() => {
+    const next = { ALL: rows.length };
+    statusChips.forEach((chip) => {
+      if (chip.value === 'ALL') return;
+      next[chip.value] = rows.filter((row) => statusOf(row) === chip.value).length;
+    });
+    return next;
+  }, [rows, statusChips]);
+
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (statusFilter !== 'ALL' && statusOf(row) !== statusFilter) return false;
+      if (!q) return true;
+      const hay = [
+        row.tt_number, row.id, row.reason, row.note, row.ref_id,
+        row.machine_chassis_no, row.machine_name, row.model_name,
+        row.vendor_name, row.site_name, row.severity,
+        keyLabels(row.reason_keys, ''), keyLabels(row.resolution_keys, ''),
+      ].join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }, [rows, search, statusFilter]);
+
+  const machineLabel = (rowOrChassis) => {
+    const value = typeof rowOrChassis === 'string' ? rowOrChassis : rowOrChassis?.machine_chassis_no;
+    const machine = accessibleMachines.find((m) => String(m.machine_chassis_no) === String(value));
+    if (machine) {
+      return `${machine.model_name || machine.name || 'HDD'} · ${machine.machine_chassis_no}`;
+    }
+    if (typeof rowOrChassis === 'object' && rowOrChassis) {
+      return `${rowOrChassis.machine_name || rowOrChassis.model_name || 'HDD'} · ${rowOrChassis.machine_chassis_no || '—'}`;
+    }
+    return value || '—';
   };
 
-  const activeVendorName = vendors && vendors.length > 0 ? (vendors[0].name || vendors[0].partnerName) : 'Your Vendor Account';
-
-  const filteredBreakdowns = breakdowns.filter(b => {
-    if (!isAdmin) {
-      // Non-admin Vendor user: Strictly restrict to vendor's items!
-      const userVendorNames = vendors.map(v => (v.name || v.partnerName || '').toLowerCase());
-      const bVendor = (b.vendor_name || b.vendor?.name || '').toLowerCase();
-      if (userVendorNames.length > 0 && bVendor) {
-        const isMatch = userVendorNames.some(vn => vn && (bVendor.includes(vn) || vn.includes(bVendor)));
-        if (!isMatch) return false;
-      }
+  const openCreate = () => {
+    setError('');
+    if (isOem) {
+      setOemForm({ ...emptyOemForm, machine_chassis_no: chassis });
+    } else {
+      setOpsForm({ ...emptyOpsForm, machine_chassis_no: chassis });
     }
-    if (statusFilter !== 'ALL' && (b.status || '').toUpperCase() !== statusFilter) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      (b.ticket_code && b.ticket_code.toLowerCase().includes(q)) ||
-      (b.machine_code && b.machine_code.toLowerCase().includes(q)) ||
-      (b.description && b.description.toLowerCase().includes(q)) ||
-      (b.vendor_name && b.vendor_name.toLowerCase().includes(q)) ||
-      (b.reported_by && b.reported_by.toLowerCase().includes(q))
-    );
-  });
+    setCreateOpen(true);
+  };
 
-  const openCount = filteredBreakdowns.filter(b => (b.status || '').toUpperCase() === 'OPEN').length;
-  const inProgressCount = filteredBreakdowns.filter(b => (b.status || '').toUpperCase() === 'IN_PROGRESS').length;
-  const resolvedCount = filteredBreakdowns.filter(b => (b.status || '').toUpperCase() === 'RESOLVED' || (b.status || '').toUpperCase() === 'CLOSED').length;
+  const openClose = (row, event) => {
+    event?.stopPropagation();
+    setError('');
+    setClosingRow(row);
+    if (isOem) setOemClose(emptyOemClose);
+    else setOpsClose(emptyOpsClose);
+    setCloseOpen(true);
+  };
+
+  const handleCreate = (event) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setError('');
+    const req = isOem
+      ? breakdownService.createOem({
+          machine_chassis_no: oemForm.machine_chassis_no,
+          reason: oemForm.reason || undefined,
+          reason_key_ids: oemForm.reason_key_ids,
+          severity: oemForm.severity || undefined,
+          occurred_at: toIso(oemForm.occurred_at),
+          ref_id: oemForm.ref_id || undefined,
+        })
+      : breakdownService.createOps({
+          machine_chassis_no: opsForm.machine_chassis_no,
+          note: opsForm.note || undefined,
+          reason_key_ids: opsForm.reason_key_ids,
+          started_at: toIso(opsForm.started_at),
+          ref_id: opsForm.ref_id || undefined,
+        });
+
+    req.then(() => {
+      setCreateOpen(false);
+      fetchRows();
+    }).catch((err) => {
+      setError(err?.message || 'Could not create the ticket.');
+    }).finally(() => setSubmitting(false));
+  };
+
+  const handleClose = (event) => {
+    event.preventDefault();
+    if (!closingRow) return;
+    setSubmitting(true);
+    setError('');
+    const req = isOem
+      ? breakdownService.closeOem({
+          breakdown_id: closingRow.id,
+          machine_chassis_no: closingRow.machine_chassis_no,
+          resolution_note: oemClose.resolution_note || undefined,
+          resolution_key_ids: oemClose.resolution_key_ids,
+          solved_by: oemClose.solved_by || undefined,
+          resolved_at: toIso(oemClose.resolved_at),
+        })
+      : breakdownService.closeOps({
+          ops_stop_id: closingRow.id,
+          machine_chassis_no: closingRow.machine_chassis_no,
+          close_note: opsClose.close_note,
+          closed_at: toIso(opsClose.closed_at),
+        });
+
+    req.then(() => {
+      setCloseOpen(false);
+      setClosingRow(null);
+      setDetailRow(null);
+      fetchRows();
+    }).catch((err) => {
+      setError(err?.message || 'Could not close the ticket.');
+    }).finally(() => setSubmitting(false));
+  };
+
+  const canClose = (row) => {
+    const status = statusOf(row);
+    return isOem ? status && status !== 'CLOSED' : status === 'OPEN';
+  };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', boxSizing: 'border-box' }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <h1 style={{ fontSize: '1.4rem', fontFamily: 'inherit', fontWeight: '700', color: '#111827' }}>
-              Breakdown Tickets & Repair History
-            </h1>
-            {isAdmin ? (
-              <span className="badge-pill badge-role-admin">
-                Admin master view
-              </span>
-            ) : (
-              <span className="badge-pill badge-role-vendor">
-                {activeVendorName}
-              </span>
-            )}
-          </div>
-          <p style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-            Track machine breakdown reports, hydraulic/engine repair history, and downtime logs
-          </p>
-        </div>
+    <div className="screen-container">
+      <PageHeader
+        title="Breakdown Tickets & Repair History"
+        subtitle="OEM breakdowns and internal Ops Stops, scoped to machines you can access"
+        actions={
+          <>
+            <span className={`badge-pill ${isAdmin ? 'badge-neutral' : 'badge-maintenance'}`}>
+              {isAdmin ? 'Admin · accessible machines' : 'Vendor scoped'}
+            </span>
+            <button type="button" className="btn-secondary" onClick={fetchRows}>
+              <LucideRefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
+            </button>
+          </>
+        }
+      />
 
-        <div style={{ display: 'flex', gap: '8px' }}>
+      <div className="breakdown-tab-row">
+        <div className="seg-tabs" role="tablist" aria-label="Breakdown type">
           <button
-            onClick={() => setIsModalOpen(true)}
-            style={{
-              padding: '8px 14px',
-              borderRadius: '8px',
-              fontSize: '0.8rem',
-              fontWeight: '700',
-              background: '#111827',
-              color: '#ffffff',
-              border: 'none',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
+            type="button"
+            role="tab"
+            aria-selected={isOem}
+            className={`seg-tab ${isOem ? 'active' : ''}`}
+            onClick={() => setTab('oem')}
           >
-            <LucidePlus size={15} /> Report New Breakdown
+            OEM
           </button>
-
-          <button onClick={fetchBreakdowns} className="app-card" style={{ padding: '8px 14px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', cursor: 'pointer', fontWeight: '600' }}>
-            <LucideRefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh History
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!isOem}
+            className={`seg-tab ${!isOem ? 'active' : ''}`}
+            onClick={() => setTab('ops')}
+          >
+            Internal
           </button>
         </div>
+        <button type="button" className="btn-primary" onClick={openCreate} disabled={!accessibleMachines.length}>
+          <LucidePlus size={14} /> {isOem ? 'Report breakdown' : 'Open Ops Stop'}
+        </button>
       </div>
 
-      {/* KPI Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
-        <div className="app-card" style={{ padding: '14px 18px', borderLeft: '4px solid #dc2626' }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase' }}>Open Tickets</div>
-          <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#dc2626', marginTop: '4px' }}>
-            {openCount} <span style={{ fontSize: '0.8rem', color: '#dc2626', fontWeight: '600' }}>Open</span>
-          </div>
-        </div>
-
-        <div className="app-card" style={{ padding: '14px 18px', borderLeft: '4px solid #d97706' }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase' }}>Under Repair</div>
-          <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#d97706', marginTop: '4px' }}>
-            {inProgressCount} <span style={{ fontSize: '0.8rem', color: '#d97706', fontWeight: '600' }}>In Repair</span>
-          </div>
-        </div>
-
-        <div className="app-card" style={{ padding: '14px 18px', borderLeft: '4px solid #059669' }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: '600', color: '#6b7280', textTransform: 'uppercase' }}>Resolved Tickets</div>
-          <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#059669', marginTop: '4px' }}>
-            {resolvedCount} <span style={{ fontSize: '0.8rem', color: '#059669', fontWeight: '600' }}>Resolved</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Control Bar: Search + Status Filter + Admin Vendor Selection */}
-      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', width: '100%' }}>
-        <div style={{ flex: '1', minWidth: '260px', position: 'relative' }}>
+      <div className="page-toolbar">
+        <div className="input-wrap" style={{ flex: 1, minWidth: 220 }}>
+          <LucideSearch size={15} className="input-icon" />
           <input
-            type="text"
-            placeholder="Search breakdowns by ticket code, machine, description, or operator..."
+            type="search"
+            placeholder={isOem ? 'Search ticket, reason, chassis, or vendor' : 'Search Ops Stop, reason, chassis, or vendor'}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '11px 14px 11px 40px',
-              borderRadius: '10px',
-              border: '1px solid #d1d5db',
-              background: '#ffffff',
-              fontSize: '0.88rem',
-              outline: 'none',
-              boxSizing: 'border-box'
-            }}
           />
-          <LucideSearch size={18} color="#9ca3af" style={{ position: 'absolute', left: '14px', top: '12px' }} />
         </div>
-
-        {/* Status Pills */}
-        <div style={{ display: 'flex', gap: '6px', background: '#f3f4f6', padding: '4px', borderRadius: '10px' }}>
-          {['ALL', 'OPEN', 'IN_PROGRESS', 'RESOLVED'].map(st => (
-            <button
-              key={st}
-              onClick={() => setStatusFilter(st)}
-              style={{
-                padding: '6px 12px',
-                borderRadius: '8px',
-                fontSize: '0.78rem',
-                fontWeight: '700',
-                border: 'none',
-                cursor: 'pointer',
-                background: statusFilter === st ? '#111827' : 'transparent',
-                color: statusFilter === st ? '#ffffff' : '#4b5563'
-              }}
-            >
-              {st}
-            </button>
+        <SearchableSelect value={chassis} onChange={(e) => setChassis(e.target.value)}>
+          <option value="">All machines</option>
+          {accessibleMachines.map((m) => (
+            <option key={m.id || m.machine_chassis_no} value={m.machine_chassis_no}>
+              {m.model_name || m.name || 'HDD'} · {m.machine_chassis_no}
+              {m.site_name ? ` · ${m.site_name}` : ''}
+            </option>
           ))}
-        </div>
-
-        {/* Admin Vendor Selection Dropdown */}
-        {isAdmin && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#ffffff', border: '1px solid #d1d5db', borderRadius: '10px', padding: '4px 12px' }}>
-            <LucideBuilding2 size={16} color="#111827" />
-            <span style={{ fontSize: '0.82rem', fontWeight: '600', color: '#374151' }}>Vendor:</span>
-            <SearchableSelect
-              value={selectedVendor}
-              onChange={(e) => setSelectedVendor(e.target.value)}
-              style={{
-                border: 'none',
-                background: 'transparent',
-                fontSize: '0.85rem',
-                fontWeight: '600',
-                color: '#111827',
-                padding: '6px 4px',
-                outline: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              <option value="all">🏢 All Vendors (Master List)</option>
-              {vendorList.map(v => (
-                <option key={v.id || v.external_vendor_id} value={v.id || v.external_vendor_id}>
-                  {v.partnerName || v.name}
-                </option>
-              ))}
-            </SearchableSelect>
-          </div>
-        )}
+        </SearchableSelect>
+        <SearchableSelect value={String(days)} onChange={(e) => setDays(Number(e.target.value))}>
+          <option value="30">Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="180">Last 180 days</option>
+          <option value="365">Last 365 days</option>
+        </SearchableSelect>
       </div>
 
-      {/* Breakdown History Table */}
+      <div className="filter-row">
+        {statusChips.map((chip) => (
+          <button
+            key={chip.value}
+            type="button"
+            className={`filter-chip ${statusFilter === chip.value ? 'active' : ''}`}
+            onClick={() => setStatusFilter(chip.value)}
+          >
+            {chip.label} {counts[chip.value] ?? 0}
+            {chip.value === 'OPEN' && (counts.OPEN || 0) > 0 ? <span className="status-blink" aria-hidden /> : null}
+          </button>
+        ))}
+      </div>
+
+      {error && !createOpen && !closeOpen ? (
+        <p className="page-subtitle" style={{ color: 'var(--danger)' }}>{error}</p>
+      ) : null}
+
       {loading ? (
-        <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280', fontSize: '0.9rem' }}>
-          Fetching breakdown ticket history...
+        <div className="empty-state">
+          <h3>Loading tickets</h3>
+          <p>Fetching {isOem ? 'OEM breakdowns' : 'Ops Stops'} from FiberForce.</p>
         </div>
-      ) : filteredBreakdowns.length === 0 ? (
-        <div className="app-card" style={{ padding: '48px 20px', textAlign: 'center', color: '#6b7280' }}>
-          <LucideAlertOctagon size={36} style={{ margin: '0 auto 12px', color: '#9ca3af', opacity: 0.6 }} />
-          <div style={{ fontSize: '1rem', fontWeight: '600', color: '#374151' }}>No breakdowns in this view.</div>
-          <div style={{ fontSize: '0.82rem', color: '#9ca3af', marginTop: '4px' }}>Report a breakdown to start tracking downtime.</div>
-        </div>
+      ) : !accessibleMachines.length ? (
+        <EmptyState
+          title="No machines in scope"
+          subtitle="Breakdowns are chassis-scoped. Assign machines to this vendor to report or view tickets."
+        />
+      ) : filteredRows.length === 0 ? (
+        <EmptyState
+          title={isOem ? 'No OEM breakdowns' : 'No Ops Stops'}
+          subtitle={search || statusFilter !== 'ALL'
+            ? 'Nothing matches this filter or search.'
+            : isOem
+              ? 'Report a breakdown against a machine you can access.'
+              : 'Open an Ops Stop when a machine is held for operational reasons.'}
+        />
       ) : (
-        <div className="table-container app-card" style={{ padding: 0, overflowX: 'auto' }}>
-          <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <div className="table-container">
+          <table className="data-table">
             <thead>
-              <tr style={{ background: '#f9fafb', textAlign: 'left', borderBottom: '1px solid #e5e7eb' }}>
-                <th style={{ padding: '12px 16px' }}>Ticket Code</th>
-                <th style={{ padding: '12px 16px' }}>Machine / Asset</th>
-                <th style={{ padding: '12px 16px' }}>Assigned Vendor</th>
-                <th style={{ padding: '12px 16px' }}>Problem Description</th>
-                <th style={{ padding: '12px 16px' }}>Severity</th>
-                <th style={{ padding: '12px 16px' }}>Status</th>
-                <th style={{ padding: '12px 16px' }}>Reported Date & Downtime</th>
+              <tr>
+                <th>Ticket</th>
+                <th>Machine</th>
+                <th>{isOem ? 'Reason' : 'Stop reason'}</th>
+                {isOem ? <th>Severity</th> : null}
+                <th>Status</th>
+                <th>{isOem ? 'Occurred' : 'Started'}</th>
+                <th>Duration</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {filteredBreakdowns.map(b => {
-                const isHigh = (b.severity || '').toUpperCase() === 'HIGH' || (b.severity || '').toUpperCase() === 'CRITICAL';
-                const isOpen = (b.status || '').toUpperCase() === 'OPEN';
-                const isInProgress = (b.status || '').toUpperCase() === 'IN_PROGRESS';
-
+              {filteredRows.map((row) => {
+                const ticket = row.tt_number || (isOem ? `BD-${row.id}` : `OS-${row.id}`);
+                const when = isOem ? row.occurred_at : row.started_at;
+                const duration = isOem ? row.downtime_minutes : row.duration_minutes;
                 return (
-                  <tr key={b.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontWeight: '700', color: '#0369a1' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <LucideWrench size={14} color="#0369a1" />
-                        {b.ticket_code || `BD-${b.id}`}
+                  <tr
+                    key={`${tab}-${row.id}-${row.machine_chassis_no}`}
+                    onClick={() => setDetailRow(row)}
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailRow(row); } }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                        <LucideWrench size={13} /> {ticket}
                       </div>
+                      {row.ref_id ? <div className="page-subtitle">{row.ref_id}</div> : null}
                     </td>
-                    <td style={{ padding: '12px 16px', fontWeight: '700', color: '#111827' }}>
-                      <div>{b.machine_code || b.machine_name || 'HDD Machine'}</div>
-                      {b.location && <div style={{ fontSize: '0.72rem', color: '#6b7280', fontWeight: 'normal' }}>📍 {b.location}</div>}
+                    <td>
+                      <div style={{ fontWeight: 600 }}>{row.machine_name || row.model_name || 'HDD'}</div>
+                      <div className="page-subtitle" style={{ fontFamily: 'var(--font-mono)' }}>{row.machine_chassis_no || '—'}</div>
                     </td>
-                    <td style={{ padding: '12px 16px', fontWeight: '600', color: '#374151' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <LucideBuilding2 size={13} color="#6b7280" />
-                        {b.vendor_name || activeVendorName}
-                      </div>
+                    <td>
+                      <div>{keyLabels(row.reason_keys, isOem ? row.reason : row.note)}</div>
+                      {row.vendor_name ? <div className="page-subtitle">{row.vendor_name}</div> : null}
                     </td>
-                    <td style={{ padding: '12px 16px', color: '#374151', maxWidth: '300px' }}>
-                      <div>{b.description}</div>
-                      {b.reported_by && <div style={{ fontSize: '0.72rem', color: '#9ca3af', marginTop: '2px' }}>Reported by: {b.reported_by}</div>}
+                    {isOem ? (
+                      <td>
+                        <span className={`badge-pill ${severityBadge(row.severity)}`}>{row.severity || '—'}</span>
+                      </td>
+                    ) : null}
+                    <td>
+                      <StatusPill status={row.status} />
                     </td>
-                    <td style={{ padding: '12px 16px' }}>
-                      <span style={{
-                        padding: '3px 8px',
-                        borderRadius: '6px',
-                        fontSize: '0.7rem',
-                        fontWeight: '700',
-                        background: isHigh ? '#fef2f2' : '#fffbeb',
-                        color: isHigh ? '#dc2626' : '#d97706',
-                        border: `1px solid ${isHigh ? '#fca5a5' : '#fde68a'}`
-                      }}>
-                        {b.severity || 'HIGH'}
+                    <td>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)' }}>
+                        <LucideClock size={13} /> {formatWhen(when)}
                       </span>
                     </td>
-                    <td style={{ padding: '12px 16px' }}>
-                      <span style={{
-                        padding: '3px 10px',
-                        borderRadius: '12px',
-                        fontSize: '0.72rem',
-                        fontWeight: '700',
-                        background: isOpen ? '#fef2f2' : isInProgress ? '#fffbeb' : '#ecfdf5',
-                        color: isOpen ? '#dc2626' : isInProgress ? '#92400e' : '#047857'
-                      }}>
-                        ● {b.status || 'OPEN'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '12px 16px', color: '#6b7280' }}>
-                      <div>{b.reported_at ? new Date(b.reported_at).toLocaleDateString() : 'Recent'}</div>
-                      <div style={{ fontSize: '0.72rem', color: '#dc2626', fontWeight: '600' }}>⏱️ {b.downtime_hours || '2.0 hrs'}</div>
+                    <td>{formatMinutes(duration)}</td>
+                    <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                      {canClose(row) ? (
+                        <button type="button" className="btn-secondary" onClick={(e) => openClose(row, e)}>
+                          Close
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 );
@@ -385,120 +593,271 @@ export const Breakdowns = () => {
         </div>
       )}
 
-      {/* Report New Breakdown Modal */}
-      {isModalOpen && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          padding: '16px'
-        }}>
-          <div style={{
-            background: '#ffffff',
-            borderRadius: '12px',
-            width: '100%',
-            maxWidth: '500px',
-            padding: '24px',
-            boxSizing: 'border-box',
-            boxShadow: 'none'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h2 style={{ fontSize: '1.2rem', fontWeight: '700', color: '#111827', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <LucideAlertOctagon color="#dc2626" size={20} /> Report Machine Breakdown
-              </h2>
-              <button onClick={() => setIsModalOpen(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}>
-                <LucideX size={20} color="#6b7280" />
-              </button>
+      {createOpen && (
+        <div className="modal-overlay" onClick={() => setCreateOpen(false)} role="presentation">
+          <div className="modal-card" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()} role="dialog">
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '1rem' }}>{isOem ? 'Report OEM breakdown' : 'Open Ops Stop'}</h3>
+              <button type="button" className="btn-ghost" onClick={() => setCreateOpen(false)}><LucideX size={16} /></button>
             </div>
-
-            <form onSubmit={handleFormSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <form onSubmit={handleCreate} style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {error ? <p className="page-subtitle" style={{ color: 'var(--danger)', margin: 0 }}>{error}</p> : null}
               <div>
-                <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Select Machine</label>
+                <label className="field-label">Machine</label>
                 <SearchableSelect
                   required
-                  value={formData.machine_id}
-                  onChange={(e) => setFormData({ ...formData, machine_id: e.target.value })}
-                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '0.88rem' }}
+                  value={isOem ? oemForm.machine_chassis_no : opsForm.machine_chassis_no}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (isOem) setOemForm((prev) => ({ ...prev, machine_chassis_no: value }));
+                    else setOpsForm((prev) => ({ ...prev, machine_chassis_no: value }));
+                  }}
                 >
-                  <option value="">-- Choose Machine --</option>
-                  {machineList.map(m => (
-                    <option key={m.id} value={m.id}>{m.code} ({m.model || m.category})</option>
+                  <option value="">Choose a machine</option>
+                  {accessibleMachines.map((m) => (
+                    <option key={m.id || m.machine_chassis_no} value={m.machine_chassis_no}>
+                      {m.model_name || m.name || 'HDD'} · {m.machine_chassis_no}
+                    </option>
                   ))}
-                  <option value="999">A800 HDD (8593)</option>
-                  <option value="998">XCMG 320 (7421)</option>
                 </SearchableSelect>
               </div>
 
               <div>
-                <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Breakdown Description</label>
-                <textarea
-                  required
-                  rows={3}
-                  placeholder="Describe failure details (e.g. mud pump pressure drop, hydraulic hose leak)..."
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '0.88rem', fontFamily: 'inherit' }}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Severity</label>
-                  <SearchableSelect
-                    value={formData.severity}
-                    onChange={(e) => setFormData({ ...formData, severity: e.target.value })}
-                    style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '0.88rem' }}
-                  >
-                    <option value="HIGH">CRITICAL / HIGH</option>
-                    <option value="MEDIUM">MEDIUM</option>
-                    <option value="LOW">LOW</option>
-                  </SearchableSelect>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Reporter Name</label>
-                  <input
-                    type="text"
-                    placeholder="Operator name"
-                    value={formData.reported_by}
-                    onChange={(e) => setFormData({ ...formData, reported_by: e.target.value })}
-                    style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '0.88rem' }}
-                  />
+                <label className="field-label">Reason keys</label>
+                <div className="filter-row" style={{ flexWrap: 'wrap', overflow: 'visible' }}>
+                  {options.reason_keys.map((key) => {
+                    const selected = (isOem ? oemForm.reason_key_ids : opsForm.reason_key_ids).includes(key.id);
+                    return (
+                      <button
+                        key={key.id}
+                        type="button"
+                        className={`filter-chip ${selected ? 'active' : ''}`}
+                        onClick={() => {
+                          if (isOem) setOemForm((prev) => ({ ...prev, reason_key_ids: toggleId(prev.reason_key_ids, key.id) }));
+                          else setOpsForm((prev) => ({ ...prev, reason_key_ids: toggleId(prev.reason_key_ids, key.id) }));
+                        }}
+                      >
+                        {key.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
               <div>
-                <label style={{ fontSize: '0.82rem', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '4px' }}>Site Location</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Sujangarh-SITE (Ch: 12+400)"
-                  value={formData.location}
-                  onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                  style={{ width: '100%', padding: '9px 12px', borderRadius: '8px', border: '1px solid #d1d5db', fontSize: '0.88rem' }}
+                <label className="field-label">{isOem ? 'Description' : 'Note'}</label>
+                <textarea
+                  placeholder={isOem ? 'Free-text details if needed' : 'Why the machine is stopped'}
+                  value={isOem ? oemForm.reason : opsForm.note}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (isOem) setOemForm((prev) => ({ ...prev, reason: value }));
+                    else setOpsForm((prev) => ({ ...prev, note: value }));
+                  }}
                 />
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  style={{ padding: '8px 16px', borderRadius: '8px', background: '#f3f4f6', color: '#374151', border: 'none', cursor: 'pointer', fontWeight: '600' }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  style={{ padding: '8px 20px', borderRadius: '8px', background: '#dc2626', color: '#ffffff', border: 'none', cursor: 'pointer', fontWeight: '700' }}
-                >
-                  {submitting ? 'Submitting...' : 'Submit Breakdown Report'}
+              {isOem ? (
+                <div>
+                  <label className="field-label">Severity</label>
+                  <SearchableSelect
+                    value={oemForm.severity}
+                    onChange={(e) => setOemForm((prev) => ({ ...prev, severity: e.target.value }))}
+                  >
+                    {(options.severities.length ? options.severities : [
+                      { value: 'LOW', label: 'Low' },
+                      { value: 'MEDIUM', label: 'Medium' },
+                      { value: 'HIGH', label: 'High' },
+                      { value: 'CRITICAL', label: 'Critical' },
+                    ]).map((item) => (
+                      <option key={item.value} value={item.value}>{item.label || item.value}</option>
+                    ))}
+                  </SearchableSelect>
+                  <p className="page-subtitle" style={{ marginTop: 6 }}>Ignored when reason keys are selected (highest key severity is used).</p>
+                </div>
+              ) : null}
+
+              <div>
+                <label className="field-label">{isOem ? 'Occurred at' : 'Started at'}</label>
+                <DateTimeField
+                  value={isOem ? oemForm.occurred_at : opsForm.started_at}
+                  onChange={(next) => {
+                    if (isOem) setOemForm((prev) => ({ ...prev, occurred_at: next }));
+                    else setOpsForm((prev) => ({ ...prev, started_at: next }));
+                  }}
+                  datePlaceholder="Select date"
+                />
+              </div>
+              <div>
+                <label className="field-label">Your ticket id</label>
+                <input
+                  type="text"
+                  placeholder="Optional"
+                  value={isOem ? oemForm.ref_id : opsForm.ref_id}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (isOem) setOemForm((prev) => ({ ...prev, ref_id: value }));
+                    else setOpsForm((prev) => ({ ...prev, ref_id: value }));
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                <button type="button" className="btn-secondary" onClick={() => setCreateOpen(false)}>Cancel</button>
+                <button type="submit" className="btn-primary" disabled={submitting}>
+                  {submitting ? 'Saving…' : (isOem ? 'Create breakdown' : 'Open Ops Stop')}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {closeOpen && closingRow && (
+        <div className="modal-overlay" onClick={() => setCloseOpen(false)} role="presentation">
+          <div className="modal-card" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()} role="dialog">
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '1rem' }}>
+                Close {closingRow.tt_number || (isOem ? `BD-${closingRow.id}` : `OS-${closingRow.id}`)}
+              </h3>
+              <button type="button" className="btn-ghost" onClick={() => setCloseOpen(false)}><LucideX size={16} /></button>
+            </div>
+            <form onSubmit={handleClose} style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {error ? <p className="page-subtitle" style={{ color: 'var(--danger)', margin: 0 }}>{error}</p> : null}
+              <p className="page-subtitle" style={{ margin: 0 }}>{machineLabel(closingRow)}</p>
+
+              {isOem ? (
+                <>
+                  <div>
+                    <label className="field-label">Resolution keys</label>
+                    <div className="filter-row" style={{ flexWrap: 'wrap', overflow: 'visible' }}>
+                      {options.resolution_keys.map((key) => {
+                        const selected = oemClose.resolution_key_ids.includes(key.id);
+                        return (
+                          <button
+                            key={key.id}
+                            type="button"
+                            className={`filter-chip ${selected ? 'active' : ''}`}
+                            onClick={() => setOemClose((prev) => ({ ...prev, resolution_key_ids: toggleId(prev.resolution_key_ids, key.id) }))}
+                          >
+                            {key.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="field-label">Resolution note</label>
+                    <textarea
+                      placeholder="What was done"
+                      value={oemClose.resolution_note}
+                      onChange={(e) => setOemClose((prev) => ({ ...prev, resolution_note: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="field-label">Solved by</label>
+                    <SearchableSelect
+                      value={oemClose.solved_by}
+                      onChange={(e) => setOemClose((prev) => ({ ...prev, solved_by: e.target.value }))}
+                    >
+                      {(options.solved_by.length ? options.solved_by : [
+                        { value: 'INTERNAL', label: 'Internal' },
+                        { value: 'EXTERNAL', label: 'External' },
+                        { value: 'OEM', label: 'OEM' },
+                      ]).map((item) => (
+                        <option key={item.value} value={item.value}>{item.label || item.value}</option>
+                      ))}
+                    </SearchableSelect>
+                  </div>
+                  <div>
+                    <label className="field-label">Resolved at</label>
+                    <DateTimeField
+                      value={oemClose.resolved_at}
+                      onChange={(next) => setOemClose((prev) => ({ ...prev, resolved_at: next }))}
+                      datePlaceholder="Select date"
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label className="field-label">Close note</label>
+                    <textarea
+                      required
+                      placeholder="Why / how the stop ended"
+                      value={opsClose.close_note}
+                      onChange={(e) => setOpsClose((prev) => ({ ...prev, close_note: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="field-label">Closed at</label>
+                    <DateTimeField
+                      value={opsClose.closed_at}
+                      onChange={(next) => setOpsClose((prev) => ({ ...prev, closed_at: next }))}
+                      datePlaceholder="Select date"
+                    />
+                  </div>
+                </>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                <button type="button" className="btn-secondary" onClick={() => setCloseOpen(false)}>Cancel</button>
+                <button type="submit" className="btn-primary" disabled={submitting}>
+                  {submitting ? 'Closing…' : 'Close ticket'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {detailRow && (
+        <div className="modal-overlay" onClick={() => setDetailRow(null)} role="presentation">
+          <div className="modal-card" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()} role="dialog">
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1rem' }}>{detailRow.tt_number || (isOem ? `BD-${detailRow.id}` : `OS-${detailRow.id}`)}</h3>
+                <p className="page-subtitle" style={{ margin: '4px 0 0' }}>{machineLabel(detailRow)}</p>
+              </div>
+              <button type="button" className="btn-ghost" onClick={() => setDetailRow(null)}><LucideX size={16} /></button>
+            </div>
+            <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 10, fontSize: '0.85rem' }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <StatusPill status={detailRow.status} />
+                {isOem && detailRow.severity ? (
+                  <span className={`badge-pill ${severityBadge(detailRow.severity)}`}>{detailRow.severity}</span>
+                ) : null}
+              </div>
+              <div><strong>Reason:</strong> {keyLabels(detailRow.reason_keys, isOem ? detailRow.reason : detailRow.note)}</div>
+              {isOem && detailRow.resolution_note ? <div><strong>Resolution:</strong> {detailRow.resolution_note}</div> : null}
+              {isOem && detailRow.resolution_keys?.length ? <div><strong>Resolution keys:</strong> {keyLabels(detailRow.resolution_keys)}</div> : null}
+              {!isOem && detailRow.close_note ? <div><strong>Close note:</strong> {detailRow.close_note}</div> : null}
+              {detailRow.solved_by ? <div><strong>Solved by:</strong> {detailRow.solved_by}</div> : null}
+              {detailRow.ref_id ? <div><strong>Ref:</strong> {detailRow.ref_id}</div> : null}
+              <div><strong>{isOem ? 'Occurred' : 'Started'}:</strong> {formatWhen(isOem ? detailRow.occurred_at : detailRow.started_at)}</div>
+              <div><strong>Duration:</strong> {formatMinutes(isOem ? detailRow.downtime_minutes : detailRow.duration_minutes)}</div>
+              {isOem ? (
+                <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+                  <div className="page-subtitle">OEM timeline</div>
+                  <div>Seen: {formatWhen(detailRow.seen_at)} {detailRow.seen_by ? `· ${detailRow.seen_by}` : ''}</div>
+                  <div>Accepted: {formatWhen(detailRow.accepted_at)} {detailRow.accepted_by ? `· ${detailRow.accepted_by}` : ''}</div>
+                  <div>Resolved: {formatWhen(detailRow.resolved_at)}</div>
+                  <div>Closed by: {detailRow.closed_by || '—'}</div>
+                  <div>Time to see: {formatMinutes(detailRow.time_to_see_minutes)}</div>
+                  <div>Time to response: {formatMinutes(detailRow.time_to_response_minutes)}</div>
+                  <div>Time to restore: {formatMinutes(detailRow.time_to_restore_minutes)}</div>
+                </div>
+              ) : (
+                <div>Closed: {formatWhen(detailRow.closed_at)} {detailRow.closed_by ? `· ${detailRow.closed_by}` : ''}</div>
+              )}
+              {canClose(detailRow) ? (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                  <button type="button" className="btn-primary" onClick={(e) => { setDetailRow(null); openClose(detailRow, e); }}>
+                    Close ticket
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       )}
