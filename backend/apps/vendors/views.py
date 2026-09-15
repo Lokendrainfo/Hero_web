@@ -94,8 +94,16 @@ class VendorViewSet(viewsets.ModelViewSet):
         if isinstance(external_res, dict):
             external_vendor = external_res.get('data') if external_res.get('success') else external_res
 
+        if instance and ext_id:
+            try:
+                sync_vendor_detail_links(instance, ext_id)
+            except Exception:
+                pass
+
         from apps.machines.models import Machine
         from apps.machines.serializers import MachineSerializer
+        from apps.authentication.models import User
+        from apps.authentication.serializers import UserSerializer
 
         assigned_machines_qs = Machine.objects.none()
         if instance:
@@ -105,20 +113,39 @@ class VendorViewSet(viewsets.ModelViewSet):
 
         machines_data = MachineSerializer(assigned_machines_qs, many=True).data
 
+        # Determine users dynamically from live response or DB
+        raw_users = []
+        if isinstance(external_vendor, dict) and external_vendor.get('users'):
+            raw_users = external_vendor.get('users')
+        elif instance:
+            db_users = User.objects.filter(vendor=instance).exclude(
+                Q(is_superuser=True) | Q(role__iexact='ADMIN')
+            ).distinct()
+            raw_users = UserSerializer(db_users, many=True).data
+
+        dedup_users = []
+        seen_user_keys = set()
+        for u in (raw_users or []):
+            if not isinstance(u, dict):
+                continue
+            key = str(u.get('userId') or u.get('id') or u.get('mobile') or u.get('phone') or u.get('phone_number') or u.get('email') or u.get('username') or u.get('name') or '').strip().lower()
+            if key and key not in seen_user_keys:
+                seen_user_keys.add(key)
+                dedup_users.append(u)
+
         if instance:
             data = VendorSerializer(instance).data
             if isinstance(external_vendor, dict):
-                # Ensure live ILYNC arrays (machines, users, turnOverList, etc.) override local fields
                 for k, v in external_vendor.items():
                     if v is not None:
                         data[k] = v
-            # Merge machines array if external vendor has machines list
             if isinstance(external_vendor, dict) and external_vendor.get('machines'):
                 data['machines'] = external_vendor['machines']
             else:
                 data['machines'] = machines_data
             data['assigned_machines'] = machines_data
             data['machines_count'] = len(data.get('machines', []))
+            data['users'] = dedup_users
             return success_response(data=data)
         else:
             if isinstance(external_vendor, dict):
@@ -126,6 +153,7 @@ class VendorViewSet(viewsets.ModelViewSet):
                     external_vendor['machines'] = machines_data
                 external_vendor['assigned_machines'] = machines_data
                 external_vendor['machines_count'] = len(external_vendor.get('machines', []))
+                external_vendor['users'] = dedup_users
             return success_response(data=external_vendor)
 
     @action(detail=False, methods=['post'], url_path='sync')

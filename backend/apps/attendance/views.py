@@ -670,17 +670,19 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         subordinate_ids = [uid for uid in subordinate_ids if uid != user.id]
 
         if is_admin:
-            qs = AttendanceRecord.objects.filter(approval_status='PENDING')
+            qs = AttendanceRecord.objects.filter(approval_status='PENDING').exclude(user=user)
         else:
             mgr_filter = Q(reporting_manager=user) | Q(user__reporting_manager=user) | Q(marked_by=user)
             if subordinate_ids:
                 mgr_filter |= Q(user_id__in=subordinate_ids)
-            if allowed_vendor_ids:
+
+            user_roles = [r.upper() for r in user.get_role_list()]
+            if allowed_vendor_ids and any(r in user_roles for r in ['MANAGER', 'SUPERVISOR', 'VENDOR', 'ADMIN', 'HERO']):
                 mgr_filter |= Q(vendor_id__in=allowed_vendor_ids) | Q(user__vendor_id__in=allowed_vendor_ids)
 
             qs = AttendanceRecord.objects.filter(
                 Q(approval_status='PENDING') & mgr_filter
-            )
+            ).exclude(user=user)
 
         req_vendor = request.query_params.get('vendor_id') or request.query_params.get('vendor')
         if req_vendor and str(req_vendor).strip() and str(req_vendor).lower() != 'all':
@@ -772,6 +774,24 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         status_filter = request.query_params.get('status')
 
         allowed_vendor_ids = get_user_vendor_ids(user)
+        req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
+
+        # Trigger live iLync user detail sync for vendors in scope
+        from apps.vendors.models import Vendor
+        from apps.vendors.services import sync_vendor_detail_links
+        v_sync_qs = Vendor.objects.filter(is_active=True).exclude(external_vendor_id__isnull=True).exclude(external_vendor_id='')
+        if allowed_vendor_ids is not None:
+            v_sync_qs = v_sync_qs.filter(id__in=allowed_vendor_ids)
+        if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+            v_sync_qs = v_sync_qs.filter(
+                Q(external_vendor_id=req_v) | Q(name__icontains=req_v) | Q(id=req_v if str(req_v).isdigit() else None)
+            )
+        for v_item in v_sync_qs:
+            try:
+                sync_vendor_detail_links(v_item, v_item.external_vendor_id)
+            except Exception:
+                pass
+
         if allowed_vendor_ids is None:
             team_qs = User.objects.filter(is_active=True).filter(
                 Q(vendor__isnull=False) | Q(hero_vendor_assignments__isnull=False)
@@ -788,7 +808,6 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
             ).distinct().order_by('id')
 
-        req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
         if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
             if allowed_vendor_ids is None:
                 check_vendor_access(user, req_v)

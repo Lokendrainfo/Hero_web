@@ -29,24 +29,71 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
                     Q(machine_chassis_no=chassis) | Q(serial_number=chassis)
                 ).update(vendor=vendor_obj)
 
-        # Link Users
+        # Link & Upsert Users
         users_data = v_data.get('users') or []
         for u_info in users_data:
+            if not isinstance(u_info, dict):
+                continue
             ext_u_id = str(u_info.get('userId') or '').strip()
-            mobile = str(u_info.get('mobile') or '').strip()
+            mobile = str(u_info.get('mobile') or u_info.get('phone') or '').strip()
             email = str(u_info.get('email') or '').strip()
+            name = str(u_info.get('name') or '').strip()
+            designation = str(u_info.get('designation') or 'OPERATOR').strip()
 
             matched_user = None
             if ext_u_id:
                 matched_user = User.objects.filter(external_user_id=ext_u_id).first()
             if not matched_user and mobile:
-                matched_user = User.objects.filter(phone_number=mobile).first()
+                matched_user = User.objects.filter(Q(phone_number=mobile) | Q(username=mobile)).first()
             if not matched_user and email:
                 matched_user = User.objects.filter(email__iexact=email).first()
 
+            u_role = 'VENDOR' if designation.upper() == 'VENDOR' else ('TRACKER' if 'TRACK' in designation.upper() else 'OPERATOR')
             if matched_user:
+                changed = False
+                if name and matched_user.first_name != name:
+                    matched_user.first_name = name
+                    matched_user.last_name = ''
+                    changed = True
+                if email and (not matched_user.email or matched_user.email != email):
+                    matched_user.email = email
+                    changed = True
+                if u_role and matched_user.role != u_role:
+                    matched_user.role = u_role
+                    changed = True
+                if matched_user.vendor != vendor_obj:
+                    matched_user.vendor = vendor_obj
+                    changed = True
+                if ext_u_id and not matched_user.external_user_id:
+                    matched_user.external_user_id = ext_u_id
+                    changed = True
+                if changed:
+                    matched_user.save()
                 HeroVendorAssignment.objects.get_or_create(
                     user=matched_user,
+                    vendor=vendor_obj,
+                    defaults={'is_active': True}
+                )
+            elif name or mobile:
+                u_role = 'VENDOR' if designation.upper() == 'VENDOR' else ('OPERATOR' if 'OPERATOR' in designation.upper() else 'TRACKER' if 'TRACKER' in designation.upper() else 'OPERATOR')
+                username_val = mobile or ext_u_id or f"VND-{vendor_obj.id}-{name.replace(' ', '')}"
+                new_user, _ = User.objects.get_or_create(
+                    username=username_val,
+                    defaults={
+                        'external_user_id': ext_u_id or None,
+                        'phone_number': mobile or '',
+                        'email': email or f"{username_val}@ilync.tech",
+                        'first_name': name,
+                        'role': u_role,
+                        'vendor': vendor_obj,
+                        'is_active': True
+                    }
+                )
+                if new_user.vendor != vendor_obj:
+                    new_user.vendor = vendor_obj
+                    new_user.save()
+                HeroVendorAssignment.objects.get_or_create(
+                    user=new_user,
                     vendor=vendor_obj,
                     defaults={'is_active': True}
                 )

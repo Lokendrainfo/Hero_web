@@ -185,36 +185,60 @@ export const Vendors = () => {
     });
 
     const machinesList = Array.from(machineMap.values());
-    const usersList = v.users || extras.users || [];
+
+    const rawUsers = [
+      ...(Array.isArray(v?.users) ? v.users : []),
+      ...(Array.isArray(extras?.users) ? extras.users : [])
+    ];
+    const uMap = new Map();
+    rawUsers.forEach((u) => {
+      if (!u) return;
+      const key = String(
+        u.userId || u.id || u.mobile || u.phone || u.phone_number || u.email || u.name || u.username || ''
+      ).trim().toLowerCase();
+      if (!key) return;
+      if (!uMap.has(key)) {
+        uMap.set(key, {
+          ...u,
+          id: u.id || u.userId,
+          name: u.name || u.username || (u.first_name ? `${u.first_name} ${u.last_name || ''}`.trim() : ''),
+          mobile: u.mobile || u.phone || u.phone_number,
+          email: u.email,
+          designation: u.designation || u.role
+        });
+      }
+    });
+    const usersList = Array.from(uMap.values());
+
     const bank = v.bankAccount || v.bank_account || v.bank_details || {};
     const serviceAreas = v.serviceAreas || v.service_areas || (v.businessUnit ? [v.businessUnit] : ['FIBER']);
     const isActive = v.isActive ?? v.is_active ?? v.active ?? (v.status ? String(v.status).toUpperCase() === 'ACTIVE' : true);
 
     const partnerName = v.partnerName || v.name || v.partner_name;
-    const contact = v.contactName || v.contact_person || v.owner_name || 'N/A';
+    const contact = v.contactName || v.contact_person || v.owner_name || '';
     const codeVal = v.code || v.vendor_code || v.external_vendor_id || v.external_id || v.id;
-    const legalType = v.legalEntityType || v.legal_entity_type || v.vendor_type || 'FIRM';
-    const bizUnit = v.businessUnit || v.business_unit || 'PROJECT_WORK';
-    const phoneVal = v.phoneNumber || v.phone || v.contact_phone || v.contactNumber || 'N/A';
-    const emailVal = v.email || 'N/A';
+    const legalType = v.legalEntityType || v.legal_entity_type || v.vendor_type || '';
+    const bizUnit = v.businessUnit || v.business_unit || '';
+    const phoneVal = v.phoneNumber || v.phone || v.contact_phone || v.contactNumber || '';
+    const emailVal = v.email || '';
     const desigVal = v.designation || 'Vendor';
 
-    const regAddress = v.registeredAddress || v.address || v.registered_address || 'Sujangarh Site';
+    const regAddress = v.registeredAddress || v.address || v.registered_address || '';
     const commAddress = v.communicationAddress || v.communication_address || regAddress;
-    const pinVal = v.pinCode || v.pincode || v.pin_code || '302019';
+    const pinVal = v.pinCode || v.pincode || v.pin_code || '';
     const geoInfo = [v.circle, v.district, v.state].filter(Boolean).join(' · ');
 
     const holderName = bank.accountHolderName || bank.account_holder_name || bank.holder_name || partnerName;
-    const bankNameVal = bank.bankName || bank.bank_name || 'AU Small Finance Bank';
-    const accNum = bank.accountNumber || bank.account_number || '2121218033061250';
-    const ifscVal = bank.ifscCode || bank.ifsc_code || bank.ifsc || 'AUBL0002180';
+    const bankNameVal = bank.bankName || bank.bank_name || '';
+    const accNum = bank.accountNumber || bank.account_number || '';
+    const ifscVal = bank.ifscCode || bank.ifsc_code || bank.ifsc || '';
 
-    const panVal = v.panCard || v.pan_card || v.pan || v.pan_number || 'NEEDED TO REPLACE';
-    const gstVal = v.gstNumber || v.gst_number || v.gstin || v.gst || 'N/A';
+    const panVal = v.panCard || v.pan_card || v.pan || v.pan_number || '';
+    const gstVal = v.gstNumber || v.gst_number || v.gstin || v.gst || '';
     const isGstReg = Boolean(v.gstDocUrl || v.gstNumber || v.gstin || v.gst);
-    const msmeVal = v.msmeNumber || v.msme_number || v.msme || 'N/A';
+    const msmeVal = v.msmeNumber || v.msme_number || v.msme || '';
     const tdsVal = v.tdsAmount || v.tds_amount || v.tds || 0;
-    const lowTdsCert = v.lowTdsCertificateUrl ? 'AVAILABLE' : 'N/A';
+    const lowTdsCert = v.lowTdsCertificateUrl ? 'AVAILABLE' : '';
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>

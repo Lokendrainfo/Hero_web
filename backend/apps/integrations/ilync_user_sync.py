@@ -27,7 +27,26 @@ def sync_ilync_user_to_django(ilync_user_data, set_password_if_new=None, default
 
     # Vendor lookup / assignment
     vendor_obj = None
-    if companies:
+    v_id = str(
+        ilync_user_data.get('vendorId') or
+        ilync_user_data.get('assignedVendorId') or
+        (ilync_user_data.get('vendor', {}).get('id') if isinstance(ilync_user_data.get('vendor'), dict) else '') or
+        (ilync_user_data.get('vendorSnapshot', {}).get('id') if isinstance(ilync_user_data.get('vendorSnapshot'), dict) else '') or
+        ''
+    ).strip()
+    v_name = str(
+        ilync_user_data.get('vendorName') or
+        (ilync_user_data.get('vendor', {}).get('name') if isinstance(ilync_user_data.get('vendor'), dict) else '') or
+        (ilync_user_data.get('vendorSnapshot', {}).get('name') if isinstance(ilync_user_data.get('vendorSnapshot'), dict) else '') or
+        ''
+    ).strip()
+
+    if v_id:
+        vendor_obj = Vendor.objects.filter(external_vendor_id=v_id).first()
+    if not vendor_obj and v_name:
+        vendor_obj = Vendor.objects.filter(name__icontains=v_name).first()
+
+    if not vendor_obj and companies:
         company_name = companies[0]
         if company_name and company_name.strip() and company_name.upper() not in ['TELECRATS', 'HERO', 'HERO INFRASTRUCTURE']:
             vendor_obj, _ = Vendor.objects.get_or_create(

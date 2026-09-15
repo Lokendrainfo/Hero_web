@@ -300,7 +300,7 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
     from apps.common.reporting_scope import get_reporting_scope
     from apps.authentication.models import User
 
-    is_admin = bool(user and (user.is_superuser or 'ADMIN' in user.get_role_list()))
+    is_admin = bool(user and (user.is_superuser or ('ADMIN' in user.get_role_list() if hasattr(user, 'get_role_list') else False)))
     allowed_user_identifiers = set()
     has_subordinates = False
 
@@ -414,7 +414,7 @@ def is_task_authorized_for_user(user, task_id, request=None):
     if not user or not user.is_authenticated:
         return False
 
-    is_admin = bool(user.is_superuser or 'ADMIN' in user.get_role_list())
+    is_admin = bool(user.is_superuser or ('ADMIN' in user.get_role_list() if hasattr(user, 'get_role_list') else False))
     if is_admin:
         return True
 

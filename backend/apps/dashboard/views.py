@@ -85,26 +85,36 @@ class DashboardSummaryView(APIView):
 
         try:
             from apps.common.progress import get_task_statistics
-            task_stats = get_task_statistics(user=user, request=request, task_type='FIBER_TRENCHING_DUCTING_TASK', page_size=200)
+            page_sz = int(q_params.get('size') or q_params.get('page_size') or 10)
+            task_stats = get_task_statistics(user=user, request=request, task_type='FIBER_TRENCHING_DUCTING_TASK', page_size=page_sz)
             authorized_tasks = task_stats.get("authorized_tasks", [])
             pending_tasks = task_stats.get("pending", 0)
 
-            for t_idx, t_item in enumerate(authorized_tasks[:5]):
+            for t_idx, t_item in enumerate(authorized_tasks[:10]):
                 t_code = t_item.get('taskCode') or t_item.get('task_code') or f'TASK-{t_idx+1}'
                 t_disp = t_item.get('displayName') or t_item.get('title') or 'Block Scope'
-                cov_km = safe_float(t_item.get('coveredLengthKm'), 0)
-                tot_km = safe_float(t_item.get('totalLengthKm'), 50.0)
-                pct = t_item.get('pct') if t_item.get('pct') is not None else (min(100, int((cov_km / tot_km) * 100)) if tot_km > 0 else 0)
+                cov_km = safe_float(t_item.get('covered_distance') if t_item.get('covered_distance') is not None else t_item.get('coveredLengthKm'), 0.0)
+                tot_km = safe_float(t_item.get('planned_distance') if t_item.get('planned_distance') is not None else t_item.get('totalLengthKm'), 0.0)
+                pct = safe_float(t_item.get('progress_percent') if t_item.get('progress_percent') is not None else t_item.get('pct'), 0.0)
+                location_str = t_item.get('locationStr') or (t_item.get('location', {}).get('blockName') if isinstance(t_item.get('location'), dict) else None) or t_disp
 
                 task_list_items.append({
                     "id": t_item.get('id', t_code),
                     "taskCode": t_code,
                     "title": t_disp,
-                    "subtitle": f"Location: {t_item.get('locationStr') or t_disp}",
-                    "progress_val": t_item.get('coveredScopeStr') or f"{cov_km:.2f} km",
-                    "target_val": t_item.get('totalScopeStr') or f"{tot_km:.2f} km",
+                    "displayName": t_disp,
+                    "locationStr": location_str,
+                    "subtitle": f"Location: {location_str}",
+                    "coveredLengthKm": cov_km,
+                    "covered_distance": cov_km,
+                    "plannedLengthKm": tot_km,
+                    "planned_distance": tot_km,
+                    "coveredScopeStr": f"{cov_km:.2f} km",
+                    "totalScopeStr": f"{tot_km:.2f} km",
                     "progress_percent": pct,
+                    "pct": pct,
                     "status": t_item.get('status', 'IN_PROGRESS'),
+                    "vendorName": t_item.get('vendorName') or '',
                     "due_date": due_date_str,
                     "overdue_text": "On Schedule"
                 })
@@ -198,15 +208,19 @@ class DashboardSummaryView(APIView):
             "attendance_pct": 92 if total_machines > 0 else 0
         }
 
+        tot_cov_sum = sum(safe_float(t.get('covered_distance') or t.get('coveredLengthKm')) for t in authorized_tasks)
+        tot_plan_sum = sum(safe_float(t.get('planned_distance') or t.get('totalLengthKm')) for t in authorized_tasks)
+        perf_pct = int((tot_cov_sum / tot_plan_sum) * 100) if tot_plan_sum > 0 else 0
+
         fiber_tasks = {
             "Fiber 1": task_list_items
         }
 
         has_tasks = len(authorized_tasks) > 0
         performance = {
-            "achievement": "640m" if has_tasks else "0m",
-            "target": "1,000m" if has_tasks else "0m",
-            "percentage": 64 if has_tasks else 0,
+            "achievement": f"{tot_cov_sum:.2f} km" if has_tasks else "0.00 km",
+            "target": f"{tot_plan_sum:.2f} km" if has_tasks else "0.00 km",
+            "percentage": perf_pct,
             "message": "You're on track! Keep it up." if has_tasks else "No tasks assigned to you"
         }
 
@@ -222,7 +236,7 @@ class DashboardSummaryView(APIView):
         from apps.attendance.models import AttendanceRecord
         from django.db.models import Q
         
-        req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
+        req_v = q_params.get('vendor_id') or q_params.get('vendor')
         team_qs = User.objects.filter(is_active=True)
         if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
             team_qs = team_qs.filter(
@@ -300,6 +314,7 @@ class DashboardSummaryView(APIView):
             "fuel_status_widget": fuel_status_widget,
             "fuel_theft_widget": fuel_theft_widget,
             "fiber_tasks": fiber_tasks,
+            "assigned_tasks": task_list_items,
             "performance": performance,
             "my_shift": my_shift,
             "vendor_team_attendance": vendor_team_attendance

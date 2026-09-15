@@ -263,8 +263,14 @@ export const Attendance = () => {
       return rawName;
     };
 
-    // 2. Map all teamMembers into canonical vendor team groups
+    // 2. Map all teamMembers into canonical vendor team groups (deduplicated)
+    const seenMemberKeys = new Set();
     teamMembers.forEach(m => {
+      if (!m) return;
+      const memKey = String(m.user_id || m.employee_id || m.phone_number || m.user_name || '').trim().toLowerCase();
+      if (memKey && seenMemberKeys.has(memKey)) return;
+      if (memKey) seenMemberKeys.add(memKey);
+
       const resolvedName = resolveVendorName(m.vendor_name);
       if (!groups[resolvedName]) {
         const details = vendorDetailsMap[resolvedName.toLowerCase()] || {};

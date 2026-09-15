@@ -38,7 +38,7 @@ export const Dashboard = () => {
 
   useEffect(() => {
     setVendorTasks([]);
-    const params = { page: 0, size: 10 };
+    const params = { page: 0, size: 10, taskType: 'FIBER_TRENCHING_DUCTING_TASK' };
     const userVendorId = user?.vendor?.external_vendor_id || user?.vendor_id || user?.vendor?.id || null;
     const targetVendorId = (selectedVendorId && selectedVendorId !== 'all')
       ? selectedVendorId
@@ -49,7 +49,8 @@ export const Dashboard = () => {
       .then(res => {
         const raw = res.data || res;
         const norm = raw.results ? raw : (raw.data || {});
-        setVendorTasks(norm.results || norm.content || (Array.isArray(norm) ? norm : []));
+        const list = norm.results || norm.content || (Array.isArray(norm) ? norm : []);
+        setVendorTasks(list);
       })
       .catch(console.error);
   }, [selectedVendorId, user, isAdmin]);
@@ -229,56 +230,63 @@ export const Dashboard = () => {
           </button>
         </div>
 
-        {vendorTasks.length === 0 ? (
-          <div className="empty-state" style={{ border: 'none', borderRadius: 0 }}>
-            <h3>No tasks assigned</h3>
-            <p>Tasks from ILYNC will appear here for the selected vendor.</p>
-          </div>
-        ) : (
-          <div className="table-container" style={{ border: 'none' }}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Task</th>
-                  <th>Location</th>
-                  <th>Progress</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {vendorTasks.slice(0, 6).map((t) => {
-                  const coveredKm = t.coveredLengthKm !== undefined ? Number(t.coveredLengthKm) : 0;
-                  const totalKm = t.routeSnapshot?.lengthKm ? Number(t.routeSnapshot.lengthKm) : 0;
-                  const pct = formatPct(t.pct || (totalKm > 0 ? (coveredKm / totalKm) * 100 : (coveredKm > 0 ? 64 : 0)));
-                  const isDone = t.status === 'COMPLETED' || pct === 100;
-                  return (
-                    <tr key={t.id} onClick={() => navigate('/tasks')}>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>{t.displayName || t.title || t.taskType}</div>
-                        <div className="page-subtitle">{t.taskCode || '—'}</div>
-                      </td>
-                      <td>{t.locationStr || t.location?.blockName || '—'}</td>
-                      <td style={{ minWidth: 140 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: 4 }}>
-                          <span>{formatScopeStr(t.coveredScopeStr, coveredKm)}</span>
-                          <span>{pct}%</span>
-                        </div>
-                        <div className="progress-track">
-                          <div className="progress-fill" style={{ width: `${pct}%`, background: isDone ? 'var(--live)' : '#111827' }} />
-                        </div>
-                      </td>
-                      <td>
-                        <span className={`badge-pill ${isDone ? 'badge-running' : 'badge-idle'}`}>
-                          {t.status || 'IN_PROGRESS'}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {(() => {
+          const listToRender = vendorTasks.length > 0 ? vendorTasks : (data?.assigned_tasks || []);
+          if (listToRender.length === 0) {
+            return (
+              <div className="empty-state" style={{ border: 'none', borderRadius: 0 }}>
+                <h3>No tasks assigned</h3>
+                <p>Tasks from ILYNC will appear here for the selected vendor.</p>
+              </div>
+            );
+          }
+          return (
+            <div className="table-container" style={{ border: 'none' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Task</th>
+                    <th>Location</th>
+                    <th>Progress</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {listToRender.slice(0, 6).map((t) => {
+                    const coveredKm = t.covered_distance !== undefined ? Number(t.covered_distance) : (t.coveredLengthKm !== undefined ? Number(t.coveredLengthKm) : 0);
+                    const totalKm = t.planned_distance !== undefined ? Number(t.planned_distance) : (t.plannedLengthKm !== undefined ? Number(t.plannedLengthKm) : (t.routeSnapshot?.lengthKm ? Number(t.routeSnapshot.lengthKm) : 0));
+                    const rawPct = t.progress_percent !== undefined ? Number(t.progress_percent) : (t.pct !== undefined ? Number(t.pct) : (totalKm > 0 ? (coveredKm / totalKm) * 100 : 0));
+                    const pct = Math.min(100, Math.max(0, Math.round(rawPct)));
+                    const isDone = t.status === 'COMPLETED' || pct === 100;
+                    return (
+                      <tr key={t.id || t.taskCode} onClick={() => navigate('/tasks')} style={{ cursor: 'pointer' }}>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{t.displayName || t.title || t.taskType}</div>
+                          <div className="page-subtitle">{t.taskCode || '—'}</div>
+                        </td>
+                        <td>{t.locationStr || t.location?.blockName || t.location?.locationName || '—'}</td>
+                        <td style={{ minWidth: 140 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: 4 }}>
+                            <span>{coveredKm.toFixed(2)} / {totalKm > 0 ? totalKm.toFixed(2) : '—'} km</span>
+                            <span>{pct}%</span>
+                          </div>
+                          <div className="progress-track">
+                            <div className="progress-fill" style={{ width: `${pct}%`, background: isDone ? 'var(--live)' : 'var(--primary, #0284c7)' }} />
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`badge-pill ${isDone ? 'badge-running' : 'badge-idle'}`}>
+                            {t.status || 'IN_PROGRESS'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
       </section>
     </div>
   );

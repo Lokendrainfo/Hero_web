@@ -147,7 +147,8 @@ class IlyncClient:
             "FIBER_TRENCHING_DUCTING_TASK", "LAND_BASED_SURVEY",
             "GREEN_SURVEY", "BROWN_SURVEY"
         }
-        req_params = {"page": page, "size": size}
+        eff_size = min(int(size), 50) if (size and str(size).isdigit() and int(size) > 0) else 50
+        req_params = {"page": page, "size": eff_size}
         if task_type and str(task_type).upper() in valid_types:
             req_params["taskType"] = str(task_type).upper()
         

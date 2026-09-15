@@ -10,7 +10,7 @@ def get_user_vendor_ids(user, resolve_fallback=True):
     if not user or not user.is_authenticated:
         return None
     
-    user_roles = [str(r).upper() for r in user.get_role_list()]
+    user_roles = [str(r).upper() for r in user.get_role_list()] if hasattr(user, 'get_role_list') else []
     
     # Check if user has ADMIN or GIS role or superuser status
     if user.is_superuser or 'ADMIN' in user_roles or any('GIS' in r for r in user_roles):
