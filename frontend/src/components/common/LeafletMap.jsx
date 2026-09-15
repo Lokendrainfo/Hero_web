@@ -19,6 +19,7 @@ export const LeafletMap = ({
   const mapInstanceRef = useRef(null);
   const markersGroupRef = useRef(null);
   const polylineRef = useRef(null);
+  const hasFittedBoundsRef = useRef(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const wrapperRef = useRef(null);
   const navigate = useNavigate();
@@ -191,11 +192,15 @@ export const LeafletMap = ({
       }).addTo(map);
     }
 
-    // Fit map view bounds
-    if (bounds.length > 1) {
-      map.fitBounds(bounds, { padding: [50, 50] });
-    } else if (bounds.length === 1) {
-      map.setView(bounds[0], zoom);
+    // Fit map view bounds (only on initial load or singleMachine selection)
+    if (!hasFittedBoundsRef.current || singleMachine) {
+      if (bounds.length > 1) {
+        map.fitBounds(bounds, { padding: [50, 50] });
+        hasFittedBoundsRef.current = true;
+      } else if (bounds.length === 1) {
+        map.setView(bounds[0], zoom);
+        hasFittedBoundsRef.current = true;
+      }
     }
 
     setTimeout(() => {

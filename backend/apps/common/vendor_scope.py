@@ -129,7 +129,7 @@ def get_user_authorized_machines(user, request=None):
         if request:
             q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
             requested_vendor = q_params.get('vendor_id') or q_params.get('vendor')
-            if requested_vendor and str(requested_vendor).strip() and requested_vendor != 'all':
+            if requested_vendor and str(requested_vendor).strip() and str(requested_vendor).strip().lower() not in ['all', 'undefined', 'null', 'none', '']:
                 req_vendor_obj = None
                 if str(requested_vendor).isdigit():
                     req_vendor_obj = Vendor.objects.filter(id=int(requested_vendor)).first()
@@ -242,7 +242,7 @@ def filter_queryset_by_vendor(queryset, user, vendor_field='vendor_id', request=
     if request:
         q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
         requested_vendor = q_params.get('vendor_id') or q_params.get('vendor')
-        if requested_vendor and str(requested_vendor).strip() and requested_vendor != 'all':
+        if requested_vendor and str(requested_vendor).strip() and str(requested_vendor).strip().lower() not in ['all', 'undefined', 'null', 'none', '']:
             # Strictly verify if user is allowed to access requested vendor
             check_vendor_access(user, requested_vendor)
 

@@ -12,12 +12,17 @@ class AlertViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        q_params = getattr(self.request, 'query_params', getattr(self.request, 'GET', {}))
+        requested_vendor = q_params.get('vendor_id') or q_params.get('vendor')
+
+        if (user.is_superuser or 'ADMIN' in [str(r).upper() for r in user.get_role_list()]) and (not requested_vendor or str(requested_vendor).strip().lower() in ['all', 'undefined', 'null', 'none', '']):
+            return Alert.objects.all().order_by('-created_at', '-id')
+
         from apps.common.vendor_scope import filter_queryset_by_vendor
         qs = filter_queryset_by_vendor(Alert.objects.all(), user, 'vendor_id', request=self.request)
-        if not qs.exists() and Alert.objects.count() == 0:
-            # Seed demo alerts if empty
-            pass
-        return qs
+        if hasattr(Alert, 'machine') and not user.is_superuser and 'ADMIN' not in [str(r).upper() for r in user.get_role_list()] and not qs.exists():
+            qs = filter_queryset_by_vendor(Alert.objects.all(), user, 'machine__vendor_id', request=self.request)
+        return qs.order_by('-created_at', '-id')
 
     @action(detail=True, methods=['post'], url_path='mark-read')
     def mark_read(self, request, pk=None):

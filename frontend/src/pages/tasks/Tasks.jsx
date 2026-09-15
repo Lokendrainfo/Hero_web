@@ -365,6 +365,20 @@ export const Tasks = () => {
     });
   }, [vendorScopedTasks, selectedTaskType, searchQuery]);
 
+  // Reset page to 0 when filters change
+  useEffect(() => {
+    setPage(0);
+  }, [selectedTaskType, searchQuery, selectedVendorId]);
+
+  const displayTotalElements = filteredTasks.length;
+  const displayTotalPages = Math.max(1, Math.ceil(displayTotalElements / pageSize));
+
+  const paginatedTasks = useMemo(() => {
+    if (!Array.isArray(filteredTasks)) return [];
+    const start = page * pageSize;
+    return filteredTasks.slice(start, start + pageSize);
+  }, [filteredTasks, page, pageSize]);
+
   // Extract unique Districts from current tasks for location filter dropdown
   const uniqueDistricts = useMemo(() => {
     return Array.from(new Set(
@@ -533,7 +547,7 @@ export const Tasks = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredTasks.map(t => {
+              {paginatedTasks.map(t => {
                 const isCompleted = t.status === 'COMPLETED';
                 const pct = formatPct(t.progress_percent || t.pct || 0);
                 const levelStr = (t.routeSnapshot?.level || (t.depth === 0 ? 'BLOCK' : (t.depth === 1 ? 'RING' : 'SEGMENT'))).toUpperCase();
@@ -629,8 +643,8 @@ export const Tasks = () => {
             </tbody>
           </table>
 
-          {/* Server-Side Pagination Bar */}
-          {totalElements > 0 && (
+          {/* Pagination Bar */}
+          {displayTotalElements > 0 && (
             <div style={{
               display: 'flex',
               justifyContent: 'space-between',
@@ -644,20 +658,20 @@ export const Tasks = () => {
               gap: '10px'
             }}>
               <div>
-                Showing <strong>{totalElements > 0 ? page * pageSize + 1 : 0}–{Math.min(totalElements, (page + 1) * pageSize)}</strong> of <strong>{totalElements}</strong> tasks
+                Showing <strong>{displayTotalElements > 0 ? page * pageSize + 1 : 0}–{Math.min(displayTotalElements, (page + 1) * pageSize)}</strong> of <strong>{displayTotalElements}</strong> tasks
               </div>
 
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={() => fetchMyTasks(page - 1)}
+                  onClick={() => setPage(p => Math.max(0, p - 1))}
                   disabled={page === 0}
                 >
                   Previous
                 </button>
                 {(() => {
-                  const last = Math.max(0, (Number(totalPages) || 1) - 1);
+                  const last = Math.max(0, displayTotalPages - 1);
                   const start = Math.max(0, page - 2);
                   const end = Math.min(last, page + 2);
                   const items = [];
@@ -667,18 +681,18 @@ export const Tasks = () => {
                       key={i}
                       type="button"
                       className={i === page ? 'btn-primary' : 'btn-secondary'}
-                      onClick={() => fetchMyTasks(i)}
+                      onClick={() => setPage(i)}
                     >
                       {i + 1}
                     </button>
                   ));
                 })()}
-                <span className="page-subtitle">Page {page + 1} of {Math.max(1, Number(totalPages) || 1)}</span>
+                <span className="page-subtitle">Page {page + 1} of {displayTotalPages}</span>
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={() => fetchMyTasks(page + 1)}
-                  disabled={page >= (Number(totalPages) || 1) - 1}
+                  onClick={() => setPage(p => Math.min(displayTotalPages - 1, p + 1))}
+                  disabled={page >= displayTotalPages - 1}
                 >
                   Next
                 </button>

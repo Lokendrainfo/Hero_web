@@ -114,18 +114,24 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
 
     def get_check_in_photo(self, obj):
         if obj.check_in_photo:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.check_in_photo.url)
-            return obj.check_in_photo.url
+            try:
+                request = self.context.get('request')
+                if request:
+                    return request.build_absolute_uri(obj.check_in_photo.url)
+                return obj.check_in_photo.url
+            except Exception:
+                return str(obj.check_in_photo)
         return None
 
     def get_check_out_photo(self, obj):
         if obj.check_out_photo:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.check_out_photo.url)
-            return obj.check_out_photo.url
+            try:
+                request = self.context.get('request')
+                if request:
+                    return request.build_absolute_uri(obj.check_out_photo.url)
+                return obj.check_out_photo.url
+            except Exception:
+                return str(obj.check_out_photo)
         return None
 
     def get_approved_by_name(self, obj):

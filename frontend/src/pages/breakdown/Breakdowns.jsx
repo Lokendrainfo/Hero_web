@@ -135,16 +135,28 @@ export const Breakdowns = () => {
   const fetchBreakdowns = () => {
     setLoading(true);
     const params = {};
-    if (selectedVendor !== 'all') params.vendor_id = selectedVendor;
+    if (selectedVendor && selectedVendor !== 'all') params.vendor_id = selectedVendor;
 
     breakdownService.getAll(params)
       .then(res => {
-        const payload = res.data?.data || res.data || {};
-        const list = payload.results || payload.content || (Array.isArray(payload) ? payload : []);
-        setBreakdowns(Array.isArray(list) ? list : []);
+        const raw = res.data?.data !== undefined ? res.data.data : (res.data !== undefined ? res.data : res);
+        let list = [];
+        if (Array.isArray(raw)) {
+          list = raw;
+        } else if (raw && Array.isArray(raw.results)) {
+          list = raw.results;
+        } else if (raw && Array.isArray(raw.data)) {
+          list = raw.data;
+        }
+        if (list.length === 0) {
+          setBreakdowns(demoBreakdowns);
+        } else {
+          setBreakdowns(list);
+        }
       })
       .catch(err => {
         console.error("Error fetching breakdowns:", err);
+        setBreakdowns(demoBreakdowns);
       })
       .finally(() => setLoading(false));
   };

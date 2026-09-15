@@ -37,9 +37,16 @@ export const Alerts = () => {
 
     alertService.getAll(params)
       .then(res => {
-        const payload = res.data?.data || res.data || {};
-        const list = payload.results || payload.content || (Array.isArray(payload) ? payload : []);
-        setAlerts(Array.isArray(list) ? list : []);
+        const raw = res.data?.data !== undefined ? res.data.data : (res.data !== undefined ? res.data : res);
+        let list = [];
+        if (Array.isArray(raw)) {
+          list = raw;
+        } else if (raw && Array.isArray(raw.results)) {
+          list = raw.results;
+        } else if (raw && Array.isArray(raw.data)) {
+          list = raw.data;
+        }
+        setAlerts(list);
       })
       .catch(err => {
         console.error("Error fetching alerts:", err);

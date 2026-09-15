@@ -361,45 +361,14 @@ def is_task_authorized_for_user(user, task_id, request=None):
     if not clean_id:
         return False
 
-    # Check against authorized task scope list
-    scoped_res = get_user_authorized_tasks(user=user, request=request, task_type='ALL', page=0, size=100)
-    task_list = scoped_res.get('results', []) if isinstance(scoped_res, dict) else []
-
-    for t in task_list:
-        t_id = str(t.get('id') or t.get('taskCode') or t.get('_id') or '').strip()
-        t_clean = t_id.replace('_route_', '').split('_')[0]
-        if clean_id == t_clean or clean_id == t_id or str(task_id) == t_id:
-            return True
-
-    # Check local DB Task queryset if clean_id is numeric
-    if clean_id.isdigit():
-        try:
-            from apps.tasks.models import Task
-            from apps.tasks.views import TaskViewSet
-            dummy_req = request
-            if not dummy_req:
-                from django.test import RequestFactory
-                dummy_req = RequestFactory().get('/')
-                dummy_req.user = user
-            
-            v = TaskViewSet()
-            v.request = dummy_req
-            qs = v.get_queryset()
-            if qs.filter(id=int(clean_id)).exists():
-                return True
-            else:
-                return False
-        except Exception:
-            pass
-
-    # Fallback check direct API item with security scope enforcement
+    # 1. Direct single task API lookup & authorization check
     try:
         client = IlyncClient(request=request)
         t_res = client.get_task_by_id(clean_id)
         if t_res and isinstance(t_res, dict):
             task_obj = t_res.get('data') or t_res
             if isinstance(task_obj, dict) and (task_obj.get('id') or task_obj.get('taskCode')):
-                # 1. Vendor Check
+                # Vendor Scope Check
                 allowed_vendor_ids = get_user_vendor_ids(user)
                 if allowed_vendor_ids is not None:
                     v_id = str(task_obj.get('vendorId') or task_obj.get('assignedVendorId') or '').strip()
@@ -410,7 +379,7 @@ def is_task_authorized_for_user(user, task_id, request=None):
                         if v_id not in allowed_str_ids and not any(v_id == str(vid) for vid in allowed_vendor_ids):
                             return False
 
-                # 2. Advance User Geography Check
+                # Advance User Geography Check
                 if getattr(user, 'user_type', None) == 'ADVANCE':
                     loc = task_obj.get('locationSnapshot') or task_obj.get('location') or {}
                     t_circle = str(loc.get('circle') or loc.get('state') or task_obj.get('circle') or task_obj.get('state') or '').strip().lower()
@@ -430,7 +399,7 @@ def is_task_authorized_for_user(user, task_id, request=None):
                         if target_blk and t_block and target_blk not in t_block and t_block not in target_blk:
                             return False
 
-                # 3. Reporting Manager Hierarchy Scope Check
+                # Reporting Manager Hierarchy Scope Check
                 from apps.common.reporting_scope import get_reporting_scope
                 from apps.authentication.models import User
                 reporting_scope_ids = get_reporting_scope(user)
@@ -452,6 +421,35 @@ def is_task_authorized_for_user(user, task_id, request=None):
                 return True
     except Exception:
         pass
+
+    # 2. Check local DB Task queryset if clean_id is numeric
+    if clean_id.isdigit():
+        try:
+            from apps.tasks.models import Task
+            from apps.tasks.views import TaskViewSet
+            dummy_req = request
+            if not dummy_req:
+                from django.test import RequestFactory
+                dummy_req = RequestFactory().get('/')
+                dummy_req.user = user
+            
+            v = TaskViewSet()
+            v.request = dummy_req
+            qs = v.get_queryset()
+            if qs.filter(id=int(clean_id)).exists():
+                return True
+        except Exception:
+            pass
+
+    # 3. Fallback: check against full authorized task list
+    scoped_res = get_user_authorized_tasks(user=user, request=request, task_type='ALL', page=0, size=100)
+    task_list = scoped_res.get('results', []) if isinstance(scoped_res, dict) else []
+
+    for t in task_list:
+        t_id = str(t.get('id') or t.get('taskCode') or t.get('_id') or '').strip()
+        t_clean = t_id.replace('_route_', '').split('_')[0]
+        if clean_id == t_clean or clean_id == t_id or str(task_id) == t_id:
+            return True
 
     return False
 

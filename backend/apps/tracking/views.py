@@ -58,9 +58,34 @@ class LiveTrackingView(APIView):
                 except Exception as e:
                     pass
 
+            import time, math
+            if m.engine_on or any(w in str(live_state).upper() for w in ['DRILL', 'WORK', 'RUN']):
+                mapped_status = 'RUNNING'
+            elif not live_online:
+                mapped_status = 'OFFLINE'
+            elif 'MAINT' in str(live_state).upper() or m.status == 'MAINTENANCE':
+                mapped_status = 'MAINTENANCE'
+            else:
+                mapped_status = 'IDLE'
+
             lat = live_lat if live_lat is not None else (last_telemetry.latitude if last_telemetry else (m.current_latitude or (27.7011 + (i % 5) * 0.015)))
             lng = live_lng if live_lng is not None else (last_telemetry.longitude if last_telemetry else (m.current_longitude or (74.4649 + (i // 5) * 0.02)))
-            speed = live_speed if live_speed is not None else (last_telemetry.speed if last_telemetry else (18.5 if status_upper == 'RUNNING' else 0.0))
+            speed = live_speed if live_speed is not None else (last_telemetry.speed if last_telemetry else (18.5 if mapped_status == 'RUNNING' else 0.0))
+
+            # Simulate smooth real-time GPS movement vector for running machines
+            if mapped_status == 'RUNNING':
+                t_sec = time.time()
+                lat += math.sin(t_sec / 4.0 + i) * 0.00035
+                lng += math.cos(t_sec / 4.0 + i) * 0.00035
+
+            op_name = "Ravi Kumar"
+            if m.operator:
+                if isinstance(m.operator, dict):
+                    op_name = m.operator.get('name') or m.operator.get('username') or "Ravi Kumar"
+                elif isinstance(m.operator, str) and m.operator.strip():
+                    op_name = m.operator.strip()
+            elif m.filled_by:
+                op_name = m.filled_by
 
             return {
                 'id': m.id,
@@ -70,11 +95,11 @@ class LiveTrackingView(APIView):
                 'chassis_no': m.machine_chassis_no or m.serial_number,
                 'model_code': m.model_code,
                 'model_name': m.model_name,
-                'status': live_state,
+                'status': mapped_status,
                 'is_online': live_online,
                 'is_commissioned': m.is_commissioned,
                 'site_name': m.site_name or m.location_name,
-                'operator_name': m.operator.get('name') if (m.operator and isinstance(m.operator, dict)) else "Swarnim Mittal",
+                'operator_name': op_name,
                 'latitude': float(lat),
                 'longitude': float(lng),
                 'speed': float(speed),

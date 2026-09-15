@@ -271,28 +271,51 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         serializer = AttendanceRecordSerializer(record, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    # 4.2 Employee Self Check-In
+    # 4.2 Employee Check-In (Self or Marked for Team Member)
     @action(detail=False, methods=['post'], url_path='check-in')
     def check_in(self, request):
         user = request.user
+        target_user_id = request.data.get('user_id') or request.data.get('marked_for_user_id') or request.data.get('user')
+        if target_user_id:
+            target_user = resolve_target_user(target_user_id)
+            if target_user:
+                validate_employee_attendance_access(request.user, target_user)
+                user = target_user
+
         today = timezone.now().date()
 
-        # Double Check-In Protection (409 Conflict)
+        # Double Check-In Protection
         existing = AttendanceRecord.objects.filter(user=user, date=today, status='CHECKED_IN').first()
         if existing:
-            return Response(
-                {"detail": "Attendance already marked for today", "message": "User has already checked in for today."},
-                status=status.HTTP_409_CONFLICT
-            )
+            serializer = AttendanceRecordSerializer(existing, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
 
         lat = request.data.get('latitude') or request.data.get('check_in_latitude')
         lng = request.data.get('longitude') or request.data.get('check_in_longitude')
         acc = request.data.get('accuracy') or request.data.get('check_in_accuracy')
-        photo = request.FILES.get('photo') or request.data.get('photo') or request.FILES.get('check_in_photo')
+        photo_raw = request.FILES.get('photo') or request.data.get('photo') or request.FILES.get('check_in_photo') or request.data.get('check_in_photo')
         loc_source = request.data.get('location_source') or 'GPS'
         att_type = request.data.get('attendance_type') or 'TEAM'
 
-        target_vendor = user.vendor or get_user_vendor(user)
+        from django.core.files.base import ContentFile
+        processed_photo = None
+        if photo_raw:
+            if isinstance(photo_raw, str):
+                if photo_raw.startswith('data:image'):
+                    import base64
+                    try:
+                        fmt, imgstr = photo_raw.split(';base64,')
+                        ext = fmt.split('/')[-1]
+                        data = base64.b64decode(imgstr)
+                        processed_photo = ContentFile(data, name=f"checkin_{user.id}_{int(timezone.now().timestamp())}.{ext}")
+                    except Exception:
+                        processed_photo = ContentFile(photo_raw.encode('utf-8'), name=f"checkin_{user.id}_{int(timezone.now().timestamp())}.txt")
+                else:
+                    processed_photo = ContentFile(photo_raw.encode('utf-8'), name=f"checkin_{user.id}_{int(timezone.now().timestamp())}.txt")
+            else:
+                processed_photo = photo_raw
+
+        target_vendor = user.vendor or get_user_vendor(user) or get_user_vendor(request.user)
         reporting_mgr = user.reporting_manager
 
         record = AttendanceRecord.objects.create(
@@ -304,13 +327,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             status='CHECKED_IN',
             approval_status='PENDING',
             attendance_type=att_type,
-            check_in_latitude=lat if lat else None,
-            check_in_longitude=lng if lng else None,
-            check_in_accuracy=float(acc) if acc else None,
-            check_in_photo=photo if photo else None,
+            check_in_latitude=float(lat) if (lat is not None and str(lat).strip() != '') else None,
+            check_in_longitude=float(lng) if (lng is not None and str(lng).strip() != '') else None,
+            check_in_accuracy=float(acc) if (acc is not None and str(acc).strip() != '') else None,
+            check_in_photo=processed_photo,
             location_source=loc_source,
-            marked_by=user,
-            updated_by=user
+            marked_by=request.user,
+            updated_by=request.user
         )
 
         if reporting_mgr:
@@ -327,6 +350,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='check-out')
     def check_out(self, request):
         user = request.user
+        target_user_id = request.data.get('user_id') or request.data.get('marked_for_user_id') or request.data.get('user')
+        if target_user_id:
+            target_user = resolve_target_user(target_user_id)
+            if target_user:
+                user = target_user
+
         today = timezone.now().date()
         att_id = request.data.get('attendance_id') or request.data.get('id')
 
@@ -344,16 +373,34 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         lat = request.data.get('latitude') or request.data.get('check_out_latitude')
         lng = request.data.get('longitude') or request.data.get('check_out_longitude')
         acc = request.data.get('accuracy') or request.data.get('check_out_accuracy')
-        photo = request.FILES.get('photo') or request.data.get('photo') or request.FILES.get('check_out_photo')
+        photo_raw = request.FILES.get('photo') or request.data.get('photo') or request.FILES.get('check_out_photo') or request.data.get('check_out_photo')
+
+        from django.core.files.base import ContentFile
+        processed_photo = None
+        if photo_raw:
+            if isinstance(photo_raw, str):
+                if photo_raw.startswith('data:image'):
+                    import base64
+                    try:
+                        fmt, imgstr = photo_raw.split(';base64,')
+                        ext = fmt.split('/')[-1]
+                        data = base64.b64decode(imgstr)
+                        processed_photo = ContentFile(data, name=f"checkout_{user.id}_{int(timezone.now().timestamp())}.{ext}")
+                    except Exception:
+                        processed_photo = ContentFile(photo_raw.encode('utf-8'), name=f"checkout_{user.id}_{int(timezone.now().timestamp())}.txt")
+                else:
+                    processed_photo = ContentFile(photo_raw.encode('utf-8'), name=f"checkout_{user.id}_{int(timezone.now().timestamp())}.txt")
+            else:
+                processed_photo = photo_raw
 
         check_out_time = timezone.now()
         record.check_out = check_out_time
         record.status = 'CHECKED_OUT'
-        if lat: record.check_out_latitude = lat
-        if lng: record.check_out_longitude = lng
-        if acc: record.check_out_accuracy = float(acc)
-        if photo: record.check_out_photo = photo
-        record.updated_by = user
+        if lat is not None and str(lat).strip() != '': record.check_out_latitude = float(lat)
+        if lng is not None and str(lng).strip() != '': record.check_out_longitude = float(lng)
+        if acc is not None and str(acc).strip() != '': record.check_out_accuracy = float(acc)
+        if processed_photo: record.check_out_photo = processed_photo
+        record.updated_by = request.user
 
         if record.check_in:
             delta = check_out_time - record.check_in
@@ -759,11 +806,17 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
             check_in_photo_url = None
             if rec and rec.check_in_photo:
-                check_in_photo_url = request.build_absolute_uri(rec.check_in_photo.url)
+                try:
+                    check_in_photo_url = request.build_absolute_uri(rec.check_in_photo.url)
+                except Exception:
+                    check_in_photo_url = str(rec.check_in_photo)
 
             check_out_photo_url = None
             if rec and rec.check_out_photo:
-                check_out_photo_url = request.build_absolute_uri(rec.check_out_photo.url)
+                try:
+                    check_out_photo_url = request.build_absolute_uri(rec.check_out_photo.url)
+                except Exception:
+                    check_out_photo_url = str(rec.check_out_photo)
 
             result_list.append({
                 'user_id': u.id,
@@ -862,3 +915,46 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             data=AttendanceRecordSerializer(saved_records, many=True, context={'request': request}).data,
             message=f"Successfully updated attendance for {len(saved_records)} team members."
         )
+
+    @action(detail=False, methods=['get'], url_path='export-report')
+    def export_report(self, request):
+        import csv
+        from django.http import HttpResponse
+
+        qs = self.get_queryset()
+        req_date = request.query_params.get('date') or str(timezone.now().date())
+        
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="Attendance_Report_{req_date}.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow([
+            'Attendance ID', 'Employee ID', 'User Name', 'Phone Number', 'Role',
+            'Vendor Name', 'Date', 'Status', 'Approval Status', 'Check In Time',
+            'Check Out Time', 'Check In Latitude', 'Check In Longitude', 'Check In Accuracy',
+            'Check In Photo Status', 'Total Working Hours', 'Notes'
+        ])
+
+        for rec in qs:
+            u = rec.user
+            writer.writerow([
+                rec.id,
+                u.employee_id or u.external_user_id or f"EMP-{u.id}",
+                u.get_full_name() or u.username,
+                u.phone_number or '',
+                u.get_role_list()[0] if u.get_role_list() else (u.role or 'OPERATOR'),
+                rec.vendor.name if rec.vendor else (u.vendor.name if u.vendor else ''),
+                rec.date,
+                rec.status,
+                rec.approval_status,
+                rec.check_in.strftime('%Y-%m-%d %H:%M:%S') if rec.check_in else '',
+                rec.check_out.strftime('%Y-%m-%d %H:%M:%S') if rec.check_out else '',
+                str(rec.check_in_latitude) if rec.check_in_latitude else '',
+                str(rec.check_in_longitude) if rec.check_in_longitude else '',
+                str(rec.check_in_accuracy) if rec.check_in_accuracy else '',
+                'Available' if rec.check_in_photo else 'No Photo',
+                rec.total_working_hours or '',
+                rec.notes or ''
+            ])
+
+        return response

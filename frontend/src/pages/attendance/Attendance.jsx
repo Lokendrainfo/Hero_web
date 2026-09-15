@@ -10,14 +10,15 @@ import {
   LucideAlertCircle, LucideUser, LucideRefreshCw,
   LucideBuilding2, LucideCheck, LucideList, LucideHistory, LucideCheckSquare,
   LucideMapPin, LucideCamera, LucideTruck, LucideShieldCheck, LucideEye, LucideX,
-  LucideChevronDown, LucideChevronUp, LucidePower
+  LucideChevronDown, LucideChevronUp, LucidePower, LucideDownload
 } from 'lucide-react';
 import '../../styles/components.css';
 import { SearchableSelect } from '../../components/common/Select';
 import { DateField } from '../../components/common/DateField';
 
 export const Attendance = () => {
-  const { user, isAdmin, vendors, selectedVendorId } = useAuth();
+  const { user, isAdmin, vendors, selectedVendorId, roles } = useAuth();
+  const isVendorUser = !isAdmin && (roles || []).some(r => String(r || '').toUpperCase().includes('VENDOR'));
   const { showToast } = useToast();
 
   const [activeTab, setActiveTab] = useState('daily'); // 'daily' | 'history' | 'pending_approvals'
@@ -73,7 +74,6 @@ export const Attendance = () => {
 
       const integList = extractList(integRes);
       const dbList = extractList(dbRes);
-
       const mergedMap = new Map();
       [...integList, ...dbList].forEach(v => {
         const name = v.partnerName || v.name || v.partner_name;
@@ -145,6 +145,43 @@ export const Attendance = () => {
   // Modal / Photo Lightbox State
   const [activePhotoUrl, setActivePhotoUrl] = useState(null);
   const [rejectionModal, setRejectionModal] = useState({ open: false, recordId: null, reason: '' });
+
+  // Download Bulk Attendance Report (CSV)
+  const [downloadingReport, setDownloadingReport] = useState(false);
+
+  const handleBulkDownloadReport = async () => {
+    setDownloadingReport(true);
+    try {
+      const params = {};
+      if (activeTab === 'daily') {
+        params.date = selectedDate;
+      } else if (activeTab === 'history') {
+        if (historyDateFrom) params.date_from = historyDateFrom;
+        if (historyDateTo) params.date_to = historyDateTo;
+      }
+      if (selectedVendorFilter && selectedVendorFilter !== 'ALL') {
+        params.vendor = selectedVendorFilter;
+      }
+
+      const res = await attendanceService.exportReport(params);
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const fileName = `Attendance_Report_${params.date || selectedDate || 'Export'}.csv`;
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      showToast("✓ Bulk attendance report downloaded successfully!", "success");
+    } catch (err) {
+      console.error("Download report error:", err);
+      showToast("Failed to download attendance report", "error");
+    } finally {
+      setDownloadingReport(false);
+    }
+  };
 
   const activeVendorName = useMemo(() => {
     if (selectedVendorFilter && selectedVendorFilter !== 'ALL') {
@@ -252,8 +289,13 @@ export const Attendance = () => {
       else groups[resolvedName].stats.not_marked += 1;
     });
 
-    return Object.values(groups);
-  }, [teamMembers, vendors, vendorList, vendorDetailsMap]);
+    // 3. Filter vendor team groups: for non-admin vendor users, only keep groups with members
+    const groupList = Object.values(groups);
+    if (!isAdmin || isVendorUser) {
+      return groupList.filter(g => g.members && g.members.length > 0);
+    }
+    return groupList;
+  }, [teamMembers, vendors, vendorList, vendorDetailsMap, isAdmin, isVendorUser]);
 
   const vendorTeamList = useMemo(() => {
     return groupedVendorTeams.map(g => ({
@@ -374,9 +416,31 @@ export const Attendance = () => {
 
   // Single Row Check-In / Check-Out
   const handleCheckInEmployee = async (userId) => {
+    let lat = null;
+    let lng = null;
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      try {
+        const pos = await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 4000, enableHighAccuracy: true });
+        });
+        if (pos && pos.coords) {
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
+        }
+      } catch (e) {
+        console.warn("Geolocation position capture warning:", e);
+      }
+    }
+
     try {
-      await attendanceService.checkIn({ user_id: userId });
-      showToast("✓ Employee check-in recorded", "success");
+      await attendanceService.checkIn({
+        user_id: userId,
+        latitude: lat,
+        longitude: lng,
+        check_in_latitude: lat,
+        check_in_longitude: lng
+      });
+      showToast("✓ Employee check-in recorded with location & time", "success");
       fetchTeamAttendance();
     } catch (err) {
       showToast("Check-in recorded", "success");
@@ -658,6 +722,28 @@ export const Attendance = () => {
             {/* Action Buttons */}
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
               <button
+                type="button"
+                onClick={handleBulkDownloadReport}
+                disabled={downloadingReport}
+                style={{
+                  padding: '9px 14px',
+                  borderRadius: '9px',
+                  border: '1px solid #bfdbfe',
+                  background: '#eff6ff',
+                  color: '#1d4ed8',
+                  fontSize: '0.82rem',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <LucideDownload size={16} className={downloadingReport ? 'animate-spin' : ''} />
+                {downloadingReport ? 'Downloading...' : 'Bulk Download Report'}
+              </button>
+
+              <button
                 onClick={handleMarkAllPresent}
                 style={{
                   padding: '9px 14px',
@@ -895,28 +981,26 @@ export const Attendance = () => {
                                       <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS log</span>
                                     )}
 
-                                    {m.check_in_photo ? (
-                                      <button
-                                        type="button"
-                                        onClick={() => setActivePhotoUrl(m.check_in_photo)}
-                                        style={{
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          gap: '4px',
-                                          padding: '2px 8px',
-                                          background: '#f0fdf4',
-                                          color: '#166534',
-                                          border: '1px solid #bbf7d0',
-                                          borderRadius: '4px',
-                                          fontSize: '0.7rem',
-                                          fontWeight: '700',
-                                          cursor: 'pointer',
-                                          width: 'fit-content'
-                                        }}
-                                      >
-                                        <LucideCamera size={12} /> View Photo
-                                      </button>
-                                    ) : null}
+                                    <button
+                                      type="button"
+                                      onClick={() => setActivePhotoUrl(m.check_in_photo || 'NO_PHOTO_ATTACHED')}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        padding: '4px 10px',
+                                        background: m.check_in_photo ? '#f0fdf4' : '#f8fafc',
+                                        color: m.check_in_photo ? '#166534' : '#64748b',
+                                        border: `1px solid ${m.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
+                                        borderRadius: '6px',
+                                        fontSize: '0.72rem',
+                                        fontWeight: '700',
+                                        cursor: 'pointer',
+                                        width: 'fit-content'
+                                      }}
+                                    >
+                                      <LucideCamera size={13} /> See Photo
+                                    </button>
                                   </div>
                                 </td>
 
@@ -1100,8 +1184,32 @@ export const Attendance = () => {
 
             </div>
 
-            <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
-              Showing <strong style={{ color: '#0f172a' }}>{historyRecords.length}</strong> attendance records
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={handleBulkDownloadReport}
+                disabled={downloadingReport}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid #bfdbfe',
+                  background: '#eff6ff',
+                  color: '#1d4ed8',
+                  fontSize: '0.8rem',
+                  fontWeight: '700',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                <LucideDownload size={14} className={downloadingReport ? 'animate-spin' : ''} />
+                {downloadingReport ? 'Exporting...' : 'Export CSV'}
+              </button>
+
+              <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                Showing <strong style={{ color: '#0f172a' }}>{historyRecords.length}</strong> attendance records
+              </div>
             </div>
 
           </div>
@@ -1171,15 +1279,26 @@ export const Attendance = () => {
                             📍 {Number(r.check_in_latitude).toFixed(4)}, {Number(r.check_in_longitude).toFixed(4)}
                           </span>
                         ) : <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS</span>}
-                        {r.check_in_photo && (
-                          <button
-                            type="button"
-                            onClick={() => setActivePhotoUrl(r.check_in_photo)}
-                            style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', borderRadius: '4px', cursor: 'pointer', fontWeight: '700', width: 'fit-content' }}
-                          >
-                            📷 Selfie
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => setActivePhotoUrl(r.check_in_photo || 'NO_PHOTO_ATTACHED')}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            padding: '3px 8px',
+                            background: r.check_in_photo ? '#f0fdf4' : '#f8fafc',
+                            color: r.check_in_photo ? '#166534' : '#64748b',
+                            border: `1px solid ${r.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
+                            borderRadius: '6px',
+                            fontSize: '0.7rem',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            width: 'fit-content'
+                          }}
+                        >
+                          <LucideCamera size={12} /> See Photo
+                        </button>
                       </div>
                     </td>
                     <td>
@@ -1291,15 +1410,26 @@ export const Attendance = () => {
                           </span>
                         ) : <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS</span>}
 
-                        {r.check_in_photo && (
-                          <button
-                            type="button"
-                            onClick={() => setActivePhotoUrl(r.check_in_photo)}
-                            style={{ padding: '2px 8px', fontSize: '0.7rem', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', borderRadius: '4px', cursor: 'pointer', fontWeight: '700', width: 'fit-content' }}
-                          >
-                            📷 Inspect Photo
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => setActivePhotoUrl(r.check_in_photo || 'NO_PHOTO_ATTACHED')}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            padding: '4px 10px',
+                            background: r.check_in_photo ? '#f0fdf4' : '#f8fafc',
+                            color: r.check_in_photo ? '#166534' : '#64748b',
+                            border: `1px solid ${r.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
+                            borderRadius: '6px',
+                            fontSize: '0.72rem',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            width: 'fit-content'
+                          }}
+                        >
+                          <LucideCamera size={13} /> See Photo
+                        </button>
                       </div>
                     </td>
                     <td>
@@ -1351,7 +1481,25 @@ export const Attendance = () => {
               </button>
             </div>
             <div style={{ padding: '20px', textAlign: 'center', background: '#0f172a' }}>
-              <img src={activePhotoUrl} alt="Check-in Selfie" style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', objectFit: 'contain' }} />
+              {activePhotoUrl === 'NO_PHOTO_ATTACHED' ? (
+                <div style={{ padding: '32px 20px', background: '#1e293b', borderRadius: '10px', color: '#f8fafc' }}>
+                  <LucideCamera size={48} style={{ color: '#94a3b8', marginBottom: '12px' }} />
+                  <div style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '8px' }}>No Photo Attached</div>
+                  <div style={{ fontSize: '0.82rem', color: '#cbd5e1', maxWidth: '380px', margin: '0 auto' }}>
+                    No check-in selfie photo file was submitted with this attendance entry.
+                  </div>
+                </div>
+              ) : typeof activePhotoUrl === 'string' && (activePhotoUrl.startsWith('http') || activePhotoUrl.startsWith('data:image') || activePhotoUrl.startsWith('/media') || activePhotoUrl.includes('.jpg') || activePhotoUrl.includes('.png') || activePhotoUrl.includes('.jpeg')) ? (
+                <img src={activePhotoUrl} alt="Check-in Selfie" style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', objectFit: 'contain' }} />
+              ) : (
+                <div style={{ padding: '24px 16px', background: '#1e293b', borderRadius: '10px', color: '#f8fafc' }}>
+                  <LucideCamera size={44} style={{ color: '#38bdf8', marginBottom: '10px' }} />
+                  <div style={{ fontSize: '0.92rem', fontWeight: '700', marginBottom: '6px' }}>Mobile Verification Hash / Photo Token Payload</div>
+                  <div style={{ wordBreak: 'break-all', fontFamily: 'monospace', fontSize: '0.82rem', background: '#0f172a', padding: '12px', borderRadius: '6px', color: '#a7f3d0', border: '1px solid #334155' }}>
+                    {String(activePhotoUrl)}
+                  </div>
+                </div>
+              )}
             </div>
             <div style={{ padding: '14px 20px', textAlign: 'right', background: '#f8fafc', borderTop: '1px solid #e2e8f0' }}>
               <button onClick={() => setActivePhotoUrl(null)} style={{ padding: '8px 16px', background: '#334155', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: '700', fontSize: '0.8rem', cursor: 'pointer' }}>

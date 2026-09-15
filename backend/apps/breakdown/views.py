@@ -12,8 +12,15 @@ class BreakdownViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        q_params = getattr(self.request, 'query_params', getattr(self.request, 'GET', {}))
+        requested_vendor = q_params.get('vendor_id') or q_params.get('vendor')
+        
+        # If Admin or superuser, and no specific vendor filter is requested
+        if (user.is_superuser or 'ADMIN' in [str(r).upper() for r in user.get_role_list()]) and (not requested_vendor or str(requested_vendor).strip().lower() in ['all', 'undefined', 'null', 'none', '']):
+            return BreakdownReport.objects.all().order_by('-id')
+
         qs = filter_queryset_by_vendor(BreakdownReport.objects.all(), user, 'machine__vendor_id', request=self.request)
-        if hasattr(BreakdownReport, 'vendor_id') and not user.is_superuser and 'ADMIN' not in user.get_role_list() and not qs.exists():
+        if hasattr(BreakdownReport, 'vendor_id') and not user.is_superuser and 'ADMIN' not in [str(r).upper() for r in user.get_role_list()] and not qs.exists():
             qs = filter_queryset_by_vendor(BreakdownReport.objects.all(), user, 'vendor_id', request=self.request)
-        return qs
+        return qs.order_by('-id')
 

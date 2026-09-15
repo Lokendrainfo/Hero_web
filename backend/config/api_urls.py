@@ -57,6 +57,7 @@ urlpatterns = [
     path('fuel/', include('apps.fuel.urls')),
     path('refuel/', include('apps.refuel.urls')),
     path('maintenance/', include('apps.maintenance.urls')),
+    path('breakdown/', include('apps.breakdown.urls')),
     path('breakdowns/', include('apps.breakdown.urls')),
     path('stock/', include('apps.stock.urls')),
     path('tasks/', include('apps.tasks.urls')),

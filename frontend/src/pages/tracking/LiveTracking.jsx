@@ -10,19 +10,34 @@ export const LiveTracking = () => {
   const [activeFilter, setActiveFilter] = useState('All');
   const [selectedMachine, setSelectedMachine] = useState(null);
 
-  const fetchTrackingData = () => {
-    setLoading(true);
+  const fetchTrackingData = (showLoading = true) => {
+    if (showLoading) setLoading(true);
     trackingService.getLiveLocations()
       .then(res => {
-        const list = Array.isArray(res.data) ? res.data : Array.isArray(res) ? res : [];
+        const raw = res.data?.data !== undefined ? res.data.data : (res.data !== undefined ? res.data : res);
+        let list = [];
+        if (Array.isArray(raw)) {
+          list = raw;
+        } else if (raw && Array.isArray(raw.results)) {
+          list = raw.results;
+        } else if (raw && Array.isArray(raw.data)) {
+          list = raw.data;
+        }
         setTelemetry(list);
       })
       .catch(console.error)
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (showLoading) setLoading(false);
+      });
   };
 
   useEffect(() => {
-    fetchTrackingData();
+    fetchTrackingData(true);
+
+    // Continuous 3-second live telemetry polling for real-time fleet movement
+    const pollInterval = setInterval(() => {
+      fetchTrackingData(false);
+    }, 3000);
 
     // WebSocket real-time telemetry socket
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -54,6 +69,7 @@ export const LiveTracking = () => {
     }
 
     return () => {
+      clearInterval(pollInterval);
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.close();
       }

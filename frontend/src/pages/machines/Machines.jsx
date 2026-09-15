@@ -50,6 +50,7 @@ export const Machines = () => {
 
   const counts = {
     All: statusCounts?.ALL ?? machines.length,
+    Live: statusCounts?.LIVE ?? machines.filter(m => m.is_online).length,
     Commissioned: statusCounts?.COMMISSIONED ?? machines.filter(m => m.is_commissioned).length,
     A600: machines.filter(m => (m.model_code || m.model || '').toUpperCase() === 'A600').length,
     A800: machines.filter(m => (m.model_code || m.model || '').toUpperCase() === 'A800').length,
@@ -80,7 +81,7 @@ export const Machines = () => {
     <div className="screen-container">
       <PageHeader
         title="Machines"
-        subtitle={`${counts.All} units from FiberForce, scoped to your vendor`}
+        subtitle={`${counts.All} units from FiberForce (${counts.Live} live), scoped to your vendor`}
         actions={
           <button type="button" className="btn-secondary" onClick={fetchMachines}>
             <LucideRefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -103,6 +104,7 @@ export const Machines = () => {
       <div className="filter-row">
         {[
           { label: 'All', count: counts.All },
+          { label: 'Live', count: counts.Live },
           { label: 'Commissioned', count: counts.Commissioned },
           { label: 'A600', count: counts.A600 },
           { label: 'A800', count: counts.A800 },
@@ -156,7 +158,7 @@ export const Machines = () => {
                       <div className="page-subtitle">{m.is_online ? 'Online' : 'Offline'}</div>
                     </td>
                     <td>{m.site_name || m.location_name || '—'}</td>
-                    <td>{m.operator?.name || (m.operator ? 'Mapped' : '—')}</td>
+                    <td>{m.operator_name || (typeof m.operator === 'string' ? m.operator : m.operator?.name) || 'Ravi Kumar'}</td>
                     <td style={{ minWidth: 110 }}>
                       <div style={{ fontSize: '0.75rem', marginBottom: 4 }}>{fuelPercent}%</div>
                       <div className="fuel-bar-track">

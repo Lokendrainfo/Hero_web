@@ -19,5 +19,6 @@ export const attendanceService = {
   getHistory: (params) => api.get('/attendance/history/', { params }),
   getPendingApprovals: (params) => api.get('/attendance/pending-approvals/', { params }),
   approveAttendance: (id) => api.post(`/attendance/${id}/approve/`),
-  rejectAttendance: (id, data) => api.post(`/attendance/${id}/reject/`, data)
+  rejectAttendance: (id, data) => api.post(`/attendance/${id}/reject/`, data),
+  exportReport: (params) => api.get('/attendance/export-report/', { params, responseType: 'blob' })
 };

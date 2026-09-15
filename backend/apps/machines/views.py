@@ -36,6 +36,8 @@ class MachineViewSet(viewsets.ModelViewSet):
         if status_param and status_param.upper() != 'ALL':
             if status_param.upper() == 'COMMISSIONED':
                 qs = qs.filter(is_commissioned=True)
+            elif status_param.upper() == 'LIVE':
+                qs = qs.filter(is_online=True)
             elif status_param.upper() == 'OFFLINE':
                 qs = qs.filter(is_online=False)
             else:
@@ -88,6 +90,7 @@ class MachineViewSet(viewsets.ModelViewSet):
         # Counts calculated strictly within current vendor scope
         status_counts = {
             'ALL': base_qs.count(),
+            'LIVE': base_qs.filter(is_online=True).count(),
             'RUNNING': base_qs.filter(status__iexact='RUNNING').count(),
             'IDLE': base_qs.filter(status__iexact='IDLE').count(),
             'MAINTENANCE': base_qs.filter(status__iexact='MAINTENANCE').count(),
