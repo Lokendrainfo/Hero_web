@@ -166,7 +166,18 @@ class DashboardSummaryView(APIView):
             "acknowledged_by": user_name
         }
 
-        pending_tasks = len([t for t in authorized_tasks if str(t.get('status')).upper() not in ['COMPLETED', 'APPROVED']]) if authorized_tasks else 0
+        # Count non-completed tasks (pending/created/in progress) from authorized tasks
+        if authorized_tasks:
+            seg_list = [
+                t for t in authorized_tasks
+                if str(t.get('routeSnapshot', {}).get('level') if isinstance(t.get('routeSnapshot'), dict) else '').upper() == 'SEGMENT'
+                or t.get('depth') == 2
+                or not t.get('routeSnapshot')
+            ]
+            t_count_list = seg_list if seg_list else authorized_tasks
+            pending_tasks = len([t for t in t_count_list if str(t.get('status')).upper() not in ['COMPLETED', 'APPROVED']])
+        else:
+            pending_tasks = tasks_qs.exclude(status__in=['COMPLETED', 'APPROVED']).count()
 
         quick_stats = {
             "total_machines": total_machines,
