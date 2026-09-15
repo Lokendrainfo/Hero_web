@@ -22,6 +22,57 @@ def notify_user(target_user, title, body):
         except Exception as e:
             print(f"[Notification] Error creating notification: {e}")
 
+def resolve_reporting_manager(target_user, marked_by_user=None, vendor=None):
+    """
+    Resolves the appropriate reporting manager for attendance submission & approvals.
+    Priority:
+    1. Direct target_user.reporting_manager (if set and active).
+    2. If marked_by_user is provided and is different from target_user and has a Manager/Supervisor/Vendor role, use marked_by_user.
+    3. If target_user has a vendor (or vendor parameter is passed), find the Vendor's primary Admin/Manager/Supervisor user.
+    4. Fallback to System Admin (user_id=1 or first superuser).
+    """
+    if not target_user:
+        return marked_by_user
+
+    if target_user.reporting_manager and target_user.reporting_manager.is_active:
+        return target_user.reporting_manager
+
+    # 2. Check marked_by_user
+    if marked_by_user and marked_by_user.id != target_user.id:
+        roles_upper = [r.upper() for r in marked_by_user.get_role_list()]
+        if any(r in ['VENDOR', 'VENDOR_ADMIN', 'SUPERVISOR', 'MANAGER', 'PROJECT_MANAGER', 'ADMIN'] for r in roles_upper):
+            if not target_user.reporting_manager_id:
+                try:
+                    target_user.reporting_manager = marked_by_user
+                    target_user.save(update_fields=['reporting_manager'])
+                except Exception as e:
+                    print(f"[ReportingManager] Exception updating user reporting_manager: {e}")
+            return marked_by_user
+
+    # 3. Check vendor primary admin/manager user
+    target_vendor = vendor or getattr(target_user, 'vendor', None) or get_user_vendor(target_user, resolve_fallback=False)
+    if target_vendor:
+        vendor_mgr = User.objects.filter(
+            Q(vendor=target_vendor) | Q(hero_vendor_assignments__vendor=target_vendor)
+        ).filter(
+            Q(role__icontains='VENDOR') | Q(roles__name__icontains='VENDOR') |
+            Q(role__icontains='MANAGER') | Q(roles__name__icontains='MANAGER') |
+            Q(role__icontains='SUPERVISOR') | Q(roles__name__icontains='SUPERVISOR')
+        ).filter(is_active=True).exclude(id=target_user.id).order_by('id').first()
+
+        if vendor_mgr:
+            if not target_user.reporting_manager_id:
+                try:
+                    target_user.reporting_manager = vendor_mgr
+                    target_user.save(update_fields=['reporting_manager'])
+                except Exception as e:
+                    print(f"[ReportingManager] Exception updating user reporting_manager from vendor: {e}")
+            return vendor_mgr
+
+    # 4. System Admin fallback
+    admin_user = User.objects.filter(is_superuser=True, is_active=True).order_by('id').first()
+    return admin_user or marked_by_user
+
 def validate_approval_permission(request_user, attendance_record):
     # 1. Self-approval guard (403 Forbidden)
     if attendance_record.user_id == request_user.id:
@@ -30,12 +81,24 @@ def validate_approval_permission(request_user, attendance_record):
             status=status.HTTP_403_FORBIDDEN
         )
 
-    # 2. Hierarchy authorization guard (403 Forbidden)
+    # 2. Hierarchy & Vendor authorization guard (403 Forbidden)
     is_admin = request_user.is_superuser or 'ADMIN' in request_user.get_role_list()
     if not is_admin:
         subordinate_ids = get_reporting_scope(request_user)
         subordinate_ids = [uid for uid in subordinate_ids if uid != request_user.id]
-        if attendance_record.user_id not in subordinate_ids:
+
+        is_direct_mgr = (
+            attendance_record.reporting_manager_id == request_user.id or
+            (attendance_record.user and attendance_record.user.reporting_manager_id == request_user.id)
+        )
+        is_marked_by = (attendance_record.marked_by_id == request_user.id)
+
+        user_vendor_ids = get_user_vendor_ids(request_user)
+        is_same_vendor = False
+        if user_vendor_ids and attendance_record.vendor_id in user_vendor_ids:
+            is_same_vendor = True
+
+        if not (is_direct_mgr or is_marked_by or (attendance_record.user_id in subordinate_ids) or is_same_vendor):
             return Response(
                 {"detail": "You are not authorized to approve or reject attendance for this employee."},
                 status=status.HTTP_403_FORBIDDEN
@@ -316,7 +379,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 processed_photo = photo_raw
 
         target_vendor = user.vendor or get_user_vendor(user) or get_user_vendor(request.user)
-        reporting_mgr = user.reporting_manager
+        reporting_mgr = resolve_reporting_manager(user, marked_by_user=request.user, vendor=target_vendor)
 
         record = AttendanceRecord.objects.create(
             user=user,
@@ -433,7 +496,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         photo = request.FILES.get('photo') or request.data.get('photo')
 
         target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
-        reporting_mgr = target_user.reporting_manager
+        reporting_mgr = resolve_reporting_manager(target_user, marked_by_user=request.user, vendor=target_vendor)
 
         record = AttendanceRecord.objects.create(
             user=target_user,
@@ -478,7 +541,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         photo = request.FILES.get('photo') or request.data.get('photo')
 
         target_vendor = user.vendor or get_user_vendor(user)
-        reporting_mgr = user.reporting_manager
+        reporting_mgr = resolve_reporting_manager(user, marked_by_user=request.user, vendor=target_vendor)
 
         record = AttendanceRecord.objects.create(
             user=user,
@@ -601,40 +664,33 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         size = int(request.query_params.get('size', 20))
 
         is_admin = user.is_superuser or 'ADMIN' in user.get_role_list()
-        hierarchy_mode = getattr(settings, 'ATTENDANCE_APPROVAL_HIERARCHY_MODE', 'ALL_REPORTING_DESCENDANTS')
+        allowed_vendor_ids = get_user_vendor_ids(user)
+
+        subordinate_ids = get_reporting_scope(user)
+        subordinate_ids = [uid for uid in subordinate_ids if uid != user.id]
 
         if is_admin:
             qs = AttendanceRecord.objects.filter(approval_status='PENDING')
         else:
-            if hierarchy_mode == 'DIRECT_REPORTS_ONLY':
-                qs = AttendanceRecord.objects.filter(
-                    approval_status='PENDING',
-                    user__reporting_manager=user
-                )
-            else:
-                subordinate_ids = get_reporting_scope(user)
-                subordinate_ids = [uid for uid in subordinate_ids if uid != user.id]
+            mgr_filter = Q(reporting_manager=user) | Q(user__reporting_manager=user) | Q(marked_by=user)
+            if subordinate_ids:
+                mgr_filter |= Q(user_id__in=subordinate_ids)
+            if allowed_vendor_ids:
+                mgr_filter |= Q(vendor_id__in=allowed_vendor_ids) | Q(user__vendor_id__in=allowed_vendor_ids)
 
-                if not subordinate_ids:
-                    qs = AttendanceRecord.objects.none()
-                else:
-                    qs = AttendanceRecord.objects.filter(
-                        approval_status='PENDING',
-                        user_id__in=subordinate_ids
-                    )
+            qs = AttendanceRecord.objects.filter(
+                Q(approval_status='PENDING') & mgr_filter
+            )
 
-        allowed_vendor_ids = get_user_vendor_ids(user)
-        if allowed_vendor_ids is not None:
-            if not allowed_vendor_ids:
-                qs = AttendanceRecord.objects.none()
-            else:
-                qs = qs.filter(
-                    Q(vendor_id__in=allowed_vendor_ids) |
-                    Q(user__vendor_id__in=allowed_vendor_ids) |
-                    Q(user__hero_vendor_assignments__vendor_id__in=allowed_vendor_ids)
-                ).distinct()
+        req_vendor = request.query_params.get('vendor_id') or request.query_params.get('vendor')
+        if req_vendor and str(req_vendor).strip() and str(req_vendor).lower() != 'all':
+            qs = qs.filter(
+                Q(vendor__external_vendor_id=req_vendor) |
+                Q(vendor__name__icontains=req_vendor) |
+                Q(vendor_id=req_vendor if str(req_vendor).isdigit() else None)
+            )
 
-        qs = qs.select_related('user', 'vendor', 'reporting_manager', 'marked_by', 'approved_by').order_by('-created_at', '-id')
+        qs = qs.select_related('user', 'vendor', 'reporting_manager', 'marked_by', 'approved_by').distinct().order_by('-created_at', '-id')
 
         total = qs.count()
         start = page * size
@@ -882,12 +938,14 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             check_in_val = item.get('check_in')
             check_out_val = item.get('check_out')
             target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
+            reporting_mgr = resolve_reporting_manager(target_user, marked_by_user=request.user, vendor=target_vendor)
 
             record, created = AttendanceRecord.objects.get_or_create(
                 user=target_user,
                 date=req_date,
                 defaults={
                     'vendor': target_vendor,
+                    'reporting_manager': reporting_mgr,
                     'status': st_val,
                     'notes': notes_val,
                     'check_in': check_in_val,
