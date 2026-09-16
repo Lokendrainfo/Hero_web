@@ -389,7 +389,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         validate_employee_attendance_access(request.user, target_user)
 
-        rec_date = request.data.get('date') or timezone.now().date()
+        rec_date = request.data.get('date') or timezone.localdate()
         status_val = (request.data.get('status') or 'PRESENT').upper()
         notes_val = request.data.get('notes') or request.data.get('remarks') or ''
         check_in_val = request.data.get('check_in')
@@ -462,8 +462,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='today')
     def today_attendance(self, request):
         auto_checkout_overnight_records()
-        today = timezone.now().date()
-        user = request.user
+        today = timezone.localdate()
         record = AttendanceRecord.objects.filter(user=user, date=today).order_by('-created_at').first()
         if not record:
             return Response(None, status=status.HTTP_200_OK)
@@ -481,7 +480,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 validate_employee_attendance_access(request.user, target_user)
                 user = target_user
 
-        today = timezone.now().date()
+        today = timezone.localdate()
         lat = request.data.get('latitude') or request.data.get('check_in_latitude')
         lng = request.data.get('longitude') or request.data.get('check_in_longitude')
         acc = request.data.get('accuracy') or request.data.get('check_in_accuracy')
@@ -557,7 +556,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 validate_employee_attendance_access(request.user, target_user)
                 user = target_user
 
-        today = timezone.now().date()
+        today = timezone.localdate()
         att_id = request.data.get('attendance_id') or request.data.get('id')
 
         if att_id:
@@ -612,7 +611,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             return error_response(message="Target team member not found.", status_code=status.HTTP_404_NOT_FOUND)
 
         validate_employee_attendance_access(request.user, target_user)
-        today = timezone.now().date()
+        today = timezone.localdate()
         lat = request.data.get('latitude') or request.data.get('check_in_latitude')
         lng = request.data.get('longitude') or request.data.get('check_in_longitude')
         acc = request.data.get('accuracy') or request.data.get('check_in_accuracy')
@@ -656,7 +655,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         assignment_id = request.data.get('assignment_id') or request.data.get('machine_assignment_id')
         machine_id = request.data.get('machine_id')
 
-        today = timezone.now().date()
+        today = timezone.localdate()
         user = request.user
         lat = request.data.get('latitude') or request.data.get('check_in_latitude')
         lng = request.data.get('longitude') or request.data.get('check_in_longitude')
@@ -902,7 +901,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         """
         auto_checkout_overnight_records()
         user = request.user
-        req_date = request.query_params.get('date') or str(timezone.now().date())
+        req_date = request.query_params.get('date') or str(timezone.localdate())
         role_filter = request.query_params.get('role')
         search_filter = request.query_params.get('search')
         status_filter = request.query_params.get('status')
@@ -1119,7 +1118,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='bulk-mark')
     def bulk_mark(self, request):
         records_data = request.data.get('records') or []
-        req_date = request.data.get('date') or str(timezone.now().date())
+        req_date = request.data.get('date') or str(timezone.localdate())
 
         if not isinstance(records_data, list):
             return error_response(message="`records` must be an array of attendance items.", status_code=status.HTTP_400_BAD_REQUEST)
@@ -1212,7 +1211,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         from django.http import HttpResponse
 
         qs = self.get_queryset()
-        req_date = request.query_params.get('date') or str(timezone.now().date())
+        req_date = request.query_params.get('date') or str(timezone.localdate())
         
         response = HttpResponse(content_type='text/csv')
         response['Content-Disposition'] = f'attachment; filename="Attendance_Report_{req_date}.csv"'
