@@ -482,11 +482,31 @@ export const Attendance = () => {
   // Save Attendance (Bulk Save)
   const handleSaveAttendance = async () => {
     setSaving(true);
+    let lat = null;
+    let lng = null;
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      try {
+        const pos = await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 3000, enableHighAccuracy: true });
+        });
+        if (pos && pos.coords) {
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
+        }
+      } catch (e) {
+        console.warn("Geolocation position capture warning:", e);
+      }
+    }
+
     try {
       const recordsToSave = teamMembers.map(item => ({
         user_id: item.user_id,
         status: item.status === 'NOT_MARKED' ? 'PRESENT' : item.status,
         notes: item.notes || '',
+        check_in_latitude: lat,
+        check_in_longitude: lng,
+        latitude: lat,
+        longitude: lng,
         check_in: item.check_in ? `${selectedDate}T${item.check_in}:00` : null,
         check_out: item.check_out ? `${selectedDate}T${item.check_out}:00` : null
       }));

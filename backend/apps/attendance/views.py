@@ -1006,6 +1006,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
                 effective_user_id = ext_u_id or (matched_user.id if matched_user else f"ILYNC-{name.replace(' ', '_')}_{mobile}")
 
+                check_in_dt = (rec.check_in or rec.created_at) if (rec and rec.status in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT', 'HALF_DAY']) else None
+                check_out_dt = rec.check_out if (rec and rec.check_out) else None
+
                 result_list.append({
                     'user_id': effective_user_id,
                     'employee_id': ext_u_id or (matched_user.employee_id if (matched_user and matched_user.employee_id) else f"EMP-{effective_user_id}"),
@@ -1024,10 +1027,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'rejection_reason': rec.rejection_reason if rec else None,
                     'attendance_type': rec.attendance_type if rec else 'TEAM',
                     'machine_chassis_no': rec.machine_chassis_no if rec else None,
-                    'check_in': timezone.localtime(rec.check_in).strftime('%H:%M') if (rec and rec.check_in) else None,
-                    'check_out': timezone.localtime(rec.check_out).strftime('%H:%M') if (rec and rec.check_out) else None,
-                    'check_in_time': timezone.localtime(rec.check_in).isoformat() if (rec and rec.check_in) else None,
-                    'check_out_time': timezone.localtime(rec.check_out).isoformat() if (rec and rec.check_out) else None,
+                    'check_in': timezone.localtime(check_in_dt).strftime('%H:%M') if check_in_dt else None,
+                    'check_out': timezone.localtime(check_out_dt).strftime('%H:%M') if check_out_dt else None,
+                    'check_in_time': timezone.localtime(check_in_dt).isoformat() if check_in_dt else None,
+                    'check_out_time': timezone.localtime(check_out_dt).isoformat() if check_out_dt else None,
                     'check_in_latitude': float(rec.check_in_latitude) if (rec and rec.check_in_latitude) else None,
                     'check_in_longitude': float(rec.check_in_longitude) if (rec and rec.check_in_longitude) else None,
                     'check_in_accuracy': rec.check_in_accuracy if (rec and rec.check_in_accuracy) else None,
@@ -1111,8 +1114,28 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             notes_val = item.get('notes') or item.get('remarks') or ''
             check_in_val = item.get('check_in')
             check_out_val = item.get('check_out')
+            lat_val = item.get('check_in_latitude') or item.get('latitude')
+            lng_val = item.get('check_in_longitude') or item.get('longitude')
+            acc_val = item.get('check_in_accuracy') or item.get('accuracy')
+            loc_source = item.get('location_source') or 'GPS'
+
             target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
             reporting_mgr = resolve_reporting_manager(target_user, marked_by_user=request.user, vendor=target_vendor)
+
+            def safe_float(v):
+                if v is not None and str(v).strip() not in ('', 'null', 'undefined', 'None'):
+                    try:
+                        return float(v)
+                    except Exception:
+                        return None
+                return None
+
+            f_lat = safe_float(lat_val)
+            f_lng = safe_float(lng_val)
+            f_acc = safe_float(acc_val)
+
+            if st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY'] and not check_in_val:
+                check_in_val = timezone.now()
 
             record, created = AttendanceRecord.objects.get_or_create(
                 user=target_user,
@@ -1124,6 +1147,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'notes': notes_val,
                     'check_in': check_in_val,
                     'check_out': check_out_val,
+                    'check_in_latitude': f_lat,
+                    'check_in_longitude': f_lng,
+                    'check_in_accuracy': f_acc,
+                    'location_source': loc_source,
                     'marked_by': request.user,
                     'updated_by': request.user
                 }
@@ -1134,8 +1161,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 record.notes = notes_val
                 if check_in_val is not None:
                     record.check_in = check_in_val
+                elif not record.check_in and st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY']:
+                    record.check_in = timezone.now()
                 if check_out_val is not None:
                     record.check_out = check_out_val
+                if f_lat is not None: record.check_in_latitude = f_lat
+                if f_lng is not None: record.check_in_longitude = f_lng
+                if f_acc is not None: record.check_in_accuracy = f_acc
                 record.updated_by = request.user
                 if target_vendor and not record.vendor:
                     record.vendor = target_vendor
