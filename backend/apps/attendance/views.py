@@ -15,6 +15,70 @@ from django.conf import settings
 from apps.notifications.models import Notification
 from apps.common.reporting_scope import get_reporting_scope
 
+import base64
+from django.core.files.base import ContentFile
+
+def process_attendance_photo(request, photo_type='checkin', user_id=None):
+    """
+    Decodes & processes check-in or check-out photo file or Base64 string from request payload.
+    Supports:
+    - Multipart files: check_in_photo, check_out_photo, photo, check_in_photo_base64, check_out_photo_base64
+    - Base64 data strings (with or without 'data:image/...;base64,' header)
+    Returns a ContentFile image object or File object, or None.
+    """
+    prefix = 'check_out' if photo_type == 'checkout' else 'check_in'
+
+    # 1. Check FILES multipart first
+    photo_file = (
+        request.FILES.get(f'{prefix}_photo') or
+        request.FILES.get('photo') or
+        request.FILES.get(f'{prefix}_photo_base64')
+    )
+    if photo_file:
+        return photo_file
+
+    # 2. Check DATA payload strings (Base64 / URL)
+    photo_raw = (
+        request.data.get(f'{prefix}_photo') or
+        request.data.get(f'{prefix}_photo_base64') or
+        request.data.get('photo')
+    )
+    if not photo_raw:
+        return None
+
+    if isinstance(photo_raw, str):
+        photo_str = photo_raw.strip()
+        if not photo_str or photo_str == 'NO_PHOTO_ATTACHED':
+            return None
+
+        # Handle data URL base64 format (e.g. data:image/jpeg;base64,...)
+        if 'data:image' in photo_str and ';base64,' in photo_str:
+            try:
+                fmt, imgstr = photo_str.split(';base64,')
+                ext = fmt.split('/')[-1].split('+')[0]
+                if ext not in ['jpeg', 'jpg', 'png', 'webp']:
+                    ext = 'jpg'
+                data = base64.b64decode(imgstr)
+                ts = int(timezone.now().timestamp())
+                uid = user_id or 'user'
+                return ContentFile(data, name=f"{prefix}_{uid}_{ts}.{ext}")
+            except Exception as e:
+                print(f"[PhotoProcessing] Error decoding data:image base64: {e}")
+                return None
+
+        # Handle pure base64 string without data:image header
+        if len(photo_str) > 50 and not photo_str.startswith('http'):
+            try:
+                data = base64.b64decode(photo_str)
+                ts = int(timezone.now().timestamp())
+                uid = user_id or 'user'
+                return ContentFile(data, name=f"{prefix}_{uid}_{ts}.jpg")
+            except Exception as e:
+                print(f"[PhotoProcessing] Error decoding raw base64 string: {e}")
+                return None
+
+    return photo_raw
+
 def notify_user(target_user, title, body):
     if target_user and getattr(target_user, 'is_active', True):
         try:
@@ -356,27 +420,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         lat = request.data.get('latitude') or request.data.get('check_in_latitude')
         lng = request.data.get('longitude') or request.data.get('check_in_longitude')
         acc = request.data.get('accuracy') or request.data.get('check_in_accuracy')
-        photo_raw = request.FILES.get('photo') or request.data.get('photo') or request.FILES.get('check_in_photo') or request.data.get('check_in_photo')
         loc_source = request.data.get('location_source') or 'GPS'
         att_type = request.data.get('attendance_type') or 'TEAM'
 
-        from django.core.files.base import ContentFile
-        processed_photo = None
-        if photo_raw:
-            if isinstance(photo_raw, str):
-                if photo_raw.startswith('data:image'):
-                    import base64
-                    try:
-                        fmt, imgstr = photo_raw.split(';base64,')
-                        ext = fmt.split('/')[-1]
-                        data = base64.b64decode(imgstr)
-                        processed_photo = ContentFile(data, name=f"checkin_{user.id}_{int(timezone.now().timestamp())}.{ext}")
-                    except Exception:
-                        processed_photo = ContentFile(photo_raw.encode('utf-8'), name=f"checkin_{user.id}_{int(timezone.now().timestamp())}.txt")
-                else:
-                    processed_photo = ContentFile(photo_raw.encode('utf-8'), name=f"checkin_{user.id}_{int(timezone.now().timestamp())}.txt")
-            else:
-                processed_photo = photo_raw
+        processed_photo = process_attendance_photo(request, 'checkin', user.id)
 
         target_vendor = user.vendor or get_user_vendor(user) or get_user_vendor(request.user)
         reporting_mgr = resolve_reporting_manager(user, marked_by_user=request.user, vendor=target_vendor)
@@ -436,25 +483,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         lat = request.data.get('latitude') or request.data.get('check_out_latitude')
         lng = request.data.get('longitude') or request.data.get('check_out_longitude')
         acc = request.data.get('accuracy') or request.data.get('check_out_accuracy')
-        photo_raw = request.FILES.get('photo') or request.data.get('photo') or request.FILES.get('check_out_photo') or request.data.get('check_out_photo')
-
-        from django.core.files.base import ContentFile
-        processed_photo = None
-        if photo_raw:
-            if isinstance(photo_raw, str):
-                if photo_raw.startswith('data:image'):
-                    import base64
-                    try:
-                        fmt, imgstr = photo_raw.split(';base64,')
-                        ext = fmt.split('/')[-1]
-                        data = base64.b64decode(imgstr)
-                        processed_photo = ContentFile(data, name=f"checkout_{user.id}_{int(timezone.now().timestamp())}.{ext}")
-                    except Exception:
-                        processed_photo = ContentFile(photo_raw.encode('utf-8'), name=f"checkout_{user.id}_{int(timezone.now().timestamp())}.txt")
-                else:
-                    processed_photo = ContentFile(photo_raw.encode('utf-8'), name=f"checkout_{user.id}_{int(timezone.now().timestamp())}.txt")
-            else:
-                processed_photo = photo_raw
+        processed_photo = process_attendance_photo(request, 'checkout', user.id)
 
         check_out_time = timezone.now()
         record.check_out = check_out_time
@@ -490,10 +519,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         validate_employee_attendance_access(request.user, target_user)
         today = timezone.now().date()
-        lat = request.data.get('latitude')
-        lng = request.data.get('longitude')
-        acc = request.data.get('accuracy')
-        photo = request.FILES.get('photo') or request.data.get('photo')
+        lat = request.data.get('latitude') or request.data.get('check_in_latitude')
+        lng = request.data.get('longitude') or request.data.get('check_in_longitude')
+        acc = request.data.get('accuracy') or request.data.get('check_in_accuracy')
+        photo = process_attendance_photo(request, 'checkin', target_user.id)
 
         target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
         reporting_mgr = resolve_reporting_manager(target_user, marked_by_user=request.user, vendor=target_vendor)
@@ -535,10 +564,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         today = timezone.now().date()
         user = request.user
-        lat = request.data.get('latitude')
-        lng = request.data.get('longitude')
-        acc = request.data.get('accuracy')
-        photo = request.FILES.get('photo') or request.data.get('photo')
+        lat = request.data.get('latitude') or request.data.get('check_in_latitude')
+        lng = request.data.get('longitude') or request.data.get('check_in_longitude')
+        acc = request.data.get('accuracy') or request.data.get('check_in_accuracy')
+        photo = process_attendance_photo(request, 'checkin', user.id)
 
         target_vendor = user.vendor or get_user_vendor(user)
         reporting_mgr = resolve_reporting_manager(user, marked_by_user=request.user, vendor=target_vendor)
