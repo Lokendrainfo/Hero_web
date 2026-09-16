@@ -21,9 +21,14 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
             return
 
         # Link Machines
-        machines_data = v_data.get('machines') or []
+        machines_data = v_data.get('machines') or v_data.get('assigned_machines') or []
         for m_info in machines_data:
-            chassis = str(m_info.get('machineNo') or m_info.get('name') or '').strip()
+            if not isinstance(m_info, dict):
+                continue
+            m_id = m_info.get('id')
+            chassis = str(m_info.get('machineNo') or m_info.get('machine_no') or m_info.get('serial_number') or m_info.get('chassis_no') or m_info.get('name') or '').strip()
+            if m_id and str(m_id).isdigit():
+                Machine.objects.filter(id=int(m_id)).update(vendor=vendor_obj)
             if chassis:
                 Machine.objects.filter(
                     Q(machine_chassis_no=chassis) | Q(serial_number=chassis)
@@ -31,10 +36,14 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
 
         # Link & Upsert Users
         users_data = v_data.get('users') or []
+        synced_user_ids = []
+
         for u_info in users_data:
             if not isinstance(u_info, dict):
                 continue
             ext_u_id = str(u_info.get('userId') or '').strip()
+            if ext_u_id.lower() in ('none', 'null', ''):
+                ext_u_id = ''
             mobile = str(u_info.get('mobile') or u_info.get('phone') or '').strip()
             email = str(u_info.get('email') or '').strip()
             name = str(u_info.get('name') or '').strip()
@@ -43,10 +52,14 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
             matched_user = None
             if ext_u_id:
                 matched_user = User.objects.filter(external_user_id=ext_u_id).first()
-            if not matched_user and mobile:
-                matched_user = User.objects.filter(Q(phone_number=mobile) | Q(username=mobile)).first()
-            if not matched_user and email:
+            if not matched_user and email and not email.lower().startswith('user@'):
                 matched_user = User.objects.filter(email__iexact=email).first()
+            if not matched_user and name:
+                matched_user = User.objects.filter(vendor=vendor_obj, first_name__iexact=name).first()
+            if not matched_user and mobile:
+                matched_user = User.objects.filter(vendor=vendor_obj, phone_number=mobile).filter(
+                    Q(external_user_id__isnull=True) | Q(external_user_id='') | Q(external_user_id=ext_u_id)
+                ).first()
 
             u_role = 'VENDOR' if designation.upper() == 'VENDOR' else ('TRACKER' if 'TRACK' in designation.upper() else 'OPERATOR')
             if matched_user:
@@ -74,29 +87,43 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
                     vendor=vendor_obj,
                     defaults={'is_active': True}
                 )
+                synced_user_ids.append(matched_user.id)
             elif name or mobile:
                 u_role = 'VENDOR' if designation.upper() == 'VENDOR' else ('OPERATOR' if 'OPERATOR' in designation.upper() else 'TRACKER' if 'TRACKER' in designation.upper() else 'OPERATOR')
-                username_val = mobile or ext_u_id or f"VND-{vendor_obj.id}-{name.replace(' ', '')}"
-                new_user, _ = User.objects.get_or_create(
+                base_usr = ext_u_id or mobile or f"VND-{vendor_obj.id}-{name.replace(' ', '')}"
+                username_val = base_usr
+                idx = 1
+                while User.objects.filter(username=username_val).exists():
+                    username_val = f"{base_usr}_{idx}"
+                    idx += 1
+
+                new_user = User.objects.create(
                     username=username_val,
-                    defaults={
-                        'external_user_id': ext_u_id or None,
-                        'phone_number': mobile or '',
-                        'email': email or f"{username_val}@ilync.tech",
-                        'first_name': name,
-                        'role': u_role,
-                        'vendor': vendor_obj,
-                        'is_active': True
-                    }
+                    external_user_id=ext_u_id or None,
+                    phone_number=mobile or '',
+                    email=email or f"{username_val}@ilync.tech",
+                    first_name=name or username_val,
+                    role=u_role,
+                    vendor=vendor_obj,
+                    is_active=True
                 )
-                if new_user.vendor != vendor_obj:
-                    new_user.vendor = vendor_obj
-                    new_user.save()
                 HeroVendorAssignment.objects.get_or_create(
                     user=new_user,
                     vendor=vendor_obj,
                     defaults={'is_active': True}
                 )
+                synced_user_ids.append(new_user.id)
+
+        # Remove / unassign any duplicate database users for this vendor that are not in the iLync vendor users array
+        if synced_user_ids:
+            stale_users = User.objects.filter(vendor=vendor_obj).exclude(id__in=synced_user_ids)
+            from apps.attendance.models import AttendanceRecord
+            for su in list(stale_users):
+                if not AttendanceRecord.objects.filter(user=su).exists():
+                    su.delete()
+                else:
+                    su.vendor = None
+                    su.save()
 
     except Exception as e:
         logger.error(f"Error syncing detail links for vendor {vendor_obj.name}: {str(e)}")

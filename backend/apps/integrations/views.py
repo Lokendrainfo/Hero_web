@@ -130,27 +130,8 @@ class IlyncVendorDetailView(IlyncBaseView):
     def get(self, request, vendor_id):
         client = IlyncClient()
         res = client.get_vendor_by_id(vendor_id)
-        vendor_data = res.get('data') if (isinstance(res, dict) and res.get('success') and 'data' in res) else res
-        
-        if isinstance(vendor_data, dict):
-            from apps.machines.models import Machine
-            from apps.machines.serializers import MachineSerializer
-            from django.db.models import Q
-            
-            p_name = (vendor_data.get('partnerName') or vendor_data.get('name') or '').strip()
-            db_machines = Machine.objects.filter(
-                Q(vendor__external_vendor_id=str(vendor_id)) |
-                Q(vendor__id=int(vendor_id) if str(vendor_id).isdigit() else -1) |
-                (Q(vendor__name__icontains=p_name) if p_name else Q(pk=-1))
-            ).distinct()
-            
-            assigned_machines = MachineSerializer(db_machines, many=True).data
-            vendor_data['assigned_machines'] = assigned_machines
-            
-            if not vendor_data.get('machines'):
-                vendor_data['machines'] = assigned_machines
-
-        return success_response(data=vendor_data, message="Vendor detail fetched successfully")
+        vendor_data = res.get('data') if (isinstance(res, dict) and res.get('success') and 'data' in res) else (res if isinstance(res, dict) else {})
+        return success_response(data=vendor_data, message="Vendor detail fetched successfully from ILYNC API")
 
 class IlyncUserListView(IlyncBaseView):
     def get(self, request):

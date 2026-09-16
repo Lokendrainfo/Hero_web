@@ -179,12 +179,31 @@ def resolve_target_user(user_id_param):
         u = User.objects.filter(id=int(user_id_param)).first()
         if u:
             return u
+    param_str = str(user_id_param).strip()
     u = User.objects.filter(
-        Q(external_user_id=str(user_id_param)) |
-        Q(employee_id=str(user_id_param)) |
-        Q(username=str(user_id_param))
+        Q(external_user_id=param_str) |
+        Q(employee_id=param_str) |
+        Q(username=param_str) |
+        Q(phone_number=param_str) |
+        Q(email__iexact=param_str)
     ).first()
+
+    if not u and param_str:
+        # Create lightweight shell user for foreign-key telemetry storage
+        base_name = param_str.split('@')[0] if '@' in param_str else param_str
+        u, _ = User.objects.get_or_create(
+            username=clean_username(base_name),
+            defaults={
+                'external_user_id': param_str if not param_str.isdigit() else None,
+                'first_name': base_name,
+                'is_active': True
+            }
+        )
     return u
+
+def clean_username(val):
+    clean = "".join(c for c in val if c.isalnum() or c in ('_', '-'))
+    return clean if clean else f"user_{int(timezone.now().timestamp())}"
 
 def validate_employee_attendance_access(request_user, target_user):
     """
@@ -791,128 +810,51 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             "rejection_reason": reason
         }, status=status.HTTP_200_OK)
 
-    @action(detail=False, methods=['get'], url_path='mobile/roster')
+    @action(detail=False, methods=['get'], url_path='roster')
+    def roster(self, request):
+        return self.get_team_attendance(request)
+
+    @action(detail=False, methods=['get'], url_path='mobile-roster')
     def mobile_roster(self, request):
         return self.get_team_attendance(request)
 
     @action(detail=False, methods=['get'], url_path='team-attendance')
     def get_team_attendance(self, request):
         """
-        Returns full team member roster for authorized vendor(s), merged with attendance status for date.
-        Source of Truth: iLync Vendor -> Assigned Machines -> Assigned Team Members.
-        Unassigned users or users from other vendors are strictly excluded.
+        Returns dynamic team member roster directly from LIVE iLync Vendor API (https://ilync.tech/api/vendor/{vendor_id}),
+        merged with today's saved attendance records from Hero DB.
+        NO database caching for vendor users/machines.
         """
         user = request.user
         req_date = request.query_params.get('date') or str(timezone.now().date())
         role_filter = request.query_params.get('role')
         search_filter = request.query_params.get('search')
         status_filter = request.query_params.get('status')
-
-        allowed_vendor_ids = get_user_vendor_ids(user)
         req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
 
-        # Determine target vendor IDs strictly
-        target_vendor_ids = None
-        if allowed_vendor_ids is not None:
-            # Vendor-scoped user
-            target_vendor_ids = list(allowed_vendor_ids)
-            if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
-                check_vendor_access(user, req_v)
-                from apps.vendors.models import Vendor
-                req_v_obj = Vendor.objects.filter(
-                    Q(external_vendor_id=req_v) | Q(name__iexact=req_v) | Q(id=req_v if str(req_v).isdigit() else None)
-                ).first()
-                if req_v_obj and req_v_obj.id in allowed_vendor_ids:
-                    target_vendor_ids = [req_v_obj.id]
-                else:
-                    target_vendor_ids = []
-        else:
-            # Admin user
-            if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
-                from apps.vendors.models import Vendor
-                req_v_obj = Vendor.objects.filter(
-                    Q(external_vendor_id=req_v) | Q(name__iexact=req_v) | Q(id=req_v if str(req_v).isdigit() else None)
-                ).first()
-                if req_v_obj:
-                    target_vendor_ids = [req_v_obj.id]
-                else:
-                    target_vendor_ids = []
-
-        # Trigger live iLync user detail sync for vendors in scope
+        allowed_vendor_ids = get_user_vendor_ids(user)
         from apps.vendors.models import Vendor
-        from apps.vendors.services import sync_vendor_detail_links
-        v_sync_qs = Vendor.objects.filter(is_active=True).exclude(external_vendor_id__isnull=True).exclude(external_vendor_id='')
-        if target_vendor_ids is not None:
-            v_sync_qs = v_sync_qs.filter(id__in=target_vendor_ids)
-        for v_item in v_sync_qs:
-            try:
-                sync_vendor_detail_links(v_item, v_item.external_vendor_id)
-            except Exception:
-                pass
+        from apps.integrations.ilync_client import IlyncClient
 
-        if target_vendor_ids is not None:
-            if not target_vendor_ids:
-                team_qs = User.objects.none()
-            else:
-                team_qs = User.objects.filter(
-                    Q(vendor_id__in=target_vendor_ids) |
-                    Q(hero_vendor_assignments__vendor_id__in=target_vendor_ids, hero_vendor_assignments__is_active=True)
-                ).filter(is_active=True).exclude(
-                    Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
-                ).distinct().order_by('id')
-        else:
-            # Admin viewing ALL vendors: include active users assigned to an active vendor
-            team_qs = User.objects.filter(
-                Q(vendor__is_active=True) | Q(hero_vendor_assignments__vendor__is_active=True, hero_vendor_assignments__is_active=True)
-            ).filter(is_active=True).exclude(
-                Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
-            ).distinct().order_by('id')
+        client = IlyncClient()
 
-        if role_filter and role_filter.upper() != 'ALL':
-            team_qs = team_qs.filter(
-                Q(role__iexact=role_filter) |
-                Q(roles__name__iexact=role_filter)
+        # Determine target vendors
+        v_qs = Vendor.objects.filter(is_active=True)
+        if allowed_vendor_ids is not None:
+            v_qs = v_qs.filter(id__in=allowed_vendor_ids)
+        if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+            if allowed_vendor_ids is None:
+                check_vendor_access(user, req_v)
+            v_qs = v_qs.filter(
+                Q(external_vendor_id=req_v) | Q(name__iexact=req_v) | Q(id=req_v if str(req_v).isdigit() else None)
             )
 
-        if search_filter:
-            sp = search_filter.strip()
-            team_qs = team_qs.filter(
-                Q(first_name__icontains=sp) |
-                Q(last_name__icontains=sp) |
-                Q(username__icontains=sp) |
-                Q(employee_id__icontains=sp)
-            )
-
-        team_users = list(team_qs)
-        team_user_ids = [u.id for u in team_users]
-
-        # Machine lookup map for team members
-        from apps.machines.models import Machine
-        m_qs = Machine.objects.all()
-        if target_vendor_ids is not None:
-            m_qs = m_qs.filter(vendor_id__in=target_vendor_ids)
-        else:
-            m_qs = m_qs.filter(vendor__isnull=False)
-
-        machine_map = {}
-        for m_obj in m_qs:
-            m_info = {
-                "id": m_obj.id,
-                "name": m_obj.model_name or m_obj.name,
-                "machine_no": m_obj.machine_chassis_no or m_obj.serial_number,
-                "chassis_no": m_obj.machine_chassis_no or m_obj.serial_number
-            }
-            if m_obj.operator and isinstance(m_obj.operator, dict):
-                op_id = m_obj.operator.get('id') or m_obj.operator.get('user_id')
-                if op_id and str(op_id).isdigit():
-                    machine_map[int(op_id)] = m_info
-
-        records = AttendanceRecord.objects.filter(user_id__in=team_user_ids, date=req_date).select_related('marked_by', 'updated_by', 'approved_by')
-        records_map = {r.user_id: r for r in records}
+        target_vendors = list(v_qs)
 
         result_list = []
+        assigned_machines_list = []
         counts = {
-            'total': len(team_users),
+            'total': 0,
             'present': 0,
             'absent': 0,
             'half_day': 0,
@@ -921,108 +863,173 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             'not_marked': 0
         }
 
-        for u in team_users:
-            rec = records_map.get(u.id)
-            st = (rec.status if rec else 'NOT_MARKED').upper()
+        for v_obj in target_vendors:
+            ext_v_id = v_obj.external_vendor_id or v_obj.id
+            live_res = None
+            try:
+                live_res = client.get_vendor_by_id(ext_v_id)
+            except Exception as e:
+                print(f"[AttendanceRoster] Error fetching live iLync vendor data for {v_obj.name}: {e}")
 
-            if st in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT']:
-                counts['present'] += 1
-            elif st == 'ABSENT':
-                counts['absent'] += 1
-            elif st in ['HALF_DAY', 'HALF DAY']:
-                counts['half_day'] += 1
-                st = 'HALF_DAY'
-            elif st == 'LEAVE':
-                counts['leave'] += 1
-            elif st in ['WEEK_OFF', 'WEEK OFF']:
-                counts['week_off'] += 1
-                st = 'WEEK_OFF'
-            else:
-                counts['not_marked'] += 1
-                st = 'NOT_MARKED'
+            v_payload = live_res.get('data') if (isinstance(live_res, dict) and live_res.get('success')) else (live_res if isinstance(live_res, dict) else {})
 
-            if status_filter and status_filter.upper() != 'ALL':
-                sf = status_filter.upper().replace(' ', '_')
-                if sf != st:
+            # 1. LIVE TEAM MEMBERS directly from iLync response (v_payload.get('users'))
+            raw_users = v_payload.get('users') or []
+            if not isinstance(raw_users, list):
+                raw_users = []
+
+            for u_info in raw_users:
+                if not isinstance(u_info, dict):
                     continue
+                ext_u_id = str(u_info.get('userId') or u_info.get('id') or '').strip()
+                if ext_u_id.lower() in ('none', 'null', ''):
+                    ext_u_id = None
+                mobile = str(u_info.get('mobile') or u_info.get('phone') or u_info.get('phoneNumber') or '').strip()
+                email = str(u_info.get('email') or '').strip()
+                name = str(u_info.get('name') or u_info.get('contactName') or 'Team Member').strip()
+                designation = str(u_info.get('designation') or u_info.get('role') or 'OPERATOR').strip()
 
-            user_role = u.get_role_list()[0] if u.get_role_list() else (u.role or 'OPERATOR')
-            user_vendor_name = u.vendor.name if u.vendor else ''
+                # Role filter check
+                u_role = 'VENDOR' if designation.upper() == 'VENDOR' else ('TRACKER' if 'TRACK' in designation.upper() else 'OPERATOR')
+                if role_filter and role_filter.upper() != 'ALL':
+                    if role_filter.upper() != u_role.upper():
+                        continue
 
-            check_in_photo_url = build_secure_media_url(request, rec.check_in_photo) if rec else None
-            check_out_photo_url = build_secure_media_url(request, rec.check_out_photo) if rec else None
+                # Search filter check
+                if search_filter:
+                    sp = search_filter.strip().lower()
+                    if sp not in name.lower() and sp not in mobile and sp not in email.lower():
+                        continue
 
-            m_info = machine_map.get(u.id)
-            att_type = 'MACHINE' if (m_info or (rec and rec.attendance_type == 'MACHINE')) else 'TEAM'
+                # Find today's AttendanceRecord from Hero DB for this user
+                rec_qs = AttendanceRecord.objects.filter(date=req_date)
+                rec = None
+                if ext_u_id:
+                    rec = rec_qs.filter(Q(user__external_user_id=ext_u_id) | Q(user__username=ext_u_id)).first()
+                if not rec and email and not email.lower().startswith('user@'):
+                    rec = rec_qs.filter(user__email__iexact=email).first()
+                if not rec and mobile:
+                    rec = rec_qs.filter(Q(user__phone_number=mobile) | Q(user__username=mobile)).first()
 
-            att_detail = {
-                'status': st,
-                'attendance_id': rec.id if rec else None,
-                'check_in': timezone.localtime(rec.check_in).strftime('%H:%M') if (rec and rec.check_in) else None,
-                'check_out': timezone.localtime(rec.check_out).strftime('%H:%M') if (rec and rec.check_out) else None,
-                'check_in_time': timezone.localtime(rec.check_in).isoformat() if (rec and rec.check_in) else None,
-                'check_out_time': timezone.localtime(rec.check_out).isoformat() if (rec and rec.check_out) else None,
-                'check_in_photo': check_in_photo_url,
-                'check_out_photo': check_out_photo_url,
-                'approval_status': rec.approval_status if rec else 'PENDING',
-                'rejection_reason': rec.rejection_reason if rec else None,
-            }
+                # Also lookup matching local User ID if available for action triggers
+                matched_user = None
+                if ext_u_id:
+                    matched_user = User.objects.filter(external_user_id=ext_u_id).first()
+                if not matched_user and name:
+                    matched_user = User.objects.filter(first_name__iexact=name).first()
+                if not matched_user and email and not email.lower().startswith('user@'):
+                    matched_user = User.objects.filter(email__iexact=email).first()
+                if not matched_user and mobile:
+                    matched_user = User.objects.filter(phone_number=mobile, first_name__iexact=name).first()
 
-            result_list.append({
-                'id': u.id,
-                'user_id': u.id,
-                'external_user_id': u.external_user_id or '',
-                'employee_id': u.employee_id or u.external_user_id or f"EMP-{u.id}",
-                'name': u.get_full_name() or u.username,
-                'user_name': u.get_full_name() or u.username,
-                'phone': u.phone_number or '',
-                'phone_number': u.phone_number or '',
-                'role': user_role,
-                'vendor_name': user_vendor_name,
-                'is_active': u.is_active,
-                'reporting_manager_name': u.reporting_manager.get_full_name() if u.reporting_manager else '',
-                'attendance_type': att_type,
-                'machine': m_info,
-                'machine_chassis_no': (m_info.get('chassis_no') if m_info else None) or (rec.machine_chassis_no if rec else None),
-                'attendance': att_detail,
-                # Compatibility fields for Web UI:
-                'attendance_id': rec.id if rec else None,
-                'date': req_date,
-                'status': st,
-                'approval_status': rec.approval_status if rec else 'PENDING',
-                'rejection_reason': rec.rejection_reason if rec else None,
-                'check_in': timezone.localtime(rec.check_in).strftime('%H:%M') if (rec and rec.check_in) else None,
-                'check_out': timezone.localtime(rec.check_out).strftime('%H:%M') if (rec and rec.check_out) else None,
-                'check_in_time': timezone.localtime(rec.check_in).isoformat() if (rec and rec.check_in) else None,
-                'check_out_time': timezone.localtime(rec.check_out).isoformat() if (rec and rec.check_out) else None,
-                'check_in_latitude': float(rec.check_in_latitude) if (rec and rec.check_in_latitude) else None,
-                'check_in_longitude': float(rec.check_in_longitude) if (rec and rec.check_in_longitude) else None,
-                'check_in_accuracy': rec.check_in_accuracy if (rec and rec.check_in_accuracy) else None,
-                'check_in_photo': check_in_photo_url,
-                'check_out_photo': check_out_photo_url,
-                'total_working_hours': rec.total_working_hours if rec else None,
-                'notes': rec.notes if rec else '',
-                'marked_by_name': rec.marked_by.get_full_name() if (rec and rec.marked_by) else ''
-            })
+                st = (rec.status if rec else 'NOT_MARKED').upper()
+                counts['total'] += 1
 
-        vendor_data = None
-        if target_vendor_ids and len(target_vendor_ids) == 1:
-            v_obj = Vendor.objects.filter(id=target_vendor_ids[0]).first()
-            if v_obj:
-                vendor_data = {
-                    'id': v_obj.id,
-                    'name': v_obj.name,
-                    'external_vendor_id': v_obj.external_vendor_id or ''
-                }
+                if st == 'PRESENT' or st == 'CHECKED_IN' or st == 'CHECKED_OUT':
+                    counts['present'] += 1
+                elif st == 'ABSENT':
+                    counts['absent'] += 1
+                elif st in ['HALF_DAY', 'HALF DAY']:
+                    counts['half_day'] += 1
+                    st = 'HALF_DAY'
+                elif st == 'LEAVE':
+                    counts['leave'] += 1
+                elif st in ['WEEK_OFF', 'WEEK OFF']:
+                    counts['week_off'] += 1
+                    st = 'WEEK_OFF'
+                else:
+                    counts['not_marked'] += 1
+                    st = 'NOT_MARKED'
+
+                if status_filter and status_filter.upper() != 'ALL':
+                    sf = status_filter.upper().replace(' ', '_')
+                    if sf != st:
+                        continue
+
+                check_in_photo_url = build_secure_media_url(request, rec.check_in_photo) if rec else None
+                check_out_photo_url = build_secure_media_url(request, rec.check_out_photo) if rec else None
+
+                effective_user_id = ext_u_id or (matched_user.id if matched_user else f"ILYNC-{name.replace(' ', '_')}_{mobile}")
+
+                result_list.append({
+                    'user_id': effective_user_id,
+                    'employee_id': ext_u_id or (matched_user.employee_id if (matched_user and matched_user.employee_id) else f"EMP-{effective_user_id}"),
+                    'user_name': name,
+                    'phone_number': mobile,
+                    'email': email,
+                    'role': u_role,
+                    'vendor_name': v_obj.name,
+                    'vendor_id': v_obj.id,
+                    'is_active': True,
+                    'reporting_manager_name': rec.reporting_manager.get_full_name() if (rec and rec.reporting_manager) else '',
+                    'attendance_id': rec.id if rec else None,
+                    'date': req_date,
+                    'status': st,
+                    'approval_status': rec.approval_status if rec else 'PENDING',
+                    'rejection_reason': rec.rejection_reason if rec else None,
+                    'attendance_type': rec.attendance_type if rec else 'TEAM',
+                    'machine_chassis_no': rec.machine_chassis_no if rec else None,
+                    'check_in': timezone.localtime(rec.check_in).strftime('%H:%M') if (rec and rec.check_in) else None,
+                    'check_out': timezone.localtime(rec.check_out).strftime('%H:%M') if (rec and rec.check_out) else None,
+                    'check_in_time': timezone.localtime(rec.check_in).isoformat() if (rec and rec.check_in) else None,
+                    'check_out_time': timezone.localtime(rec.check_out).isoformat() if (rec and rec.check_out) else None,
+                    'check_in_latitude': float(rec.check_in_latitude) if (rec and rec.check_in_latitude) else None,
+                    'check_in_longitude': float(rec.check_in_longitude) if (rec and rec.check_in_longitude) else None,
+                    'check_in_accuracy': rec.check_in_accuracy if (rec and rec.check_in_accuracy) else None,
+                    'check_in_photo': check_in_photo_url,
+                    'check_out_photo': check_out_photo_url,
+                    'total_working_hours': rec.total_working_hours if rec else None,
+                    'notes': rec.notes if rec else '',
+                    'marked_by_name': rec.marked_by.get_full_name() if (rec and rec.marked_by) else ''
+                })
+
+            # 2. LIVE MACHINES directly from iLync response (v_payload.get('machines'))
+            raw_machines = v_payload.get('machines') or v_payload.get('assigned_machines') or []
+            if not isinstance(raw_machines, list):
+                raw_machines = []
+
+            for m_info in raw_machines:
+                if not isinstance(m_info, dict):
+                    continue
+                mac_id = m_info.get('id')
+                mac_name = m_info.get('model_name') or m_info.get('name') or m_info.get('model') or 'Machine'
+                mac_code = m_info.get('code') or m_info.get('model_code') or f"MAC-{mac_id or 1}"
+                chassis_val = str(m_info.get('machineNo') or m_info.get('machine_no') or m_info.get('serial_number') or m_info.get('machine_chassis_no') or '').strip()
+                op_name = m_info.get('operator_name') or (m_info.get('operator', {}).get('name') if isinstance(m_info.get('operator'), dict) else '')
+
+                m_rec = AttendanceRecord.objects.filter(date=req_date).filter(
+                    Q(machine_id=str(mac_id)) | Q(machine_chassis_no=chassis_val)
+                ).first()
+
+                m_status = (m_rec.status if m_rec else 'NOT_MARKED').upper()
+                assigned_machines_list.append({
+                    'machine_id': mac_id,
+                    'name': mac_name,
+                    'code': mac_code,
+                    'machine_no': chassis_val,
+                    'chassis_no': chassis_val,
+                    'vendor_name': v_obj.name,
+                    'vendor_id': v_obj.id,
+                    'operator_name': op_name,
+                    'status': m_status,
+                    'attendance_type': 'MACHINE',
+                    'check_in': timezone.localtime(m_rec.check_in).strftime('%H:%M') if (m_rec and m_rec.check_in) else None,
+                    'check_out': timezone.localtime(m_rec.check_out).strftime('%H:%M') if (m_rec and m_rec.check_out) else None,
+                    'check_in_photo': build_secure_media_url(request, m_rec.check_in_photo) if m_rec else None,
+                    'check_out_photo': build_secure_media_url(request, m_rec.check_out_photo) if m_rec else None,
+                    'notes': m_rec.notes if m_rec else '',
+                    'check_in_latitude': float(m_rec.check_in_latitude) if (m_rec and m_rec.check_in_latitude) else None,
+                    'check_in_longitude': float(m_rec.check_in_longitude) if (m_rec and m_rec.check_in_longitude) else None,
+                })
 
         return success_response(
             data={
                 'date': req_date,
-                'vendor': vendor_data,
                 'summary': counts,
-                'team_members': result_list
+                'team_members': result_list,
+                'assigned_machines': assigned_machines_list
             },
-            message=f"Fetched vendor team attendance roster for {req_date}"
+            message=f"Fetched live vendor team and machine attendance for {req_date}"
         )
 
     @action(detail=False, methods=['post'], url_path='bulk-mark')

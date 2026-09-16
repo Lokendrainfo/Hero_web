@@ -50,41 +50,13 @@ export const Vendors = () => {
       return;
     }
 
-    Promise.allSettled([
-      vendorService.getVendorById(vendorId),
-      vendorService.getIntegrationsVendorById
-        ? vendorService.getIntegrationsVendorById(vendorId)
-        : Promise.resolve(null)
-    ])
-      .then(([dbRes, intRes]) => {
-        const dbData = dbRes.status === 'fulfilled' ? (dbRes.value?.data?.data || dbRes.value?.data) : null;
-        const intData = intRes.status === 'fulfilled' ? (intRes.value?.data?.data || intRes.value?.data) : null;
-
-        const merged = {
-          ...selectedVendor,
-          ...(intData && typeof intData === 'object' ? intData : {}),
-          ...(dbData && typeof dbData === 'object' ? dbData : {})
-        };
-
-        const rawMachines = [
-          ...(selectedVendor.machines || []),
-          ...(intData?.machines || []),
-          ...(dbData?.machines || []),
-          ...(dbData?.assigned_machines || [])
-        ];
-        merged.machines = rawMachines;
-
-        const rawUsers = [
-          ...(selectedVendor.users || []),
-          ...(intData?.users || []),
-          ...(dbData?.users || [])
-        ];
-        merged.users = rawUsers;
-
-        setVendorDetail(merged);
+    vendorService.getVendorById(vendorId)
+      .then((res) => {
+        const liveData = res.data?.data || res.data || {};
+        setVendorDetail(liveData);
       })
       .catch((err) => {
-        console.error('Failed to load full vendor detail:', err);
+        console.error('Failed to load live vendor detail from iLync:', err);
       })
       .finally(() => {
         setLoadingDetail(false);
@@ -554,9 +526,25 @@ export const Vendors = () => {
           <button
             type="button"
             className="btn-secondary"
-            onClick={() => { refreshVendor(); fetchVendors(search); }}
+            onClick={() => {
+              refreshVendor();
+              fetchVendors(search);
+              if (selectedVendor) {
+                const vendorId = selectedVendor.id || selectedVendor.external_vendor_id || selectedVendor.external_id;
+                if (vendorId) {
+                  setLoadingDetail(true);
+                  vendorService.getVendorById(vendorId)
+                    .then((res) => {
+                      const liveData = res.data?.data || res.data || {};
+                      setVendorDetail(liveData);
+                    })
+                    .catch((err) => console.error('Error refreshing live vendor detail:', err))
+                    .finally(() => setLoadingDetail(false));
+                }
+              }
+            }}
           >
-            <LucideRefreshCw size={14} className={loading || loadingVendor ? 'animate-spin' : ''} />
+            <LucideRefreshCw size={14} className={loading || loadingVendor || loadingDetail ? 'animate-spin' : ''} />
             Refresh
           </button>
         }

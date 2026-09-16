@@ -32,21 +32,73 @@ class VendorViewSet(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         user = request.user
-        qs = self.get_queryset()
+        search = request.query_params.get('search', '').strip().lower()
+        page = int(request.query_params.get('page', 0))
+        size = int(request.query_params.get('size', 100))
+
+        client = IlyncClient()
+        live_res = None
+        try:
+            live_res = client.get_vendors(page=page, size=size, search=search)
+        except Exception as e:
+            print(f"[VendorViewSet] Error fetching live vendors from iLync: {e}")
+
+        raw_data = live_res.get('data') if (isinstance(live_res, dict) and 'data' in live_res) else (live_res if isinstance(live_res, dict) else [])
+        if isinstance(raw_data, dict):
+            raw_list = raw_data.get('results') or raw_data.get('content') or raw_data.get('vendors') or []
+        elif isinstance(raw_data, list):
+            raw_list = raw_data
+        else:
+            raw_list = []
+
+        allowed_vendor_ids = get_user_vendor_ids(user)
+
+        vendors_list = []
+        for item in raw_list:
+            if not isinstance(item, dict):
+                continue
+            v_id = str(item.get('id') or item.get('external_vendor_id') or '').strip()
+            v_name = str(item.get('partnerName') or item.get('name') or '').strip()
+
+            # Authorization Scope Filter
+            if allowed_vendor_ids is not None:
+                if not any(str(av_id).lower() in (v_id.lower(), v_name.lower()) for av_id in allowed_vendor_ids):
+                    continue
+
+            # Search Filter
+            if search:
+                concat = f"{v_name} {item.get('contactName')} {item.get('contact_person')} {item.get('phoneNumber')} {item.get('phone')} {item.get('email')} {item.get('code')}".lower()
+                if search not in concat:
+                    continue
+
+            norm_v = dict(item)
+            norm_v['id'] = v_id
+            norm_v['external_vendor_id'] = v_id
+            norm_v['name'] = v_name or item.get('name') or 'Vendor'
+            norm_v['partnerName'] = norm_v['name']
+            norm_v['contact_person'] = item.get('contactName') or item.get('contact_person') or ''
+            norm_v['contactName'] = norm_v['contact_person']
+            norm_v['phone'] = item.get('phoneNumber') or item.get('phone') or ''
+            norm_v['phoneNumber'] = norm_v['phone']
+            norm_v['email'] = item.get('email') or ''
+            norm_v['vendor_type'] = item.get('legalEntityType') or item.get('vendor_type') or 'COMPANY'
+            norm_v['legalEntityType'] = norm_v['vendor_type']
+            norm_v['is_active'] = item.get('active') if 'active' in item else item.get('is_active', True)
+
+            machines = item.get('machines') or item.get('assigned_machines') or []
+            norm_v['machines'] = machines if isinstance(machines, list) else []
+            norm_v['machines_count'] = len(norm_v['machines'])
+            norm_v['users'] = item.get('users') or []
+
+            vendors_list.append(norm_v)
 
         is_admin = user.is_authenticated and (user.is_superuser or 'ADMIN' in user.get_role_list())
-        db_vendors = VendorSerializer(qs, many=True).data
-
-        # If DB is empty for ADMIN, trigger sync from ILYNC
-        if is_admin and not db_vendors and Vendor.objects.count() == 0:
-            fetch_and_sync_all_ilync_vendors()
-            qs = self.get_queryset()
-            db_vendors = VendorSerializer(qs, many=True).data
 
         return success_response(data={
             "is_admin": is_admin,
-            "vendors": db_vendors,
-            "total": len(db_vendors)
+            "vendors": vendors_list,
+            "results": vendors_list,
+            "total": len(vendors_list)
         })
 
     @action(detail=False, methods=['get'], url_path='me')
@@ -83,7 +135,7 @@ class VendorViewSet(viewsets.ModelViewSet):
 
         ext_id = instance.external_vendor_id if (instance and instance.external_vendor_id) else pk
 
-        # Fetch fresh full vendor details from live ILYNC API (/api/vendor/<id>)
+        # Fetch fresh vendor details from live ILYNC API (GET /api/vendor/<id>)
         external_res = None
         try:
             external_res = client.get_vendor_by_id(ext_id)
@@ -92,69 +144,36 @@ class VendorViewSet(viewsets.ModelViewSet):
 
         external_vendor = {}
         if isinstance(external_res, dict):
-            external_vendor = external_res.get('data') if external_res.get('success') else external_res
+            external_vendor = external_res.get('data') if ('data' in external_res and isinstance(external_res.get('data'), dict)) else external_res
 
-        if instance and ext_id:
-            try:
-                sync_vendor_detail_links(instance, ext_id)
-            except Exception:
-                pass
+        # Read users and machines directly from live iLync API response
+        raw_users = external_vendor.get('users') if isinstance(external_vendor, dict) else []
+        if not isinstance(raw_users, list):
+            raw_users = []
 
-        from apps.machines.models import Machine
-        from apps.machines.serializers import MachineSerializer
-        from apps.authentication.models import User
-        from apps.authentication.serializers import UserSerializer
+        raw_machines = external_vendor.get('machines') if isinstance(external_vendor, dict) else []
+        if not isinstance(raw_machines, list):
+            raw_machines = []
 
-        assigned_machines_qs = Machine.objects.none()
-        if instance:
-            assigned_machines_qs = Machine.objects.filter(vendor=instance)
-        elif str(ext_id):
-            assigned_machines_qs = Machine.objects.filter(vendor__external_vendor_id=str(ext_id))
-
-        machines_data = MachineSerializer(assigned_machines_qs, many=True).data
-
-        # Determine users dynamically from live response or DB
-        raw_users = []
-        if isinstance(external_vendor, dict) and external_vendor.get('users'):
-            raw_users = external_vendor.get('users')
-        elif instance:
-            db_users = User.objects.filter(vendor=instance).exclude(
-                Q(is_superuser=True) | Q(role__iexact='ADMIN')
-            ).distinct()
-            raw_users = UserSerializer(db_users, many=True).data
-
-        dedup_users = []
-        seen_user_keys = set()
-        for u in (raw_users or []):
-            if not isinstance(u, dict):
-                continue
-            key = str(u.get('userId') or u.get('id') or u.get('mobile') or u.get('phone') or u.get('phone_number') or u.get('email') or u.get('username') or u.get('name') or '').strip().lower()
-            if key and key not in seen_user_keys:
-                seen_user_keys.add(key)
-                dedup_users.append(u)
+        res_data = dict(external_vendor) if isinstance(external_vendor, dict) else {}
 
         if instance:
-            data = VendorSerializer(instance).data
-            if isinstance(external_vendor, dict):
-                for k, v in external_vendor.items():
-                    if v is not None:
-                        data[k] = v
-            if isinstance(external_vendor, dict) and external_vendor.get('machines'):
-                data['machines'] = external_vendor['machines']
-            else:
-                data['machines'] = machines_data
-            data['assigned_machines'] = machines_data
-            data['machines_count'] = len(data.get('machines', []))
-            data['users'] = dedup_users
-            return success_response(data=data)
-        else:
-            if isinstance(external_vendor, dict):
-                if not external_vendor.get('machines'):
-                    external_vendor['machines'] = machines_data
-                external_vendor['assigned_machines'] = machines_data
-                external_vendor['machines_count'] = len(external_vendor.get('machines', []))
-                external_vendor['users'] = dedup_users
-            return success_response(data=external_vendor)
+            res_data.setdefault('id', instance.external_vendor_id or instance.id)
+            res_data.setdefault('external_vendor_id', instance.external_vendor_id or str(instance.id))
+            res_data.setdefault('name', instance.name)
+            res_data.setdefault('partnerName', instance.name)
+            res_data.setdefault('contact_person', instance.contact_person)
+            res_data.setdefault('contactName', instance.contact_person)
+            res_data.setdefault('phone', instance.phone)
+            res_data.setdefault('phoneNumber', instance.phone)
+            res_data.setdefault('email', instance.email)
+
+        res_data['users'] = raw_users
+        res_data['machines'] = raw_machines
+        res_data['assigned_machines'] = raw_machines
+        res_data['machines_count'] = len(raw_machines)
+
+        return success_response(data=res_data)
 
     @action(detail=False, methods=['post'], url_path='sync')
     def sync_vendors(self, request):

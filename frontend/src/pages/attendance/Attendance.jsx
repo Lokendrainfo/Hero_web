@@ -26,6 +26,7 @@ export const Attendance = () => {
   // Daily Team Attendance State
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [teamMembers, setTeamMembers] = useState([]);
+  const [assignedMachines, setAssignedMachines] = useState([]);
   const [summaryStats, setSummaryStats] = useState({
     total: 0, present: 0, absent: 0, half_day: 0, leave: 0, week_off: 0, not_marked: 0
   });
@@ -40,18 +41,6 @@ export const Attendance = () => {
       ...prev,
       [vName]: !prev[vName]
     }));
-  };
-
-  const handleToggleUserActive = async (userId, currentIsActive, userName) => {
-    const newStatus = !currentIsActive;
-    try {
-      await userService.updateUser(userId, { is_active: newStatus });
-      showToast(`Account for ${userName} set to ${newStatus ? 'ACTIVE' : 'INACTIVE'}`, newStatus ? 'success' : 'warning');
-      setTeamMembers(prev => prev.map(u => u.user_id === userId ? { ...u, is_active: newStatus } : u));
-    } catch (err) {
-      console.error("Toggle user status error:", err);
-      showToast("Failed to update user active status", "error");
-    }
   };
 
   // Vendor Team Filter State
@@ -237,6 +226,7 @@ export const Attendance = () => {
         setSummaryStats(data.summary || { total: 0, present: 0, absent: 0, half_day: 0, leave: 0, week_off: 0, not_marked: 0 });
         const members = data.team_members || [];
         setTeamMembers(members);
+        setAssignedMachines(data.assigned_machines || []);
 
         if (selectedVendorFilter === 'ALL') {
           const counts = {};
@@ -274,6 +264,7 @@ export const Attendance = () => {
           email: v.email || '',
           type: v.legalEntityType || v.vendor_type || v.type || '',
           members: [],
+          machines: [],
           stats: { total: 0, present: 0, absent: 0, half_day: 0, leave: 0, not_marked: 0 }
         };
       }
@@ -293,11 +284,10 @@ export const Attendance = () => {
       return rawName;
     };
 
-    // 2. Map all teamMembers into canonical vendor team groups (deduplicated)
     const seenMemberKeys = new Set();
     teamMembers.forEach(m => {
       if (!m) return;
-      const memKey = String(m.user_id || m.employee_id || m.phone_number || m.user_name || '').trim().toLowerCase();
+      const memKey = String(m.employee_id || m.user_id || `${m.user_name}_${m.phone_number}_${m.role}` || '').trim().toLowerCase();
       if (memKey && seenMemberKeys.has(memKey)) return;
       if (memKey) seenMemberKeys.add(memKey);
 
@@ -311,6 +301,7 @@ export const Attendance = () => {
           email: details.email || '',
           type: details.type || '',
           members: [],
+          machines: [],
           stats: { total: 0, present: 0, absent: 0, half_day: 0, leave: 0, not_marked: 0 }
         };
       }
@@ -325,9 +316,30 @@ export const Attendance = () => {
       else groups[resolvedName].stats.not_marked += 1;
     });
 
-    // Filter vendor team groups: keep groups that have members
+    // 3. Map assigned machines into vendor groups
+    assignedMachines.forEach(mac => {
+      if (!mac) return;
+      const resolvedName = resolveVendorName(mac.vendor_name);
+      if (!groups[resolvedName]) {
+        const details = vendorDetailsMap[resolvedName.toLowerCase()] || {};
+        groups[resolvedName] = {
+          vendorName: resolvedName,
+          contactName: details.contact || '',
+          phone: details.phone || '',
+          email: details.email || '',
+          type: details.type || '',
+          members: [],
+          machines: [],
+          stats: { total: 0, present: 0, absent: 0, half_day: 0, leave: 0, not_marked: 0 }
+        };
+      }
+      if (!groups[resolvedName].machines) groups[resolvedName].machines = [];
+      groups[resolvedName].machines.push(mac);
+    });
+
+    // Filter vendor team groups: keep groups that have members OR machines
     const groupList = Object.values(groups);
-    return groupList.filter(g => g.members && g.members.length > 0);
+    return groupList.filter(g => (g.members && g.members.length > 0) || (g.machines && g.machines.length > 0));
   }, [teamMembers, vendors, vendorList, vendorDetailsMap]);
 
   const vendorTeamList = useMemo(() => {
@@ -909,264 +921,319 @@ export const Attendance = () => {
 
                     {/* Vendor Team Attendance Table (Expanded Only) */}
                     {isExpanded && (
-                      <div className="table-container" style={{ borderRadius: 0, border: 'none' }}>
-                        <table className="data-table">
-                          <thead>
-                            <tr>
-                              <th style={{ paddingLeft: '20px' }}>Employee ID & Name</th>
-                              <th>Account Status</th>
-                              <th>Role</th>
-                              <th>Attendance Type & Equipment</th>
-                              <th>Check In / Out</th>
-                              <th>GPS Telemetry & Verification</th>
-                              <th>Approval Status</th>
-                              <th>Remarks / Notes</th>
-                              <th>Attendance Status</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {teamGroup.members.map(m => (
-                              <tr key={m.user_id}>
-                                <td style={{ paddingLeft: '20px' }}>
-                                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                                    {m.user_name}
-                                  </div>
-                                  <div className="page-subtitle">
-                                    {m.employee_id || `EMP-${m.user_id}`}
-                                  </div>
-                                </td>
-
-                                <td>
-                                  {/* Active / Inactive User Account Toggle */}
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleToggleUserActive(m.user_id, m.is_active, m.user_name);
-                                    }}
-                                    style={{
-                                      padding: '4px 10px',
-                                      fontSize: '0.72rem',
-                                      fontWeight: '700',
-                                      borderRadius: '6px',
-                                      border: '1px solid',
-                                      borderColor: m.is_active !== false ? '#a7f3d0' : '#fecaca',
-                                      background: m.is_active !== false ? '#ecfdf5' : '#fef2f2',
-                                      color: m.is_active !== false ? '#047857' : '#991b1b',
-                                      cursor: 'pointer',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: '4px'
-                                    }}
-                                    title="Click to activate / inactivate user account"
-                                  >
-                                    <LucidePower size={12} />
-                                    {m.is_active !== false ? 'ACTIVE' : 'INACTIVE'}
-                                  </button>
-                                </td>
-
-                                <td>
-                                  <span className="badge-pill badge-purple" style={{ fontSize: '0.72rem' }}>
-                                    {m.role}
-                                  </span>
-                                </td>
-
-                                <td>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                    <span className={`badge-pill ${m.attendance_type === 'MACHINE' ? 'badge-amber' : 'badge-blue'}`} style={{ fontSize: '0.68rem', width: 'fit-content' }}>
-                                      {m.attendance_type === 'MACHINE' ? '🚜 MACHINE' : '👥 TEAM'}
-                                    </span>
-                                    {m.machine_chassis_no && (
-                                      <span style={{ fontSize: '0.72rem', fontFamily: 'monospace', color: '#475569', fontWeight: '600' }}>
-                                        Chassis: {m.machine_chassis_no}
-                                      </span>
-                                    )}
-                                  </div>
-                                </td>
-
-                                <td>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                      <span style={{ fontSize: '0.78rem', fontWeight: '600', color: m.check_in ? '#047857' : '#94a3b8' }}>
-                                        In: {m.check_in || '--:--'}
-                                      </span>
-                                      {!m.check_in && (
-                                        <button
-                                          onClick={() => handleCheckInEmployee(m.user_id)}
-                                          style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
-                                        >
-                                          Check In
-                                        </button>
-                                      )}
-                                    </div>
-
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                      <span style={{ fontSize: '0.78rem', fontWeight: '600', color: m.check_out ? '#1d4ed8' : '#94a3b8' }}>
-                                        Out: {m.check_out || '--:--'}
-                                      </span>
-                                      {m.check_in && !m.check_out && (
-                                        <button
-                                          onClick={() => handleCheckOutEmployee(m.user_id)}
-                                          style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
-                                        >
-                                          Check Out
-                                        </button>
-                                      )}
-                                    </div>
-
-                                    {m.total_working_hours && (
-                                      <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>
-                                        ⏱ {m.total_working_hours}
-                                      </span>
-                                    )}
-                                  </div>
-                                </td>
-
-                                <td>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                    {m.check_in_latitude ? (
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: '#047857', fontWeight: '600' }}>
-                                        <LucideMapPin size={12} />
-                                        <span>{Number(m.check_in_latitude).toFixed(4)}, {Number(m.check_in_longitude).toFixed(4)}</span>
-                                        {m.check_in_accuracy && <span style={{ color: '#64748b', fontSize: '0.68rem' }}>(±{m.check_in_accuracy}m)</span>}
+                      <>
+                        {teamGroup.members && teamGroup.members.length > 0 && (
+                          <div className="table-container" style={{ borderRadius: 0, border: 'none' }}>
+                            <table className="data-table">
+                              <thead>
+                                <tr>
+                                  <th style={{ paddingLeft: '20px' }}>Employee ID & Name</th>
+                                  <th>Role</th>
+                                  <th>Attendance Type & Equipment</th>
+                                  <th>Check In / Out</th>
+                                  <th>GPS Telemetry & Verification</th>
+                                  <th>Approval Status</th>
+                                  <th>Remarks / Notes</th>
+                                  <th>Attendance Status</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {teamGroup.members.map(m => (
+                                  <tr key={m.user_id}>
+                                    <td style={{ paddingLeft: '20px' }}>
+                                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                                        {m.user_name}
                                       </div>
-                                    ) : (
-                                      <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS log</span>
-                                    )}
+                                      <div className="page-subtitle">
+                                        {m.employee_id || `EMP-${m.user_id}`}
+                                      </div>
+                                    </td>
 
-                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                      <button
-                                        type="button"
-                                        onClick={() => openPhotoModal(m.check_in_photo, 'CHECK_IN')}
+                                    <td>
+                                      <span className="badge-pill badge-purple" style={{ fontSize: '0.72rem' }}>
+                                        {m.role}
+                                      </span>
+                                    </td>
+
+                                    <td>
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                        <span className={`badge-pill ${m.attendance_type === 'MACHINE' ? 'badge-amber' : 'badge-blue'}`} style={{ fontSize: '0.68rem', width: 'fit-content' }}>
+                                          {m.attendance_type === 'MACHINE' ? '🚜 MACHINE' : '👥 TEAM'}
+                                        </span>
+                                        {(m.machine_chassis_no || m.assigned_machine?.chassis_no) && (
+                                          <span style={{ fontSize: '0.72rem', fontFamily: 'monospace', color: '#475569', fontWeight: '600' }}>
+                                            Chassis: {m.machine_chassis_no || m.assigned_machine?.chassis_no}
+                                            {m.assigned_machine?.name ? ` (${m.assigned_machine.name})` : ''}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
+
+                                    <td>
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                          <span style={{ fontSize: '0.78rem', fontWeight: '600', color: m.check_in ? '#047857' : '#94a3b8' }}>
+                                            In: {m.check_in || '--:--'}
+                                          </span>
+                                          {!m.check_in && (
+                                            <button
+                                              onClick={() => handleCheckInEmployee(m.user_id)}
+                                              style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
+                                            >
+                                              Check In
+                                            </button>
+                                          )}
+                                        </div>
+
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                          <span style={{ fontSize: '0.78rem', fontWeight: '600', color: m.check_out ? '#1d4ed8' : '#94a3b8' }}>
+                                            Out: {m.check_out || '--:--'}
+                                          </span>
+                                          {m.check_in && !m.check_out && (
+                                            <button
+                                              onClick={() => handleCheckOutEmployee(m.user_id)}
+                                              style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
+                                            >
+                                              Check Out
+                                            </button>
+                                          )}
+                                        </div>
+
+                                        {m.total_working_hours && (
+                                          <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>
+                                            ⏱ {m.total_working_hours}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
+
+                                    <td>
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        {m.check_in_latitude ? (
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: '#047857', fontWeight: '600' }}>
+                                            <LucideMapPin size={12} />
+                                            <span>{Number(m.check_in_latitude).toFixed(4)}, {Number(m.check_in_longitude).toFixed(4)}</span>
+                                            {m.check_in_accuracy && <span style={{ color: '#64748b', fontSize: '0.68rem' }}>(±{m.check_in_accuracy}m)</span>}
+                                          </div>
+                                        ) : (
+                                          <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS log</span>
+                                        )}
+
+                                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                          <button
+                                            type="button"
+                                            onClick={() => openPhotoModal(m.check_in_photo, 'CHECK_IN')}
+                                            style={{
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: '4px',
+                                              padding: '3px 8px',
+                                              background: m.check_in_photo ? '#f0fdf4' : '#f8fafc',
+                                              color: m.check_in_photo ? '#166534' : '#64748b',
+                                              border: `1px solid ${m.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
+                                              borderRadius: '6px',
+                                              fontSize: '0.7rem',
+                                              fontWeight: '700',
+                                              cursor: 'pointer',
+                                              width: 'fit-content'
+                                            }}
+                                          >
+                                            <LucideCamera size={12} /> Check-In Photo
+                                          </button>
+
+                                          {m.check_out_photo && (
+                                            <button
+                                              type="button"
+                                              onClick={() => openPhotoModal(m.check_out_photo, 'CHECK_OUT')}
+                                              style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                padding: '3px 8px',
+                                                background: '#eff6ff',
+                                                color: '#1d4ed8',
+                                                border: '1px solid #bfdbfe',
+                                                borderRadius: '6px',
+                                                fontSize: '0.7rem',
+                                                fontWeight: '700',
+                                                cursor: 'pointer',
+                                                width: 'fit-content'
+                                              }}
+                                            >
+                                              <LucideCamera size={12} /> Check-Out Photo
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </td>
+
+                                    <td>
+                                      {renderApprovalPill(m.approval_status, m.rejection_reason)}
+                                    </td>
+
+                                    <td>
+                                      <input
+                                        type="text"
+                                        placeholder="Remarks..."
+                                        value={m.notes || ''}
+                                        onChange={(e) => handleNotesChange(m.user_id, e.target.value)}
                                         style={{
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          gap: '4px',
-                                          padding: '3px 8px',
-                                          background: m.check_in_photo ? '#f0fdf4' : '#f8fafc',
-                                          color: m.check_in_photo ? '#166534' : '#64748b',
-                                          border: `1px solid ${m.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
+                                          width: '100%',
+                                          padding: '6px 10px',
                                           borderRadius: '6px',
-                                          fontSize: '0.7rem',
-                                          fontWeight: '700',
-                                          cursor: 'pointer',
-                                          width: 'fit-content'
+                                          border: '1px solid #cbd5e1',
+                                          fontSize: '0.78rem',
+                                          outline: 'none',
+                                          boxSizing: 'border-box'
                                         }}
-                                      >
-                                        <LucideCamera size={12} /> Check-In Photo
-                                      </button>
+                                      />
+                                    </td>
 
-                                      {m.check_out_photo && (
+                                    <td>
+                                      {/* Attendance Selector Buttons */}
+                                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                                         <button
                                           type="button"
-                                          onClick={() => openPhotoModal(m.check_out_photo, 'CHECK_OUT')}
+                                          onClick={() => handleStatusChange(m.user_id, 'PRESENT')}
                                           style={{
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '4px',
-                                            padding: '3px 8px',
-                                            background: '#eff6ff',
-                                            color: '#1d4ed8',
-                                            border: '1px solid #bfdbfe',
-                                            borderRadius: '6px',
+                                            padding: '4px 6px',
                                             fontSize: '0.7rem',
                                             fontWeight: '700',
-                                            cursor: 'pointer',
-                                            width: 'fit-content'
+                                            borderRadius: '5px',
+                                            border: '1px solid',
+                                            borderColor: m.status === 'PRESENT' ? '#10b981' : '#cbd5e1',
+                                            background: m.status === 'PRESENT' ? '#ecfdf5' : '#ffffff',
+                                            color: m.status === 'PRESENT' ? '#047857' : '#64748b',
+                                            cursor: 'pointer'
                                           }}
                                         >
-                                          <LucideCamera size={12} /> Check-Out Photo
+                                          PRESENT
                                         </button>
-                                      )}
-                                    </div>
-                                  </div>
-                                </td>
 
-                                <td>
-                                  {renderApprovalPill(m.approval_status, m.rejection_reason)}
-                                </td>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleStatusChange(m.user_id, 'ABSENT')}
+                                          style={{
+                                            padding: '4px 6px',
+                                            fontSize: '0.7rem',
+                                            fontWeight: '700',
+                                            borderRadius: '5px',
+                                            border: '1px solid',
+                                            borderColor: m.status === 'ABSENT' ? '#ef4444' : '#cbd5e1',
+                                            background: m.status === 'ABSENT' ? '#fef2f2' : '#ffffff',
+                                            color: m.status === 'ABSENT' ? '#991b1b' : '#64748b',
+                                            cursor: 'pointer'
+                                          }}
+                                        >
+                                          ABSENT
+                                        </button>
 
-                                <td>
-                                  <input
-                                    type="text"
-                                    placeholder="Remarks..."
-                                    value={m.notes || ''}
-                                    onChange={(e) => handleNotesChange(m.user_id, e.target.value)}
-                                    style={{
-                                      width: '100%',
-                                      padding: '6px 10px',
-                                      borderRadius: '6px',
-                                      border: '1px solid #cbd5e1',
-                                      fontSize: '0.78rem',
-                                      outline: 'none',
-                                      boxSizing: 'border-box'
-                                    }}
-                                  />
-                                </td>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleStatusChange(m.user_id, 'HALF_DAY')}
+                                          style={{
+                                            padding: '4px 6px',
+                                            fontSize: '0.7rem',
+                                            fontWeight: '700',
+                                            borderRadius: '5px',
+                                            border: '1px solid',
+                                            borderColor: m.status === 'HALF_DAY' ? '#f59e0b' : '#cbd5e1',
+                                            background: m.status === 'HALF_DAY' ? '#fffbeb' : '#ffffff',
+                                            color: m.status === 'HALF_DAY' ? '#b45309' : '#64748b',
+                                            cursor: 'pointer'
+                                          }}
+                                        >
+                                          HALF DAY
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
 
-                                <td>
-                                  {/* Attendance Selector Buttons */}
-                                  <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleStatusChange(m.user_id, 'PRESENT')}
-                                      style={{
-                                        padding: '4px 6px',
-                                        fontSize: '0.7rem',
-                                        fontWeight: '700',
-                                        borderRadius: '5px',
-                                        border: '1px solid',
-                                        borderColor: m.status === 'PRESENT' ? '#10b981' : '#cbd5e1',
-                                        background: m.status === 'PRESENT' ? '#ecfdf5' : '#ffffff',
-                                        color: m.status === 'PRESENT' ? '#047857' : '#64748b',
-                                        cursor: 'pointer'
-                                      }}
-                                    >
-                                      PRESENT
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      onClick={() => handleStatusChange(m.user_id, 'ABSENT')}
-                                      style={{
-                                        padding: '4px 6px',
-                                        fontSize: '0.7rem',
-                                        fontWeight: '700',
-                                        borderRadius: '5px',
-                                        border: '1px solid',
-                                        borderColor: m.status === 'ABSENT' ? '#ef4444' : '#cbd5e1',
-                                        background: m.status === 'ABSENT' ? '#fef2f2' : '#ffffff',
-                                        color: m.status === 'ABSENT' ? '#991b1b' : '#64748b',
-                                        cursor: 'pointer'
-                                      }}
-                                    >
-                                      ABSENT
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      onClick={() => handleStatusChange(m.user_id, 'HALF_DAY')}
-                                      style={{
-                                        padding: '4px 6px',
-                                        fontSize: '0.7rem',
-                                        fontWeight: '700',
-                                        borderRadius: '5px',
-                                        border: '1px solid',
-                                        borderColor: m.status === 'HALF_DAY' ? '#f59e0b' : '#cbd5e1',
-                                        background: m.status === 'HALF_DAY' ? '#fffbeb' : '#ffffff',
-                                        color: m.status === 'HALF_DAY' ? '#b45309' : '#64748b',
-                                        cursor: 'pointer'
-                                      }}
-                                    >
-                                      HALF DAY
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                        {/* Machine Attendance Section */}
+                        {teamGroup.machines && teamGroup.machines.length > 0 && (
+                          <div style={{ background: '#f8fafc', borderTop: '1px solid #e2e8f0', padding: '16px 20px' }}>
+                            <div style={{ fontSize: '0.88rem', fontWeight: '700', color: '#334155', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <LucideTruck size={18} style={{ color: '#d97706' }} />
+                              <span>Assigned Machines & Equipment Attendance ({teamGroup.machines.length})</span>
+                            </div>
+                            <div className="table-container" style={{ borderRadius: '10px', border: '1px solid #cbd5e1', background: '#ffffff' }}>
+                              <table className="data-table">
+                                <thead>
+                                  <tr>
+                                    <th style={{ paddingLeft: '16px' }}>Machine / Model</th>
+                                    <th>Chassis / Machine No</th>
+                                    <th>Operator</th>
+                                    <th>Check-In / Out</th>
+                                    <th>Telemetry / Photos</th>
+                                    <th>Attendance Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {teamGroup.machines.map(mac => (
+                                    <tr key={mac.machine_id}>
+                                      <td style={{ paddingLeft: '16px' }}>
+                                        <div style={{ fontWeight: '700', color: '#0f172a' }}>{mac.name}</div>
+                                        <div style={{ fontSize: '0.72rem', color: '#64748b' }}>{mac.code}</div>
+                                      </td>
+                                      <td>
+                                        <span style={{ fontFamily: 'monospace', fontWeight: '700', fontSize: '0.8rem', color: '#1e293b' }}>
+                                          {mac.chassis_no || mac.machine_no}
+                                        </span>
+                                      </td>
+                                      <td>
+                                        <span style={{ fontSize: '0.78rem', fontWeight: '600', color: '#475569' }}>
+                                          👤 {mac.operator_name || 'Unassigned'}
+                                        </span>
+                                      </td>
+                                      <td>
+                                        <div style={{ fontSize: '0.75rem', fontWeight: '600' }}>
+                                          <div style={{ color: mac.check_in ? '#047857' : '#94a3b8' }}>In: {mac.check_in || '--:--'}</div>
+                                          <div style={{ color: mac.check_out ? '#1d4ed8' : '#94a3b8' }}>Out: {mac.check_out || '--:--'}</div>
+                                        </div>
+                                      </td>
+                                      <td>
+                                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                          {mac.check_in_photo && (
+                                            <button
+                                              type="button"
+                                              onClick={() => openPhotoModal(mac.check_in_photo, 'CHECK_IN')}
+                                              style={{ padding: '3px 8px', fontSize: '0.7rem', fontWeight: '700', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                            >
+                                              <LucideCamera size={12} /> Check-In Photo
+                                            </button>
+                                          )}
+                                          {mac.check_out_photo && (
+                                            <button
+                                              type="button"
+                                              onClick={() => openPhotoModal(mac.check_out_photo, 'CHECK_OUT')}
+                                              style={{ padding: '3px 8px', fontSize: '0.7rem', fontWeight: '700', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                            >
+                                              <LucideCamera size={12} /> Check-Out Photo
+                                            </button>
+                                          )}
+                                          {!mac.check_in_photo && !mac.check_out_photo && (
+                                            <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No telemetry photo</span>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td>
+                                        <span className={`badge-pill ${mac.status === 'CHECKED_IN' || mac.status === 'PRESENT' || mac.status === 'OPERATING' ? 'badge-green' : mac.status === 'ABSENT' ? 'badge-red' : 'badge-gray'}`} style={{ fontSize: '0.72rem', fontWeight: '700' }}>
+                                          {mac.status || 'NOT_MARKED'}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
 
                   </div>
