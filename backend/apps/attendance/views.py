@@ -13,6 +13,7 @@ from apps.common.responses import success_response, error_response
 from apps.common.vendor_scope import get_user_vendor_ids, get_user_vendor, check_vendor_access, filter_queryset_by_vendor
 from django.conf import settings
 from apps.notifications.models import Notification
+from .services import auto_checkout_overnight_records
 from apps.common.reporting_scope import get_reporting_scope
 
 import base64
@@ -431,6 +432,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     # 4.1 Fetch Today's Attendance Status
     @action(detail=False, methods=['get'], url_path='today')
     def today_attendance(self, request):
+        auto_checkout_overnight_records()
         today = timezone.now().date()
         user = request.user
         record = AttendanceRecord.objects.filter(user=user, date=today).order_by('-created_at').first()
@@ -867,6 +869,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         merged with today's saved attendance records from Hero DB.
         NO database caching for vendor users/machines.
         """
+        auto_checkout_overnight_records()
         user = request.user
         req_date = request.query_params.get('date') or str(timezone.now().date())
         role_filter = request.query_params.get('role')
