@@ -14,6 +14,7 @@ export const attendanceService = {
   checkOut: (data) => api.post('/attendance/check-out/', data),
   teamCheckIn: (data) => api.post('/attendance/team-check-in/', data),
   machineCheckIn: (data) => api.post('/attendance/machine-check-in/', data),
+  machineCheckOut: (data) => api.post('/attendance/machine-check-out/', data),
   getMyAssignedMachines: () => api.get('/attendance/my-assigned-machines/'),
   getTeamMembers: () => api.get('/attendance/team-members/'),
   getHistory: (params) => api.get('/attendance/history/', { params }),

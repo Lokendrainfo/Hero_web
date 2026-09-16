@@ -596,6 +596,76 @@ export const Attendance = () => {
     }
   };
 
+  const handleCheckInMachine = async (mac) => {
+    let lat = null;
+    let lng = null;
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      try {
+        const pos = await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 4000, enableHighAccuracy: true });
+        });
+        if (pos && pos.coords) {
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
+        }
+      } catch (e) {
+        console.warn("Geolocation position capture warning:", e);
+      }
+    }
+
+    try {
+      await attendanceService.machineCheckIn({
+        machine_id: mac.machine_id,
+        machine_chassis_no: mac.chassis_no || mac.machine_no,
+        latitude: lat,
+        longitude: lng,
+        check_in_latitude: lat,
+        check_in_longitude: lng
+      });
+      showToast(`✓ Machine Check-In recorded for ${mac.name || mac.chassis_no}`, "success");
+      fetchTeamAttendance();
+    } catch (err) {
+      console.error("Machine check-in error:", err);
+      const errMsg = err.response?.data?.detail || err.response?.data?.message || "Failed to record machine check-in.";
+      showToast(`⚠️ ${errMsg}`, "error");
+    }
+  };
+
+  const handleCheckOutMachine = async (mac) => {
+    let lat = null;
+    let lng = null;
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      try {
+        const pos = await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 4000, enableHighAccuracy: true });
+        });
+        if (pos && pos.coords) {
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
+        }
+      } catch (e) {
+        console.warn("Geolocation position capture warning:", e);
+      }
+    }
+
+    try {
+      await attendanceService.machineCheckOut({
+        machine_id: mac.machine_id,
+        machine_chassis_no: mac.chassis_no || mac.machine_no,
+        latitude: lat,
+        longitude: lng,
+        check_out_latitude: lat,
+        check_out_longitude: lng
+      });
+      showToast(`✓ Machine Check-Out recorded for ${mac.name || mac.chassis_no}`, "info");
+      fetchTeamAttendance();
+    } catch (err) {
+      console.error("Machine check-out error:", err);
+      const errMsg = err.response?.data?.detail || err.response?.data?.message || "Failed to record machine check-out.";
+      showToast(`⚠️ ${errMsg}`, "error");
+    }
+  };
+
   // Manager Approve Attendance Record (Includes Self-Approval Guard)
   const handleApproveRecord = async (recordId, recordUserId) => {
     if (recordUserId === user?.id) {
@@ -1263,38 +1333,80 @@ export const Attendance = () => {
                                         </span>
                                       </td>
                                       <td>
-                                        <div style={{ fontSize: '0.75rem', fontWeight: '600' }}>
-                                          <div style={{ color: mac.check_in ? '#047857' : '#94a3b8' }}>In: {mac.check_in || '--:--'}</div>
-                                          <div style={{ color: mac.check_out ? '#1d4ed8' : '#94a3b8' }}>Out: {mac.check_out || '--:--'}</div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <span style={{ fontSize: '0.78rem', fontWeight: '600', color: mac.check_in ? '#047857' : '#94a3b8' }}>
+                                              In: {mac.check_in || '--:--'}
+                                            </span>
+                                            {!mac.check_in && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleCheckInMachine(mac)}
+                                                style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
+                                              >
+                                                Check In
+                                              </button>
+                                            )}
+                                          </div>
+
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <span style={{ fontSize: '0.78rem', fontWeight: '600', color: mac.check_out ? '#1d4ed8' : '#94a3b8' }}>
+                                              Out: {mac.check_out || '--:--'}
+                                            </span>
+                                            {mac.check_in && !mac.check_out && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleCheckOutMachine(mac)}
+                                                style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
+                                              >
+                                                Check Out
+                                              </button>
+                                            )}
+                                          </div>
+
+                                          {mac.total_working_hours && (
+                                            <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>
+                                              ⏱ {mac.total_working_hours}
+                                            </span>
+                                          )}
                                         </div>
                                       </td>
                                       <td>
-                                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                                          {mac.check_in_photo && (
-                                            <button
-                                              type="button"
-                                              onClick={() => openPhotoModal(mac.check_in_photo, 'CHECK_IN')}
-                                              style={{ padding: '3px 8px', fontSize: '0.7rem', fontWeight: '700', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                                            >
-                                              <LucideCamera size={12} /> Check-In Photo
-                                            </button>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                          {mac.check_in_latitude ? (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: '#047857', fontWeight: '600' }}>
+                                              <LucideMapPin size={12} />
+                                              <span>{Number(mac.check_in_latitude).toFixed(4)}, {Number(mac.check_in_longitude).toFixed(4)}</span>
+                                              {mac.check_in_accuracy && <span style={{ color: '#64748b', fontSize: '0.68rem' }}>(±{mac.check_in_accuracy}m)</span>}
+                                            </div>
+                                          ) : (
+                                            <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS log</span>
                                           )}
-                                          {mac.check_out_photo && (
-                                            <button
-                                              type="button"
-                                              onClick={() => openPhotoModal(mac.check_out_photo, 'CHECK_OUT')}
-                                              style={{ padding: '3px 8px', fontSize: '0.7rem', fontWeight: '700', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                                            >
-                                              <LucideCamera size={12} /> Check-Out Photo
-                                            </button>
-                                          )}
-                                          {!mac.check_in_photo && !mac.check_out_photo && (
-                                            <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No telemetry photo</span>
-                                          )}
+
+                                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                            {mac.check_in_photo && (
+                                              <button
+                                                type="button"
+                                                onClick={() => openPhotoModal(mac.check_in_photo, 'CHECK_IN')}
+                                                style={{ padding: '3px 8px', fontSize: '0.7rem', fontWeight: '700', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                              >
+                                                <LucideCamera size={12} /> Check-In Photo
+                                              </button>
+                                            )}
+                                            {mac.check_out_photo && (
+                                              <button
+                                                type="button"
+                                                onClick={() => openPhotoModal(mac.check_out_photo, 'CHECK_OUT')}
+                                                style={{ padding: '3px 8px', fontSize: '0.7rem', fontWeight: '700', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                              >
+                                                <LucideCamera size={12} /> Check-Out Photo
+                                              </button>
+                                            )}
+                                          </div>
                                         </div>
                                       </td>
                                       <td>
-                                        <span className={`badge-pill ${mac.status === 'CHECKED_IN' || mac.status === 'PRESENT' || mac.status === 'OPERATING' ? 'badge-green' : mac.status === 'ABSENT' ? 'badge-red' : 'badge-gray'}`} style={{ fontSize: '0.72rem', fontWeight: '700' }}>
+                                        <span className={`badge-pill ${mac.status === 'CHECKED_IN' || mac.status === 'PRESENT' || mac.status === 'OPERATING' ? 'badge-green' : mac.status === 'CHECKED_OUT' ? 'badge-blue' : mac.status === 'ABSENT' ? 'badge-red' : 'badge-gray'}`} style={{ fontSize: '0.72rem', fontWeight: '700' }}>
                                           {mac.status || 'NOT_MARKED'}
                                         </span>
                                       </td>

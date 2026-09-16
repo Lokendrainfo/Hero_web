@@ -665,6 +665,31 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         target_vendor = user.vendor or get_user_vendor(user)
         reporting_mgr = resolve_reporting_manager(user, marked_by_user=request.user, vendor=target_vendor)
 
+        # Existing Machine Record Duplicate Protection
+        existing = None
+        if machine_id or chassis_no:
+            q_mac = Q()
+            if machine_id: q_mac |= Q(machine_id=str(machine_id))
+            if chassis_no: q_mac |= Q(machine_chassis_no=chassis_no)
+            existing = AttendanceRecord.objects.filter(attendance_type='MACHINE', date=today).filter(q_mac).first()
+
+        if existing:
+            existing.status = 'CHECKED_IN'
+            if not existing.check_in:
+                existing.check_in = timezone.now()
+            if photo: existing.check_in_photo = photo
+            if lat is not None and str(lat).strip() != '': existing.check_in_latitude = float(lat)
+            if lng is not None and str(lng).strip() != '': existing.check_in_longitude = float(lng)
+            if acc is not None and str(acc).strip() != '': existing.check_in_accuracy = float(acc)
+            existing.updated_by = user
+            existing.save()
+            serializer = AttendanceRecordSerializer(existing, context={'request': request})
+            return Response({
+                "success": True,
+                "message": "Machine check-in successful",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
+
         record = AttendanceRecord.objects.create(
             user=user,
             vendor=target_vendor,
@@ -679,9 +704,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             machine_assignment_id=assignment_id,
             marked_by=user,
             updated_by=user,
-            check_in_latitude=lat if lat else None,
-            check_in_longitude=lng if lng else None,
-            check_in_accuracy=float(acc) if acc else None,
+            check_in_latitude=float(lat) if (lat is not None and str(lat).strip() != '') else None,
+            check_in_longitude=float(lng) if (lng is not None and str(lng).strip() != '') else None,
+            check_in_accuracy=float(acc) if (acc is not None and str(acc).strip() != '') else None,
             check_in_photo=photo if photo else None
         )
 
@@ -689,11 +714,61 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             notify_user(
                 reporting_mgr,
                 "Pending Attendance Approval",
-                f"Machine attendance check-in submitted by {user.get_full_name() or user.username} for {today} requires your approval."
+                f"Machine attendance check-in submitted for {chassis_no or machine_id} requires your approval."
             )
 
         serializer = AttendanceRecordSerializer(record, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response({
+            "success": True,
+            "message": "Machine check-in successful",
+            "data": serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    # 4.5.1 Machine Check-Out
+    @action(detail=False, methods=['post'], url_path='machine-check-out')
+    def machine_check_out(self, request):
+        chassis_no = request.data.get('machine_chassis_no') or request.data.get('chassis_no')
+        machine_id = request.data.get('machine_id')
+        today = timezone.localdate()
+        user = request.user
+
+        q_mac = Q()
+        if machine_id: q_mac |= Q(machine_id=str(machine_id))
+        if chassis_no: q_mac |= Q(machine_chassis_no=chassis_no)
+
+        record = AttendanceRecord.objects.filter(attendance_type='MACHINE', date=today).filter(q_mac).order_by('-created_at').first()
+        if not record or not (record.check_in or record.status in ['CHECKED_IN', 'PRESENT', 'OPERATING']):
+            return error_response(message="Cannot check out machine without a valid active check-in record for today.", status_code=status.HTTP_400_BAD_REQUEST)
+
+        lat = request.data.get('latitude') or request.data.get('check_out_latitude')
+        lng = request.data.get('longitude') or request.data.get('check_out_longitude')
+        acc = request.data.get('accuracy') or request.data.get('check_out_accuracy')
+        photo = process_attendance_photo(request, 'checkout', user.id)
+
+        check_out_time = timezone.now()
+        record.check_out = check_out_time
+        record.status = 'CHECKED_OUT'
+        if lat is not None and str(lat).strip() != '': record.check_out_latitude = float(lat)
+        if lng is not None and str(lng).strip() != '': record.check_out_longitude = float(lng)
+        if acc is not None and str(acc).strip() != '': record.check_out_accuracy = float(acc)
+        if photo: record.check_out_photo = photo
+        record.updated_by = user
+
+        if record.check_in:
+            delta = check_out_time - record.check_in
+            total_seconds = max(0, int(delta.total_seconds()))
+            record.total_working_seconds = total_seconds
+            hrs = total_seconds // 3600
+            mins = (total_seconds % 3600) // 60
+            record.total_working_hours = f"{hrs:02d}h {mins:02d}m"
+
+        record.save()
+        serializer = AttendanceRecordSerializer(record, context={'request': request})
+        return Response({
+            "success": True,
+            "message": "Machine check-out successful",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
 
     # 4.6 Fetch Assigned Machines for Logged-In User
     @action(detail=False, methods=['get'], url_path='my-assigned-machines')
@@ -1103,6 +1178,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'notes': m_rec.notes if m_rec else '',
                     'check_in_latitude': float(m_rec.check_in_latitude) if (m_rec and m_rec.check_in_latitude) else None,
                     'check_in_longitude': float(m_rec.check_in_longitude) if (m_rec and m_rec.check_in_longitude) else None,
+                    'check_in_accuracy': m_rec.check_in_accuracy if (m_rec and m_rec.check_in_accuracy) else None,
+                    'total_working_hours': m_rec.total_working_hours if m_rec else None,
+                    'attendance_id': m_rec.id if m_rec else None,
+                    'approval_status': m_rec.approval_status if m_rec else 'PENDING',
                 })
 
         return success_response(
