@@ -200,3 +200,135 @@ class AttendanceApprovalWorkflowTestCase(TestCase):
         notif = Notification.objects.filter(user=self.lokendra).first()
         self.assertIsNotNone(notif)
         self.assertIn("Attendance Rejected", notif.title)
+
+
+class VendorRosterSecurityTestCase(TestCase):
+    def setUp(self):
+        from apps.vendors.models import Vendor, HeroVendorAssignment
+        self.vendor_a = Vendor.objects.create(name='Vendor A', external_vendor_id='VEND-A-001')
+        self.vendor_b = Vendor.objects.create(name='Vendor B', external_vendor_id='VEND-B-002')
+
+        # Vendor A Admin/User
+        self.user_vendor_a = User.objects.create_user(
+            username='vendor_a_user',
+            password='Password123!',
+            first_name='Vendor A User',
+            vendor=self.vendor_a,
+            role='VENDOR'
+        )
+        HeroVendorAssignment.objects.create(user=self.user_vendor_a, vendor=self.vendor_a, is_active=True)
+
+        # Member belonging to Vendor A
+        self.member_a1 = User.objects.create_user(
+            username='member_a1',
+            password='Password123!',
+            first_name='Member A1',
+            vendor=self.vendor_a,
+            role='OPERATOR'
+        )
+        HeroVendorAssignment.objects.create(user=self.member_a1, vendor=self.vendor_a, is_active=True)
+
+        # Member belonging to Vendor B
+        self.member_b1 = User.objects.create_user(
+            username='member_b1',
+            password='Password123!',
+            first_name='Member B1',
+            vendor=self.vendor_b,
+            role='OPERATOR'
+        )
+        HeroVendorAssignment.objects.create(user=self.member_b1, vendor=self.vendor_b, is_active=True)
+
+        # Global user without vendor assignment
+        self.unassigned_user = User.objects.create_user(
+            username='unassigned_user',
+            password='Password123!',
+            first_name='Unassigned User',
+            role='OPERATOR'
+        )
+
+        # Admin User
+        self.admin_user = User.objects.create_user(
+            username='admin_user',
+            password='Password123!',
+            first_name='Admin User',
+            is_superuser=True,
+            role='ADMIN'
+        )
+
+        self.client_vendor_a = APIClient()
+        self.client_vendor_a.force_authenticate(user=self.user_vendor_a)
+
+        self.client_admin = APIClient()
+        self.client_admin.force_authenticate(user=self.admin_user)
+
+    def test_1_vendor_a_logs_in_returns_only_vendor_a_team(self):
+        """TEST 1: Vendor A logs in -> Only Vendor A team returned."""
+        res = self.client_vendor_a.get('/api/v1/attendance/team-attendance/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        members = res.data.get('data', {}).get('team_members', [])
+        member_ids = [m['id'] for m in members]
+        self.assertIn(self.member_a1.id, member_ids)
+        self.assertNotIn(self.member_b1.id, member_ids)
+        self.assertNotIn(self.unassigned_user.id, member_ids)
+
+    def test_2_vendor_a_queries_vendor_b_id_rejected(self):
+        """TEST 2: Vendor A tries API request with Vendor B ID -> HTTP 403 Forbidden."""
+        res = self.client_vendor_a.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_b.id}')
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_3_vendor_a_manual_query_params_enforces_scope(self):
+        """TEST 3: Vendor A modifies query parameters manually -> Backend returns only Vendor A authorized team."""
+        res = self.client_vendor_a.get(f'/api/v1/attendance/team-attendance/?vendor={self.vendor_b.name}')
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_4_unassigned_user_excluded_from_vendor_attendance(self):
+        """TEST 4: Global user exists but has no vendor assignment -> Excluded from Vendor Attendance."""
+        res = self.client_vendor_a.get('/api/v1/attendance/team-attendance/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        members = res.data.get('data', {}).get('team_members', [])
+        member_ids = [m['id'] for m in members]
+        self.assertNotIn(self.unassigned_user.id, member_ids)
+
+    def test_5_user_with_attendance_record_not_in_vendor_team_excluded(self):
+        """TEST 5: User has attendance record but is not in vendor team -> Not included in roster."""
+        # Create attendance record for unassigned_user today
+        AttendanceRecord.objects.create(
+            user=self.unassigned_user,
+            date=timezone.now().date(),
+            status='CHECKED_IN'
+        )
+        res = self.client_vendor_a.get('/api/v1/attendance/team-attendance/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        members = res.data.get('data', {}).get('team_members', [])
+        member_ids = [m['id'] for m in members]
+        self.assertNotIn(self.unassigned_user.id, member_ids)
+
+    def test_6_assigned_team_member_no_attendance_shows_not_marked(self):
+        """TEST 6: Assigned team member has no attendance record -> Included as NOT_MARKED."""
+        res = self.client_vendor_a.get('/api/v1/attendance/team-attendance/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        members = res.data.get('data', {}).get('team_members', [])
+        a1_data = next((m for m in members if m['id'] == self.member_a1.id), None)
+        self.assertIsNotNone(a1_data)
+        self.assertEqual(a1_data['status'], 'NOT_MARKED')
+
+    def test_7_admin_all_vendors_returns_all_vendor_teams(self):
+        """TEST 7: ADMIN + All vendors -> All authorized vendor teams."""
+        res = self.client_admin.get('/api/v1/attendance/team-attendance/?vendor=ALL')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        members = res.data.get('data', {}).get('team_members', [])
+        member_ids = [m['id'] for m in members]
+        self.assertIn(self.member_a1.id, member_ids)
+        self.assertIn(self.member_b1.id, member_ids)
+        self.assertNotIn(self.unassigned_user.id, member_ids)
+
+    def test_8_admin_selects_vendor_a_returns_only_vendor_a(self):
+        """TEST 8: ADMIN selects Vendor A -> Only Vendor A team."""
+        res = self.client_admin.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_a.id}')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        members = res.data.get('data', {}).get('team_members', [])
+        member_ids = [m['id'] for m in members]
+        self.assertIn(self.member_a1.id, member_ids)
+        self.assertNotIn(self.member_b1.id, member_ids)
+        self.assertNotIn(self.unassigned_user.id, member_ids)
+
