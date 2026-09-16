@@ -231,70 +231,79 @@ class DashboardSummaryView(APIView):
             "shift_time": "08:00 AM - 06:00 PM"
         }
 
-        # Vendor Scoped Team & Attendance Statistics for Dashboard
-        from apps.authentication.models import User
+        # Vendor Scoped Team & Attendance Statistics for Dashboard (LIVE from iLync)
         from apps.attendance.models import AttendanceRecord
-        from django.db.models import Q
-        
+        from apps.vendors.models import Vendor
+        from apps.integrations.ilync_client import IlyncClient
+
+        client = IlyncClient()
         req_v = q_params.get('vendor_id') or q_params.get('vendor')
-        team_qs = User.objects.filter(is_active=True)
+
+        v_qs = Vendor.objects.filter(is_active=True)
+        if vendor_ids is not None:
+            v_qs = v_qs.filter(id__in=vendor_ids)
         if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
-            team_qs = team_qs.filter(
-                Q(vendor__external_vendor_id=req_v) |
-                Q(vendor__name__icontains=req_v) |
-                Q(vendor_id=req_v if str(req_v).isdigit() else None) |
-                Q(hero_vendor_assignments__vendor__name__icontains=req_v) |
-                Q(hero_vendor_assignments__vendor_id=req_v if str(req_v).isdigit() else None)
-            )
-        elif vendor_ids is not None:
-            if not vendor_ids:
-                team_qs = User.objects.none()
-            else:
-                team_qs = team_qs.filter(
-                    Q(vendor_id__in=vendor_ids) |
-                    Q(hero_vendor_assignments__vendor_id__in=vendor_ids)
-                )
-        else:
-            team_qs = team_qs.filter(
-                Q(vendor__isnull=False) | Q(hero_vendor_assignments__isnull=False)
+            v_qs = v_qs.filter(
+                Q(external_vendor_id=req_v) | Q(name__iexact=req_v) | Q(id=req_v if str(req_v).isdigit() else None)
             )
 
-        team_qs = team_qs.exclude(
-            Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
-        ).distinct()
-        
-        total_team_members = team_qs.count()
-        team_user_ids = list(team_qs.values_list('id', flat=True))
-        
+        target_vendors = list(v_qs)
         today_date_str = today.strftime('%Y-%m-%d')
-        today_records = AttendanceRecord.objects.filter(user_id__in=team_user_ids, date=today_date_str) if team_user_ids else []
-        
-        user_status_map = {}
-        for r in today_records:
-            st = str(r.status).upper()
-            curr = user_status_map.get(r.user_id, 'NOT_MARKED')
-            if st in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT'] or curr == 'NOT_MARKED':
-                user_status_map[r.user_id] = st
-        
+        today_recs = list(AttendanceRecord.objects.filter(date=today_date_str))
+
+        total_team_members = 0
         present_count = 0
         absent_count = 0
         half_day_count = 0
         leave_count = 0
         not_marked_count = 0
-        
-        for u_id in team_user_ids:
-            st = user_status_map.get(u_id, 'NOT_MARKED')
-            if st in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT']:
-                present_count += 1
-            elif st == 'ABSENT':
-                absent_count += 1
-            elif st in ['HALF_DAY', 'HALF DAY']:
-                half_day_count += 1
-            elif st == 'LEAVE':
-                leave_count += 1
-            else:
-                not_marked_count += 1
-                
+
+        for v_obj in target_vendors:
+            ext_v_id = v_obj.external_vendor_id or v_obj.id
+            live_res = None
+            try:
+                live_res = client.get_vendor_by_id(ext_v_id)
+            except Exception as e:
+                pass
+
+            v_payload = live_res.get('data') if (isinstance(live_res, dict) and live_res.get('success')) else (live_res if isinstance(live_res, dict) else {})
+            raw_users = v_payload.get('users') or []
+            if not isinstance(raw_users, list):
+                raw_users = []
+
+            for u_info in raw_users:
+                if not isinstance(u_info, dict):
+                    continue
+                total_team_members += 1
+                ext_u_id = str(u_info.get('userId') or u_info.get('id') or '').strip()
+                if ext_u_id.lower() in ('none', 'null', ''):
+                    ext_u_id = None
+                mobile = str(u_info.get('mobile') or u_info.get('phone') or u_info.get('phoneNumber') or '').strip()
+                email = str(u_info.get('email') or '').strip()
+
+                rec = None
+                if ext_u_id:
+                    rec = next((r for r in today_recs if r.user and (str(r.user.external_user_id) == ext_u_id or str(r.user.username) == ext_u_id)), None)
+                if not rec and email and not email.lower().startswith('user@'):
+                    rec = next((r for r in today_recs if r.user and r.user.email and r.user.email.lower() == email.lower()), None)
+                if not rec and mobile:
+                    rec = next((r for r in today_recs if r.user and (str(r.user.phone_number) == mobile or str(r.user.username) == mobile)), None)
+
+                st = (rec.status if rec else 'NOT_MARKED').upper()
+                if st in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT']:
+                    present_count += 1
+                elif st == 'ABSENT':
+                    absent_count += 1
+                elif st in ['HALF_DAY', 'HALF DAY']:
+                    half_day_count += 1
+                elif st == 'LEAVE':
+                    leave_count += 1
+                else:
+                    not_marked_count += 1
+
+        quick_stats["team_present"] = present_count
+        quick_stats["team_total"] = total_team_members
+
         vendor_team_attendance = {
             "total_team": total_team_members,
             "present": present_count,

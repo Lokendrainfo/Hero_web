@@ -352,15 +352,22 @@ export const Attendance = () => {
   }, [groupedVendorTeams]);
 
   const activeSummaryStats = useMemo(() => {
+    if (summaryStats && summaryStats.total > 0) {
+      return summaryStats;
+    }
+
     let filtered = groupedVendorTeams;
     if (selectedVendorFilter && selectedVendorFilter !== 'ALL') {
-      filtered = groupedVendorTeams.filter(
-        g => g.vendorName.toLowerCase() === selectedVendorFilter.toLowerCase()
-      );
+      const filt = String(selectedVendorFilter || '').toLowerCase();
+      filtered = groupedVendorTeams.filter(g => {
+        const vName = String(g.vendorName || '').toLowerCase();
+        return vName.includes(filt) || filt.includes(vName);
+      });
     }
 
     const res = { total: 0, present: 0, absent: 0, half_day: 0, leave: 0, not_marked: 0 };
-    (filtered || []).forEach(g => {
+    const listToSum = (filtered && filtered.length > 0) ? filtered : (groupedVendorTeams || []);
+    listToSum.forEach(g => {
       res.total += (g.stats?.total || 0);
       res.present += (g.stats?.present || 0);
       res.absent += (g.stats?.absent || 0);
@@ -369,7 +376,7 @@ export const Attendance = () => {
       res.not_marked += (g.stats?.not_marked || 0);
     });
     return res;
-  }, [groupedVendorTeams, selectedVendorFilter]);
+  }, [groupedVendorTeams, selectedVendorFilter, summaryStats]);
 
   useEffect(() => {
     if (activeTab === 'daily') {
