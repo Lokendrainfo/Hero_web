@@ -1384,20 +1384,45 @@ export const Attendance = () => {
                                           )}
 
                                           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                            {mac.check_in_photo && (
-                                              <button
-                                                type="button"
-                                                onClick={() => openPhotoModal(mac.check_in_photo, 'CHECK_IN')}
-                                                style={{ padding: '3px 8px', fontSize: '0.7rem', fontWeight: '700', background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
-                                              >
-                                                <LucideCamera size={12} /> Check-In Photo
-                                              </button>
-                                            )}
+                                            <button
+                                              type="button"
+                                              onClick={() => openPhotoModal(mac.check_in_photo, 'CHECK_IN')}
+                                              style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                padding: '3px 8px',
+                                                background: mac.check_in_photo ? '#f0fdf4' : '#f8fafc',
+                                                color: mac.check_in_photo ? '#166534' : '#64748b',
+                                                border: `1px solid ${mac.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
+                                                borderRadius: '6px',
+                                                fontSize: '0.7rem',
+                                                fontWeight: '700',
+                                                cursor: 'pointer',
+                                                width: 'fit-content'
+                                              }}
+                                            >
+                                              <LucideCamera size={12} /> Check-In Photo
+                                            </button>
+
                                             {mac.check_out_photo && (
                                               <button
                                                 type="button"
                                                 onClick={() => openPhotoModal(mac.check_out_photo, 'CHECK_OUT')}
-                                                style={{ padding: '3px 8px', fontSize: '0.7rem', fontWeight: '700', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                                style={{
+                                                  display: 'inline-flex',
+                                                  alignItems: 'center',
+                                                  gap: '4px',
+                                                  padding: '3px 8px',
+                                                  background: '#eff6ff',
+                                                  color: '#1d4ed8',
+                                                  border: '1px solid #bfdbfe',
+                                                  borderRadius: '6px',
+                                                  fontSize: '0.7rem',
+                                                  fontWeight: '700',
+                                                  cursor: 'pointer',
+                                                  width: 'fit-content'
+                                                }}
                                               >
                                                 <LucideCamera size={12} /> Check-Out Photo
                                               </button>
