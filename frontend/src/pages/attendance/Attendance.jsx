@@ -10,7 +10,7 @@ import {
   LucideAlertCircle, LucideUser, LucideRefreshCw,
   LucideBuilding2, LucideCheck, LucideList, LucideHistory, LucideCheckSquare,
   LucideMapPin, LucideCamera, LucideTruck, LucideShieldCheck, LucideEye, LucideX,
-  LucideChevronDown, LucideChevronUp, LucidePower, LucideDownload
+  LucideChevronDown, LucideChevronUp, LucidePower, LucideDownload, LucideExternalLink
 } from 'lucide-react';
 import '../../styles/components.css';
 import { SearchableSelect } from '../../components/common/Select';
@@ -150,14 +150,15 @@ export const Attendance = () => {
     title: 'Mobile Check-In Photo Telemetry'
   });
   const [photoLoadError, setPhotoLoadError] = useState(false);
+  const [photoLoading, setPhotoLoading] = useState(true);
   const [rejectionModal, setRejectionModal] = useState({ open: false, recordId: null, reason: '' });
 
   const normalizeHeroPhotoUrl = (rawUrl) => {
     if (!rawUrl || typeof rawUrl !== 'string') return null;
     const clean = rawUrl.trim();
-    if (!clean || clean === 'NO_PHOTO_ATTACHED') return null;
+    if (!clean || clean === 'NO_PHOTO_ATTACHED' || clean === 'null' || clean === 'undefined') return null;
     if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-      if (clean.startsWith('http://hero.pramaanu.co.in')) {
+      if (clean.startsWith('http://')) {
         return clean.replace(/^http:\/\//i, 'https://');
       }
     }
@@ -166,6 +167,7 @@ export const Attendance = () => {
 
   const openPhotoModal = (url, type = 'CHECK_IN') => {
     setPhotoLoadError(false);
+    setPhotoLoading(true);
     setPhotoModal({
       open: true,
       url: normalizeHeroPhotoUrl(url),
@@ -1595,59 +1597,97 @@ export const Attendance = () => {
           background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)',
           zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
         }}>
-          <div style={{ background: '#ffffff', borderRadius: '16px', maxWidth: '540px', width: '100%', overflow: 'hidden', boxShadow: 'none' }}>
-            <div style={{ padding: '14px 20px', background: 'var(--bg-subtle)', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ background: '#ffffff', borderRadius: '16px', maxWidth: '560px', width: '100%', overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)' }}>
+            <div style={{ padding: '14px 20px', background: '#f8fafc', color: '#0f172a', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0' }}>
               <div style={{ fontWeight: '700', fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <LucideCamera size={18} color="var(--live)" /> {photoModal.title}
+                <LucideCamera size={18} color="#059669" /> {photoModal.title}
               </div>
               <button onClick={() => setPhotoModal({ open: false, url: null, type: 'CHECK_IN', title: '' })} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>
                 <LucideX size={20} />
               </button>
             </div>
-            <div style={{ padding: '20px', textAlign: 'center', background: '#0f172a' }}>
+
+            <div style={{ padding: '24px 20px', textAlign: 'center', background: '#0f172a', minHeight: '260px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
               {!photoModal.url ? (
-                <div style={{ padding: '32px 20px', background: '#1e293b', borderRadius: '10px', color: '#f8fafc' }}>
-                  <LucideCamera size={48} style={{ color: '#94a3b8', marginBottom: '12px' }} />
+                <div style={{ padding: '32px 20px', background: '#1e293b', borderRadius: '10px', color: '#f8fafc', width: '100%' }}>
+                  <LucideCamera size={48} style={{ color: '#64748b', marginBottom: '12px' }} />
                   <div style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '8px' }}>
                     {photoModal.type === 'CHECK_OUT' ? 'No check-out photo available' : 'No check-in photo available'}
                   </div>
                   <div style={{ fontSize: '0.82rem', color: '#cbd5e1', maxWidth: '380px', margin: '0 auto' }}>
-                    {photoModal.type === 'CHECK_OUT'
-                      ? 'No check-out selfie photo file was submitted with this attendance entry.'
-                      : 'No check-in selfie photo file was submitted with this attendance entry.'}
+                    No selfie photo file was submitted with this attendance entry.
                   </div>
                 </div>
               ) : photoLoadError ? (
-                <div style={{ padding: '32px 20px', background: '#1e293b', borderRadius: '10px', color: '#f8fafc' }}>
-                  <LucideAlertCircle size={48} style={{ color: '#ef4444', marginBottom: '12px' }} />
-                  <div style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '8px', color: '#fca5a5' }}>
-                    Unable to load attendance photo
+                <div style={{ padding: '24px 20px', background: '#1e293b', borderRadius: '10px', color: '#f8fafc', width: '100%' }}>
+                  <LucideAlertCircle size={44} style={{ color: '#ef4444', marginBottom: '12px' }} />
+                  <div style={{ fontSize: '1.02rem', fontWeight: '700', marginBottom: '8px', color: '#fca5a5' }}>
+                    Unable to load photo file
                   </div>
-                  <div style={{ fontSize: '0.82rem', color: '#cbd5e1', maxWidth: '380px', margin: '0 auto' }}>
-                    The requested attendance photo file could not be loaded from the server storage.
+                  <div style={{ fontSize: '0.82rem', color: '#cbd5e1', maxWidth: '400px', margin: '0 auto 14px auto', lineHeight: '1.4' }}>
+                    The attendance selfie photo could not be fetched from storage. The file may be missing or restricted.
+                  </div>
+                  <div style={{ wordBreak: 'break-all', fontSize: '0.7rem', color: '#94a3b8', fontFamily: 'monospace', background: '#0f172a', padding: '8px 12px', borderRadius: '6px', marginBottom: '14px', border: '1px solid #334155' }}>
+                    {photoModal.url}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                    <a
+                      href={photoModal.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '6px 14px', background: '#2563eb', color: '#ffffff', borderRadius: '6px', fontSize: '0.78rem', fontWeight: '700', textDecoration: 'none' }}
+                    >
+                      <LucideExternalLink size={14} /> Open Direct Photo Link
+                    </a>
                   </div>
                 </div>
               ) : (
-                <img
-                  src={photoModal.url}
-                  alt={photoModal.type === 'CHECK_OUT' ? 'Check-Out Selfie' : 'Check-In Selfie'}
-                  style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', objectFit: 'contain' }}
-                  onError={(e) => {
-                    const currentSrc = e.target.src || '';
-                    if (currentSrc.startsWith('http://hero.pramaanu.co.in')) {
-                      e.target.src = currentSrc.replace(/^http:\/\//i, 'https://');
-                    } else if (currentSrc.includes('hero.pramaanu.co.in') && !currentSrc.startsWith('/media')) {
-                      const relPath = currentSrc.replace(/^https?:\/\/[^\/]+/, '');
-                      if (e.target.src !== relPath) e.target.src = relPath;
-                    } else {
+                <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                  {photoLoading && (
+                    <div style={{ padding: '40px 20px', color: '#94a3b8', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                      <LucideRefreshCw size={28} className="animate-spin" style={{ color: '#38bdf8' }} />
+                      <span style={{ fontSize: '0.82rem', fontWeight: '600' }}>Loading selfie photo...</span>
+                    </div>
+                  )}
+                  <img
+                    src={photoModal.url}
+                    alt={photoModal.type === 'CHECK_OUT' ? 'Check-Out Selfie' : 'Check-In Selfie'}
+                    style={{
+                      maxWidth: '100%',
+                      maxHeight: '420px',
+                      borderRadius: '8px',
+                      objectFit: 'contain',
+                      display: photoLoading ? 'none' : 'block'
+                    }}
+                    onLoad={() => setPhotoLoading(false)}
+                    onError={(e) => {
+                      const currentSrc = e.target.src || '';
+                      const retried = e.target.getAttribute('data-retried');
+
+                      if (!retried && currentSrc.includes('hero.pramaanu.co.in')) {
+                        e.target.setAttribute('data-retried', 'true');
+                        const relPath = currentSrc.replace(/^https?:\/\/[^\/]+/, '');
+                        if (relPath && relPath !== currentSrc) {
+                          e.target.src = relPath;
+                          return;
+                        }
+                      }
+                      setPhotoLoading(false);
                       setPhotoLoadError(true);
-                    }
-                  }}
-                />
+                    }}
+                  />
+                </div>
               )}
             </div>
-            <div style={{ padding: '14px 20px', textAlign: 'right', background: '#f8fafc', borderTop: '1px solid #e2e8f0' }}>
-              <button onClick={() => setPhotoModal({ open: false, url: null, type: 'CHECK_IN', title: '' })} style={{ padding: '8px 16px', background: '#334155', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: '700', fontSize: '0.8rem', cursor: 'pointer' }}>
+
+            <div style={{ padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', borderTop: '1px solid #e2e8f0' }}>
+              <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                {photoModal.url ? 'Selfie Verification Photo' : 'No Media Attached'}
+              </div>
+              <button
+                onClick={() => setPhotoModal({ open: false, url: null, type: 'CHECK_IN', title: '' })}
+                style={{ padding: '8px 18px', background: '#334155', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: '700', fontSize: '0.8rem', cursor: 'pointer' }}
+              >
                 Close
               </button>
             </div>
