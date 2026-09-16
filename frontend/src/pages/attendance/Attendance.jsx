@@ -146,12 +146,31 @@ export const Attendance = () => {
     if (!rawUrl || typeof rawUrl !== 'string') return null;
     const clean = rawUrl.trim();
     if (!clean || clean === 'NO_PHOTO_ATTACHED' || clean === 'null' || clean === 'undefined') return null;
-    if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
-      if (clean.startsWith('http://')) {
+
+    // 1. Full HTTP / HTTPS URL
+    if (clean.startsWith('http://') || clean.startsWith('https://')) {
+      if (typeof window !== 'undefined' && window.location.protocol === 'https:' && clean.startsWith('http://')) {
         return clean.replace(/^http:\/\//i, 'https://');
       }
+      return clean;
     }
-    return clean;
+
+    // 2. Formatted Base64 Data URL
+    if (clean.startsWith('data:image/')) {
+      return clean;
+    }
+
+    // 3. Raw Base64 string without data:image prefix
+    if (clean.length > 100 && !clean.startsWith('/')) {
+      return `data:image/jpeg;base64,${clean}`;
+    }
+
+    // 4. Relative server path (e.g. /media/attendance/photos/...)
+    const formattedPath = clean.startsWith('/') ? clean : `/${clean}`;
+    const backendHost = (typeof window !== 'undefined' && window.location.hostname === 'localhost')
+      ? 'http://localhost:8000'
+      : (window.location.origin);
+    return `${backendHost}${formattedPath}`;
   };
 
   const openPhotoModal = (url, type = 'CHECK_IN') => {
