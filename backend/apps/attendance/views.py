@@ -18,50 +18,71 @@ from apps.common.reporting_scope import get_reporting_scope
 import base64
 from django.core.files.base import ContentFile
 
-def process_attendance_photo(request, photo_type='checkin', user_id=None):
+def process_attendance_photo(request_or_data, photo_type='checkin', user_id=None):
     """
-    Decodes & processes check-in or check-out photo file or Base64 string from request payload.
+    Decodes & processes check-in or check-out photo file or Base64 string from request payload or data dict.
     Supports:
     - Multipart files: check_in_photo, check_out_photo, photo, check_in_photo_base64, check_out_photo_base64
     - Base64 data strings (with or without 'data:image/...;base64,' header)
     Returns a ContentFile image object or File object, or None.
     """
-    prefix = 'check_out' if photo_type == 'checkout' else 'check_in'
+    prefix = 'check_out' if photo_type in ('checkout', 'check_out') else 'check_in'
+
+    # Extract FILES and DATA from request or dict object
+    req_files = getattr(request_or_data, 'FILES', {}) if hasattr(request_or_data, 'FILES') else {}
+    req_data = getattr(request_or_data, 'data', request_or_data) if hasattr(request_or_data, 'data') else request_or_data
+    if not isinstance(req_data, dict):
+        req_data = getattr(request_or_data, 'data', {})
+
+    if not user_id and isinstance(req_data, dict):
+        user_id = req_data.get('user_id') or req_data.get('marked_for_user_id') or req_data.get('user')
 
     # 1. Check FILES multipart first
     photo_file = (
-        request.FILES.get(f'{prefix}_photo') or
-        request.FILES.get('photo') or
-        request.FILES.get(f'{prefix}_photo_base64')
+        req_files.get(f'{prefix}_photo') or
+        req_files.get('photo') or
+        req_files.get(f'{prefix}_photo_base64') or
+        req_files.get('check_in_photo') or
+        req_files.get('check_out_photo')
     )
     if photo_file:
         return photo_file
 
     # 2. Check DATA payload strings (Base64 / URL)
-    photo_raw = (
-        request.data.get(f'{prefix}_photo') or
-        request.data.get(f'{prefix}_photo_base64') or
-        request.data.get('photo')
-    )
+    photo_raw = None
+    if isinstance(req_data, dict):
+        photo_raw = (
+            req_data.get(f'{prefix}_photo') or
+            req_data.get(f'{prefix}_photo_base64') or
+            req_data.get('photo') or
+            req_data.get('photo_base64') or
+            req_data.get('check_in_photo') or
+            req_data.get('check_in_photo_base64') or
+            req_data.get('check_out_photo') or
+            req_data.get('check_out_photo_base64')
+        )
+
     if not photo_raw:
         return None
 
     if isinstance(photo_raw, str):
         photo_str = photo_raw.strip()
-        if not photo_str or photo_str == 'NO_PHOTO_ATTACHED':
+        if not photo_str or photo_str.upper() in ('NO_PHOTO_ATTACHED', 'NULL', 'UNDEFINED'):
             return None
 
         # Handle data URL base64 format (e.g. data:image/jpeg;base64,...)
         if 'data:image' in photo_str and ';base64,' in photo_str:
             try:
                 fmt, imgstr = photo_str.split(';base64,')
-                ext = fmt.split('/')[-1].split('+')[0]
-                if ext not in ['jpeg', 'jpg', 'png', 'webp']:
+                ext = fmt.split('/')[-1].split('+')[0].lower()
+                if ext == 'jpeg':
+                    ext = 'jpg'
+                elif ext not in ['jpg', 'png', 'webp', 'gif']:
                     ext = 'jpg'
                 data = base64.b64decode(imgstr)
                 ts = int(timezone.now().timestamp())
                 uid = user_id or 'user'
-                return ContentFile(data, name=f"{prefix}_{uid}_{ts}.{ext}")
+                return ContentFile(data, name=f"attendance_{uid}_{ts}.{ext}")
             except Exception as e:
                 print(f"[PhotoProcessing] Error decoding data:image base64: {e}")
                 return None
@@ -72,12 +93,13 @@ def process_attendance_photo(request, photo_type='checkin', user_id=None):
                 data = base64.b64decode(photo_str)
                 ts = int(timezone.now().timestamp())
                 uid = user_id or 'user'
-                return ContentFile(data, name=f"{prefix}_{uid}_{ts}.jpg")
+                return ContentFile(data, name=f"attendance_{uid}_{ts}.jpg")
             except Exception as e:
                 print(f"[PhotoProcessing] Error decoding raw base64 string: {e}")
                 return None
 
     return photo_raw
+
 
 def notify_user(target_user, title, body):
     if target_user and getattr(target_user, 'is_active', True):
@@ -429,13 +451,6 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 user = target_user
 
         today = timezone.now().date()
-
-        # Double Check-In Protection
-        existing = AttendanceRecord.objects.filter(user=user, date=today, status='CHECKED_IN').first()
-        if existing:
-            serializer = AttendanceRecordSerializer(existing, context={'request': request})
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
         lat = request.data.get('latitude') or request.data.get('check_in_latitude')
         lng = request.data.get('longitude') or request.data.get('check_in_longitude')
         acc = request.data.get('accuracy') or request.data.get('check_in_accuracy')
@@ -443,6 +458,23 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         att_type = request.data.get('attendance_type') or 'TEAM'
 
         processed_photo = process_attendance_photo(request, 'checkin', user.id)
+
+        # Double Check-In Protection / Update photo if re-submitted
+        existing = AttendanceRecord.objects.filter(user=user, date=today, status='CHECKED_IN').first()
+        if existing:
+            if processed_photo:
+                existing.check_in_photo = processed_photo
+            if lat is not None and str(lat).strip() != '': existing.check_in_latitude = float(lat)
+            if lng is not None and str(lng).strip() != '': existing.check_in_longitude = float(lng)
+            if acc is not None and str(acc).strip() != '': existing.check_in_accuracy = float(acc)
+            if loc_source: existing.location_source = loc_source
+            existing.save()
+            serializer = AttendanceRecordSerializer(existing, context={'request': request})
+            return Response({
+                "success": True,
+                "message": "Check-in successful",
+                "data": serializer.data
+            }, status=status.HTTP_200_OK)
 
         target_vendor = user.vendor or get_user_vendor(user) or get_user_vendor(request.user)
         reporting_mgr = resolve_reporting_manager(user, marked_by_user=request.user, vendor=target_vendor)
@@ -473,7 +505,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             )
 
         serializer = AttendanceRecordSerializer(record, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response({
+            "success": True,
+            "message": "Check-in successful",
+            "data": serializer.data
+        }, status=status.HTTP_201_CREATED)
 
     # 4.3 Employee Self Check-Out
     @action(detail=False, methods=['post'], url_path='check-out')
@@ -502,6 +538,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         lat = request.data.get('latitude') or request.data.get('check_out_latitude')
         lng = request.data.get('longitude') or request.data.get('check_out_longitude')
         acc = request.data.get('accuracy') or request.data.get('check_out_accuracy')
+        loc_source = request.data.get('location_source')
         processed_photo = process_attendance_photo(request, 'checkout', user.id)
 
         check_out_time = timezone.now()
@@ -510,6 +547,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if lat is not None and str(lat).strip() != '': record.check_out_latitude = float(lat)
         if lng is not None and str(lng).strip() != '': record.check_out_longitude = float(lng)
         if acc is not None and str(acc).strip() != '': record.check_out_accuracy = float(acc)
+        if loc_source: record.location_source = loc_source
         if processed_photo: record.check_out_photo = processed_photo
         record.updated_by = request.user
 
@@ -523,7 +561,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         record.save()
         serializer = AttendanceRecordSerializer(record, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({
+            "success": True,
+            "message": "Check-out successful",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
 
     # 4.4 Team Member Check-In (Supervisor Marking Team)
     @action(detail=False, methods=['post'], url_path='team-check-in')
@@ -909,7 +951,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 if not rec and email and not email.lower().startswith('user@'):
                     rec = rec_qs.filter(user__email__iexact=email).first()
                 if not rec and mobile:
-                    rec = rec_qs.filter(Q(user__phone_number=mobile) | Q(user__username=mobile)).first()
+                    rec = rec_qs.filter(Q(user__phone_number=mobile) | Q(user__username=mobile), user__first_name__iexact=name).first()
+                    if not rec:
+                        rec = rec_qs.filter(Q(user__phone_number=mobile) | Q(user__username=mobile)).first()
 
                 # Also lookup matching local User ID if available for action triggers
                 matched_user = None
