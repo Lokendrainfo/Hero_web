@@ -500,7 +500,8 @@ export const Attendance = () => {
       fetchTeamAttendance();
     } catch (err) {
       console.error("Save attendance error:", err);
-      showToast("Failed to save team attendance", "error");
+      const errMsg = err.response?.data?.detail || err.response?.data?.message || "Failed to save team attendance.";
+      showToast(`⚠️ ${errMsg}`, "error");
     } finally {
       setSaving(false);
     }
@@ -535,8 +536,9 @@ export const Attendance = () => {
       showToast("✓ Employee check-in recorded with location & time", "success");
       fetchTeamAttendance();
     } catch (err) {
-      showToast("Check-in recorded", "success");
-      fetchTeamAttendance();
+      console.error("Check-in error:", err);
+      const errMsg = err.response?.data?.detail || err.response?.data?.message || "Failed to record check-in.";
+      showToast(`⚠️ ${errMsg}`, "error");
     }
   };
 
@@ -546,8 +548,9 @@ export const Attendance = () => {
       showToast("✓ Employee check-out recorded", "info");
       fetchTeamAttendance();
     } catch (err) {
-      showToast("Check-out recorded", "info");
-      fetchTeamAttendance();
+      console.error("Check-out error:", err);
+      const errMsg = err.response?.data?.detail || err.response?.data?.message || "Failed to record check-out.";
+      showToast(`⚠️ ${errMsg}`, "error");
     }
   };
 
