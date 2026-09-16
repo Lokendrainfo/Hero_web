@@ -143,8 +143,36 @@ export const Attendance = () => {
   const [pendingLoading, setPendingLoading] = useState(false);
 
   // Modal / Photo Lightbox State
-  const [activePhotoUrl, setActivePhotoUrl] = useState(null);
+  const [photoModal, setPhotoModal] = useState({
+    open: false,
+    url: null,
+    type: 'CHECK_IN',
+    title: 'Mobile Check-In Photo Telemetry'
+  });
+  const [photoLoadError, setPhotoLoadError] = useState(false);
   const [rejectionModal, setRejectionModal] = useState({ open: false, recordId: null, reason: '' });
+
+  const normalizeHeroPhotoUrl = (rawUrl) => {
+    if (!rawUrl || typeof rawUrl !== 'string') return null;
+    const clean = rawUrl.trim();
+    if (!clean || clean === 'NO_PHOTO_ATTACHED') return null;
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+      if (clean.startsWith('http://hero.pramaanu.co.in')) {
+        return clean.replace(/^http:\/\//i, 'https://');
+      }
+    }
+    return clean;
+  };
+
+  const openPhotoModal = (url, type = 'CHECK_IN') => {
+    setPhotoLoadError(false);
+    setPhotoModal({
+      open: true,
+      url: normalizeHeroPhotoUrl(url),
+      type: type,
+      title: type === 'CHECK_OUT' ? 'Mobile Check-Out Photo Telemetry' : 'Mobile Check-In Photo Telemetry'
+    });
+  };
 
   // Download Bulk Attendance Report (CSV)
   const [downloadingReport, setDownloadingReport] = useState(false);
@@ -1004,26 +1032,51 @@ export const Attendance = () => {
                                       <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS log</span>
                                     )}
 
-                                    <button
-                                      type="button"
-                                      onClick={() => setActivePhotoUrl(m.check_in_photo || 'NO_PHOTO_ATTACHED')}
-                                      style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '4px',
-                                        padding: '4px 10px',
-                                        background: m.check_in_photo ? '#f0fdf4' : '#f8fafc',
-                                        color: m.check_in_photo ? '#166534' : '#64748b',
-                                        border: `1px solid ${m.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
-                                        borderRadius: '6px',
-                                        fontSize: '0.72rem',
-                                        fontWeight: '700',
-                                        cursor: 'pointer',
-                                        width: 'fit-content'
-                                      }}
-                                    >
-                                      <LucideCamera size={13} /> See Photo
-                                    </button>
+                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                      <button
+                                        type="button"
+                                        onClick={() => openPhotoModal(m.check_in_photo, 'CHECK_IN')}
+                                        style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '4px',
+                                          padding: '3px 8px',
+                                          background: m.check_in_photo ? '#f0fdf4' : '#f8fafc',
+                                          color: m.check_in_photo ? '#166534' : '#64748b',
+                                          border: `1px solid ${m.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
+                                          borderRadius: '6px',
+                                          fontSize: '0.7rem',
+                                          fontWeight: '700',
+                                          cursor: 'pointer',
+                                          width: 'fit-content'
+                                        }}
+                                      >
+                                        <LucideCamera size={12} /> Check-In Photo
+                                      </button>
+
+                                      {m.check_out_photo && (
+                                        <button
+                                          type="button"
+                                          onClick={() => openPhotoModal(m.check_out_photo, 'CHECK_OUT')}
+                                          style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            padding: '3px 8px',
+                                            background: '#eff6ff',
+                                            color: '#1d4ed8',
+                                            border: '1px solid #bfdbfe',
+                                            borderRadius: '6px',
+                                            fontSize: '0.7rem',
+                                            fontWeight: '700',
+                                            cursor: 'pointer',
+                                            width: 'fit-content'
+                                          }}
+                                        >
+                                          <LucideCamera size={12} /> Check-Out Photo
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
                                 </td>
 
@@ -1302,26 +1355,50 @@ export const Attendance = () => {
                             📍 {Number(r.check_in_latitude).toFixed(4)}, {Number(r.check_in_longitude).toFixed(4)}
                           </span>
                         ) : <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS</span>}
-                        <button
-                          type="button"
-                          onClick={() => setActivePhotoUrl(r.check_in_photo || 'NO_PHOTO_ATTACHED')}
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            padding: '3px 8px',
-                            background: r.check_in_photo ? '#f0fdf4' : '#f8fafc',
-                            color: r.check_in_photo ? '#166534' : '#64748b',
-                            border: `1px solid ${r.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
-                            borderRadius: '6px',
-                            fontSize: '0.7rem',
-                            fontWeight: '700',
-                            cursor: 'pointer',
-                            width: 'fit-content'
-                          }}
-                        >
-                          <LucideCamera size={12} /> See Photo
-                        </button>
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            onClick={() => openPhotoModal(r.check_in_photo, 'CHECK_IN')}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              padding: '3px 8px',
+                              background: r.check_in_photo ? '#f0fdf4' : '#f8fafc',
+                              color: r.check_in_photo ? '#166534' : '#64748b',
+                              border: `1px solid ${r.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
+                              borderRadius: '6px',
+                              fontSize: '0.7rem',
+                              fontWeight: '700',
+                              cursor: 'pointer',
+                              width: 'fit-content'
+                            }}
+                          >
+                            <LucideCamera size={12} /> Check-In Photo
+                          </button>
+                          {r.check_out_photo && (
+                            <button
+                              type="button"
+                              onClick={() => openPhotoModal(r.check_out_photo, 'CHECK_OUT')}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '3px 8px',
+                                background: '#eff6ff',
+                                color: '#1d4ed8',
+                                border: '1px solid #bfdbfe',
+                                borderRadius: '6px',
+                                fontSize: '0.7rem',
+                                fontWeight: '700',
+                                cursor: 'pointer',
+                                width: 'fit-content'
+                              }}
+                            >
+                              <LucideCamera size={12} /> Check-Out Photo
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td>
@@ -1433,26 +1510,50 @@ export const Attendance = () => {
                           </span>
                         ) : <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS</span>}
 
-                        <button
-                          type="button"
-                          onClick={() => setActivePhotoUrl(r.check_in_photo || 'NO_PHOTO_ATTACHED')}
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            padding: '4px 10px',
-                            background: r.check_in_photo ? '#f0fdf4' : '#f8fafc',
-                            color: r.check_in_photo ? '#166534' : '#64748b',
-                            border: `1px solid ${r.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
-                            borderRadius: '6px',
-                            fontSize: '0.72rem',
-                            fontWeight: '700',
-                            cursor: 'pointer',
-                            width: 'fit-content'
-                          }}
-                        >
-                          <LucideCamera size={13} /> See Photo
-                        </button>
+                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            onClick={() => openPhotoModal(r.check_in_photo, 'CHECK_IN')}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              padding: '3px 8px',
+                              background: r.check_in_photo ? '#f0fdf4' : '#f8fafc',
+                              color: r.check_in_photo ? '#166534' : '#64748b',
+                              border: `1px solid ${r.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
+                              borderRadius: '6px',
+                              fontSize: '0.7rem',
+                              fontWeight: '700',
+                              cursor: 'pointer',
+                              width: 'fit-content'
+                            }}
+                          >
+                            <LucideCamera size={12} /> Check-In Photo
+                          </button>
+                          {r.check_out_photo && (
+                            <button
+                              type="button"
+                              onClick={() => openPhotoModal(r.check_out_photo, 'CHECK_OUT')}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '3px 8px',
+                                background: '#eff6ff',
+                                color: '#1d4ed8',
+                                border: '1px solid #bfdbfe',
+                                borderRadius: '6px',
+                                fontSize: '0.7rem',
+                                fontWeight: '700',
+                                cursor: 'pointer',
+                                width: 'fit-content'
+                              }}
+                            >
+                              <LucideCamera size={12} /> Check-Out Photo
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td>
@@ -1488,7 +1589,7 @@ export const Attendance = () => {
       )}
 
       {/* Photo Lightbox Modal */}
-      {activePhotoUrl && (
+      {photoModal.open && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)',
@@ -1497,52 +1598,56 @@ export const Attendance = () => {
           <div style={{ background: '#ffffff', borderRadius: '16px', maxWidth: '540px', width: '100%', overflow: 'hidden', boxShadow: 'none' }}>
             <div style={{ padding: '14px 20px', background: 'var(--bg-subtle)', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ fontWeight: '700', fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <LucideCamera size={18} color="var(--live)" /> Mobile Check-In Photo Telemetry
+                <LucideCamera size={18} color="var(--live)" /> {photoModal.title}
               </div>
-              <button onClick={() => setActivePhotoUrl(null)} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>
+              <button onClick={() => setPhotoModal({ open: false, url: null, type: 'CHECK_IN', title: '' })} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>
                 <LucideX size={20} />
               </button>
             </div>
             <div style={{ padding: '20px', textAlign: 'center', background: '#0f172a' }}>
-              {activePhotoUrl === 'NO_PHOTO_ATTACHED' ? (
+              {!photoModal.url ? (
                 <div style={{ padding: '32px 20px', background: '#1e293b', borderRadius: '10px', color: '#f8fafc' }}>
                   <LucideCamera size={48} style={{ color: '#94a3b8', marginBottom: '12px' }} />
-                  <div style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '8px' }}>No Photo Attached</div>
+                  <div style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '8px' }}>
+                    {photoModal.type === 'CHECK_OUT' ? 'No check-out photo available' : 'No check-in photo available'}
+                  </div>
                   <div style={{ fontSize: '0.82rem', color: '#cbd5e1', maxWidth: '380px', margin: '0 auto' }}>
-                    No check-in selfie photo file was submitted with this attendance entry.
+                    {photoModal.type === 'CHECK_OUT'
+                      ? 'No check-out selfie photo file was submitted with this attendance entry.'
+                      : 'No check-in selfie photo file was submitted with this attendance entry.'}
                   </div>
                 </div>
-              ) : typeof activePhotoUrl === 'string' && (activePhotoUrl.startsWith('http') || activePhotoUrl.startsWith('data:image') || activePhotoUrl.startsWith('/media') || activePhotoUrl.includes('.jpg') || activePhotoUrl.includes('.png') || activePhotoUrl.includes('.jpeg')) ? (
+              ) : photoLoadError ? (
+                <div style={{ padding: '32px 20px', background: '#1e293b', borderRadius: '10px', color: '#f8fafc' }}>
+                  <LucideAlertCircle size={48} style={{ color: '#ef4444', marginBottom: '12px' }} />
+                  <div style={{ fontSize: '1.05rem', fontWeight: '700', marginBottom: '8px', color: '#fca5a5' }}>
+                    Unable to load attendance photo
+                  </div>
+                  <div style={{ fontSize: '0.82rem', color: '#cbd5e1', maxWidth: '380px', margin: '0 auto' }}>
+                    The requested attendance photo file could not be loaded from the server storage.
+                  </div>
+                </div>
+              ) : (
                 <img
-                  src={
-                    (typeof window !== 'undefined' && window.location.protocol === 'https:' && activePhotoUrl.startsWith('http://'))
-                      ? activePhotoUrl.replace(/^http:\/\//i, 'https://')
-                      : activePhotoUrl
-                  }
-                  alt="Check-in Selfie"
+                  src={photoModal.url}
+                  alt={photoModal.type === 'CHECK_OUT' ? 'Check-Out Selfie' : 'Check-In Selfie'}
                   style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', objectFit: 'contain' }}
                   onError={(e) => {
-                    const src = e.target.src;
-                    if (src && src.startsWith('http://')) {
-                      e.target.src = src.replace('http://', 'https://');
-                    } else if (src && (src.includes('hero.pramaanu.co.in') || src.includes('localhost'))) {
-                      const relPath = src.replace(/^https?:\/\/[^\/]+/, '');
+                    const currentSrc = e.target.src || '';
+                    if (currentSrc.startsWith('http://hero.pramaanu.co.in')) {
+                      e.target.src = currentSrc.replace(/^http:\/\//i, 'https://');
+                    } else if (currentSrc.includes('hero.pramaanu.co.in') && !currentSrc.startsWith('/media')) {
+                      const relPath = currentSrc.replace(/^https?:\/\/[^\/]+/, '');
                       if (e.target.src !== relPath) e.target.src = relPath;
+                    } else {
+                      setPhotoLoadError(true);
                     }
                   }}
                 />
-              ) : (
-                <div style={{ padding: '24px 16px', background: '#1e293b', borderRadius: '10px', color: '#f8fafc' }}>
-                  <LucideCamera size={44} style={{ color: '#38bdf8', marginBottom: '10px' }} />
-                  <div style={{ fontSize: '0.92rem', fontWeight: '700', marginBottom: '6px' }}>Mobile Verification Hash / Photo Token Payload</div>
-                  <div style={{ wordBreak: 'break-all', fontFamily: 'monospace', fontSize: '0.82rem', background: '#0f172a', padding: '12px', borderRadius: '6px', color: '#a7f3d0', border: '1px solid #334155' }}>
-                    {String(activePhotoUrl)}
-                  </div>
-                </div>
               )}
             </div>
             <div style={{ padding: '14px 20px', textAlign: 'right', background: '#f8fafc', borderTop: '1px solid #e2e8f0' }}>
-              <button onClick={() => setActivePhotoUrl(null)} style={{ padding: '8px 16px', background: '#334155', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: '700', fontSize: '0.8rem', cursor: 'pointer' }}>
+              <button onClick={() => setPhotoModal({ open: false, url: null, type: 'CHECK_IN', title: '' })} style={{ padding: '8px 16px', background: '#334155', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: '700', fontSize: '0.8rem', cursor: 'pointer' }}>
                 Close
               </button>
             </div>

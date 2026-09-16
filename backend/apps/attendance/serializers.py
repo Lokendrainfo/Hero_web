@@ -2,6 +2,29 @@ from rest_framework import serializers
 from .models import AttendanceRecord
 from apps.authentication.models import User
 
+def build_secure_media_url(request, photo_field):
+    if not photo_field:
+        return None
+    try:
+        url = request.build_absolute_uri(photo_field.url) if request else photo_field.url
+        is_https = False
+        if request:
+            host_str = request.get_host() if hasattr(request, 'get_host') else ''
+            is_https = (
+                request.is_secure() or
+                request.META.get('HTTP_X_FORWARDED_PROTO') == 'https' or
+                request.META.get('HTTP_X_FORWARDED_SSL') == 'on' or
+                (host_str and 'hero.pramaanu.co.in' in host_str)
+            )
+        else:
+            is_https = True
+        
+        if url.startswith('http://') and (is_https or 'hero.pramaanu.co.in' in url):
+            url = url.replace('http://', 'https://', 1)
+        return url
+    except Exception:
+        return str(photo_field)
+
 class AttendanceRecordSerializer(serializers.ModelSerializer):
     user_id = serializers.SerializerMethodField()
     user_name = serializers.SerializerMethodField()
@@ -113,28 +136,10 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
         return ''
 
     def get_check_in_photo(self, obj):
-        if obj.check_in_photo:
-            try:
-                request = self.context.get('request')
-                url = request.build_absolute_uri(obj.check_in_photo.url) if request else obj.check_in_photo.url
-                if request and (request.is_secure() or request.META.get('HTTP_X_FORWARDED_PROTO') == 'https') and url.startswith('http://'):
-                    url = url.replace('http://', 'https://', 1)
-                return url
-            except Exception:
-                return str(obj.check_in_photo)
-        return None
+        return build_secure_media_url(self.context.get('request'), obj.check_in_photo)
 
     def get_check_out_photo(self, obj):
-        if obj.check_out_photo:
-            try:
-                request = self.context.get('request')
-                url = request.build_absolute_uri(obj.check_out_photo.url) if request else obj.check_out_photo.url
-                if request and (request.is_secure() or request.META.get('HTTP_X_FORWARDED_PROTO') == 'https') and url.startswith('http://'):
-                    url = url.replace('http://', 'https://', 1)
-                return url
-            except Exception:
-                return str(obj.check_out_photo)
-        return None
+        return build_secure_media_url(self.context.get('request'), obj.check_out_photo)
 
     def get_approved_by_name(self, obj):
         if obj.approved_by:

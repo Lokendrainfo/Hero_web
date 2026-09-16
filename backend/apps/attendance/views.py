@@ -6,7 +6,7 @@ from django.utils import timezone
 from django.db.models import Q
 from datetime import datetime
 from .models import AttendanceRecord, ATTENDANCE_STATUS_CHOICES
-from .serializers import AttendanceRecordSerializer
+from .serializers import AttendanceRecordSerializer, build_secure_media_url
 from apps.authentication.models import User
 from apps.common.permissions import IsVendorAuthorized
 from apps.common.responses import success_response, error_response
@@ -879,19 +879,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             user_role = u.get_role_list()[0] if u.get_role_list() else (u.role or 'OPERATOR')
             user_vendor_name = u.vendor.name if u.vendor else ''
 
-            check_in_photo_url = None
-            if rec and rec.check_in_photo:
-                try:
-                    check_in_photo_url = request.build_absolute_uri(rec.check_in_photo.url)
-                except Exception:
-                    check_in_photo_url = str(rec.check_in_photo)
-
-            check_out_photo_url = None
-            if rec and rec.check_out_photo:
-                try:
-                    check_out_photo_url = request.build_absolute_uri(rec.check_out_photo.url)
-                except Exception:
-                    check_out_photo_url = str(rec.check_out_photo)
+            check_in_photo_url = build_secure_media_url(request, rec.check_in_photo) if rec else None
+            check_out_photo_url = build_secure_media_url(request, rec.check_out_photo) if rec else None
 
             result_list.append({
                 'user_id': u.id,
