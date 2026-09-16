@@ -253,13 +253,21 @@ def validate_employee_attendance_access(request_user, target_user):
     target_assignments = list(target_user.hero_vendor_assignments.filter(is_active=True).values_list('vendor_id', flat=True))
     target_vendor_ids.extend(target_assignments)
 
-    if not target_vendor_ids:
-        v_obj = get_user_vendor(target_user, resolve_fallback=False)
-        if v_obj and v_obj.id:
-            target_vendor_ids.append(v_obj.id)
-
-    if not any(v_id in allowed_vendor_ids for v_id in target_vendor_ids):
-        raise PermissionDenied("You do not have permission to manage attendance for this employee.")
+    # If target user belongs to explicit vendors, ensure request_user has access to at least one
+    if target_vendor_ids:
+        if not any(v_id in allowed_vendor_ids for v_id in target_vendor_ids):
+            raise PermissionDenied("You do not have permission to manage attendance for this employee.")
+    else:
+        # If target user is a new iLync team member shell user without assigned vendor_id, associate primary vendor
+        if allowed_vendor_ids and len(allowed_vendor_ids) > 0:
+            try:
+                from apps.vendors.models import Vendor
+                v_inst = Vendor.objects.filter(id=allowed_vendor_ids[0]).first()
+                if v_inst:
+                    target_user.vendor = v_inst
+                    target_user.save(update_fields=['vendor'])
+            except Exception as e:
+                print(f"[AttendanceAccess] Error associating vendor to shell user: {e}")
 
     return True
 

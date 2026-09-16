@@ -10,6 +10,8 @@ class IsVendorAuthorized(permissions.BasePermission):
         if request.user.is_superuser or 'ADMIN' in request.user.get_role_list():
             return True
         allowed_ids = get_user_vendor_ids(request.user)
+        if allowed_ids is None:
+            return True
         return bool(allowed_ids)
 
     def has_object_permission(self, request, view, obj):
