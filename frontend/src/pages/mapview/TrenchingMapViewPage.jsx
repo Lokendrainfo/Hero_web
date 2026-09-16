@@ -9,6 +9,7 @@ import {
 import { taskService } from '../../services/taskService';
 import { useAuth } from '../../hooks/useAuth';
 import { mapHddExecutionResponse } from '../../utils/mapHddExecutionResponse';
+import { getAvailableStates, getAvailableDistricts } from '../../utils/geographyMaster';
 import { PageHeader } from '../../components/common/PageHeader';
 import { SearchableSelect } from '../../components/common/Select';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -145,28 +146,12 @@ export const TrenchingMapViewPage = () => {
 
   // Memoized available states dynamically
   const availableStates = useMemo(() => {
-    if (isAdvanceUser && assignedCircle) {
-      return [assignedCircle];
-    }
-    const statesSet = new Set(
-      normalizedExecutions
-        .map(ex => (ex.state || ex.circle || '').toUpperCase())
-        .filter(Boolean)
-    );
-    ['RAJASTHAN', 'HARYANA', 'ASSAM', 'PUNJAB', 'DELHI'].forEach(s => statesSet.add(s));
-    return Array.from(statesSet).sort();
+    return getAvailableStates(normalizedExecutions, isAdvanceUser && assignedCircle ? assignedCircle : null);
   }, [normalizedExecutions, isAdvanceUser, assignedCircle]);
 
-  // Memoized available districts
+  // Memoized available districts dynamically
   const availableDistricts = useMemo(() => {
-    return Array.from(
-      new Set(
-        normalizedExecutions
-          .filter(ex => selectedState === 'ALL' || (ex.state || '').toUpperCase() === selectedState.toUpperCase())
-          .map(ex => ex.district)
-          .filter(Boolean)
-      )
-    ).sort();
+    return getAvailableDistricts(selectedState, normalizedExecutions);
   }, [normalizedExecutions, selectedState]);
 
   // Memoized filtered executions by selectedState & selectedDistrict

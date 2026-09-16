@@ -116,9 +116,10 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
         if obj.check_in_photo:
             try:
                 request = self.context.get('request')
-                if request:
-                    return request.build_absolute_uri(obj.check_in_photo.url)
-                return obj.check_in_photo.url
+                url = request.build_absolute_uri(obj.check_in_photo.url) if request else obj.check_in_photo.url
+                if request and (request.is_secure() or request.META.get('HTTP_X_FORWARDED_PROTO') == 'https') and url.startswith('http://'):
+                    url = url.replace('http://', 'https://', 1)
+                return url
             except Exception:
                 return str(obj.check_in_photo)
         return None
@@ -127,9 +128,10 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
         if obj.check_out_photo:
             try:
                 request = self.context.get('request')
-                if request:
-                    return request.build_absolute_uri(obj.check_out_photo.url)
-                return obj.check_out_photo.url
+                url = request.build_absolute_uri(obj.check_out_photo.url) if request else obj.check_out_photo.url
+                if request and (request.is_secure() or request.META.get('HTTP_X_FORWARDED_PROTO') == 'https') and url.startswith('http://'):
+                    url = url.replace('http://', 'https://', 1)
+                return url
             except Exception:
                 return str(obj.check_out_photo)
         return None

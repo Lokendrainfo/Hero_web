@@ -14,6 +14,38 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
     Single source of truth for authorized task visibility across My Tasks, Dashboard, Maps, and Detail views.
     Strictly enforces role-based vendor scope, Advance User geographical scope, and Reporting Manager scope.
     """
+    if extra_params is None:
+        extra_params = {}
+    else:
+        extra_params = dict(extra_params)
+
+    req_vendor = None
+    if request:
+        q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
+        req_vendor = q_params.get('vendor_id') or q_params.get('vendor')
+    if not req_vendor:
+        req_vendor = extra_params.get('vendor_id') or extra_params.get('vendor')
+
+    # If a specific vendor is requested or scoped, dynamically derive vendor search query for upstream iLync search
+    if 'search' not in extra_params and 'query' not in extra_params:
+        search_term = None
+        if req_vendor and str(req_vendor).strip() and str(req_vendor).lower() not in ['all', 'undefined', 'null', 'none']:
+            val_str = str(req_vendor).strip()
+            v_obj = Vendor.objects.filter(id=int(val_str)).first() if val_str.isdigit() else Vendor.objects.filter(external_vendor_id=val_str).first() or Vendor.objects.filter(name__icontains=val_str).first()
+            if v_obj and v_obj.name:
+                search_term = v_obj.name.split()[0].strip()
+            elif not val_str.isdigit():
+                search_term = val_str
+        elif user and user.is_authenticated:
+            allowed_v_ids = get_user_vendor_ids(user)
+            if allowed_v_ids:
+                v_obj = Vendor.objects.filter(id__in=allowed_v_ids).first()
+                if v_obj and v_obj.name:
+                    search_term = v_obj.name.split()[0].strip()
+
+        if search_term and len(search_term) >= 2:
+            extra_params['search'] = search_term
+
     req_task_type = task_type
     if not task_type or str(task_type).upper() in ['ALL', 'NONE', 'UNDEFINED']:
         req_task_type = None
@@ -351,8 +383,9 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
             user_ok = True
             if has_subordinates and allowed_user_identifiers:
                 # Check task assignees / owners against reporting scope
-                assignee_id = str(t.get('assignedToId') or t.get('assigneeId') or t.get('userId') or t.get('assignedUser') or t.get('assignee') or t.get('user', {}).get('id') or '').strip().lower()
-                assignee_email = str(t.get('assignedToEmail') or t.get('assigneeEmail') or t.get('user', {}).get('email') or '').strip().lower()
+                as_snap = t.get('assigneeSnapshot') if isinstance(t.get('assigneeSnapshot'), dict) else {}
+                assignee_id = str(t.get('assignedToId') or t.get('assigneeId') or as_snap.get('userId') or as_snap.get('id') or t.get('userId') or t.get('assignedUser') or t.get('assignee') or t.get('user', {}).get('id') or '').strip().lower()
+                assignee_email = str(t.get('assignedToEmail') or t.get('assigneeEmail') or as_snap.get('email') or as_snap.get('mobile') or t.get('user', {}).get('email') or '').strip().lower()
 
                 # If task has an assignee, check if assignee is in reporting scope
                 if assignee_id or assignee_email:
@@ -477,8 +510,9 @@ def is_task_authorized_for_user(user, task_id, request=None):
                         if u.username: allowed_user_identifiers.add(str(u.username).lower())
                         if u.email: allowed_user_identifiers.add(str(u.email).lower())
 
-                    assignee_id = str(task_obj.get('assignedToId') or task_obj.get('assigneeId') or task_obj.get('userId') or '').strip().lower()
-                    assignee_email = str(task_obj.get('assignedToEmail') or task_obj.get('assigneeEmail') or '').strip().lower()
+                    as_snap = task_obj.get('assigneeSnapshot') if isinstance(task_obj.get('assigneeSnapshot'), dict) else {}
+                    assignee_id = str(task_obj.get('assignedToId') or task_obj.get('assigneeId') or as_snap.get('userId') or as_snap.get('id') or task_obj.get('userId') or '').strip().lower()
+                    assignee_email = str(task_obj.get('assignedToEmail') or task_obj.get('assigneeEmail') or as_snap.get('email') or as_snap.get('mobile') or '').strip().lower()
                     if (assignee_id or assignee_email) and (assignee_id not in allowed_user_identifiers and assignee_email not in allowed_user_identifiers):
                         return False
 

@@ -371,7 +371,7 @@ class IlyncMyTasksListView(IlyncBaseView):
             size = 50
 
         task_type = request.query_params.get('taskType') or request.query_params.get('task_type')
-        extra_params = {k: v for k, v in request.query_params.items() if k not in ['page', 'size', 'taskType', 'task_type', 'vendor_id', 'vendor']}
+        extra_params = {k: v for k, v in request.query_params.items() if k not in ['page', 'size', 'taskType', 'task_type']}
 
         from apps.common.task_scope import get_user_authorized_tasks
         user = request.user if request.user and request.user.is_authenticated else None
@@ -508,24 +508,80 @@ class IlyncTaskExecutionView(IlyncBaseView):
             return Response({"success": False, "message": "Task execution not found or unauthorized"}, status=status.HTTP_404_NOT_FOUND)
 
         clean_id = str(task_id).replace('_route_', '').split('_')[0]
+        client = IlyncClient(request=request)
+
+        # Enforce task_type security check (FIBER_TRENCHING_DUCTING_TASK only)
         try:
-            client = IlyncClient(request=request)
+            t_detail = client.get_task_by_id(clean_id)
+            if t_detail and isinstance(t_detail, dict) and t_detail.get('data'):
+                task_data = t_detail.get('data')
+                ttype = str(task_data.get('taskType') or task_data.get('task_type') or '').upper()
+                if ttype and ttype != 'FIBER_TRENCHING_DUCTING_TASK' and 'TRENCH' not in ttype and 'DUCT' not in ttype:
+                    return Response(
+                        {"success": False, "message": "Access denied: Depth View execution details are only available for Trenching and Ducting tasks"},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+        except Exception as te:
+            print(f"[IlyncTaskExecutionView] Task type check skipped for {task_id}: {te}")
+
+        # 1. Check direct execution endpoint
+        try:
             res = client.get_task_execution(clean_id)
             if res and isinstance(res, dict) and res.get('data'):
-                return success_response(data=res.get('data'), message="Task execution details fetched successfully")
+                e_data = res.get('data')
+                fd = e_data.get('fieldData', {}) if isinstance(e_data, dict) else {}
+                tr = fd.get('trenching', {}) if isinstance(fd, dict) else {}
+                if tr.get('hddShot') or tr.get('pitDetails') or fd.get('hddShot') or fd.get('pitDetails'):
+                    return success_response(data=e_data, message="Task execution details fetched successfully")
         except Exception as e:
             print(f"[IlyncTaskExecutionView] Error fetching execution endpoint for {task_id}: {e}")
 
-        # Fallback: inspect get_task_detail and check embedded taskExecution
+        # 2. Check task detail endpoint
         try:
-            client = IlyncClient(request=request)
             t_res = client.get_task_detail(clean_id)
             if t_res and isinstance(t_res, dict):
                 t_data = t_res.get('data') or t_res
                 if isinstance(t_data, dict) and t_data.get('taskExecution'):
-                    return success_response(data=t_data.get('taskExecution'), message="Task execution fetched from task detail")
+                    e_obj = t_data.get('taskExecution')
+                    fd = e_obj.get('fieldData', {}) if isinstance(e_obj, dict) else {}
+                    tr = fd.get('trenching', {}) if isinstance(fd, dict) else {}
+                    if tr.get('hddShot') or tr.get('pitDetails') or fd.get('hddShot') or fd.get('pitDetails'):
+                        return success_response(data=e_obj, message="Task execution fetched from task detail")
         except Exception as fallback_e:
             print(f"[IlyncTaskExecutionView] Fallback detail check failed for {task_id}: {fallback_e}")
+
+        # 3. Check child tasks recursively if parent has no direct execution
+        def find_child_execution(tid, depth=0):
+            if depth > 3:
+                return None
+            try:
+                c_res = client.get_task_children(tid)
+                children = c_res.get('data', []) if isinstance(c_res, dict) else []
+                for c in children:
+                    cid = c.get('id') or c.get('_id')
+                    if not cid:
+                        continue
+                    # Check child detail
+                    cd_res = client.get_task_detail(cid)
+                    if cd_res and isinstance(cd_res, dict):
+                        cd_data = cd_res.get('data') or cd_res
+                        if isinstance(cd_data, dict) and cd_data.get('taskExecution'):
+                            e_obj = cd_data.get('taskExecution')
+                            fd = e_obj.get('fieldData', {}) if isinstance(e_obj, dict) else {}
+                            tr = fd.get('trenching', {}) if isinstance(fd, dict) else {}
+                            if tr.get('hddShot') or tr.get('pitDetails') or fd.get('hddShot') or fd.get('pitDetails'):
+                                return e_obj
+                    # Deep check
+                    deep_exec = find_child_execution(cid, depth + 1)
+                    if deep_exec:
+                        return deep_exec
+            except Exception as ce:
+                print(f"[IlyncTaskExecutionView] Error checking children for {tid}: {ce}")
+            return None
+
+        child_exec = find_child_execution(clean_id)
+        if child_exec:
+            return success_response(data=child_exec, message="Task execution fetched from child segment task")
 
         return success_response(data=None, message="Execution details not yet started for task")
 

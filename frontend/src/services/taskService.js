@@ -27,6 +27,8 @@ export const taskService = {
   getTypeCounts: () => api.get('/integrations/tasks/my-tasks/type-counts/'),
   getTaskDetail: (id) => api.get(`/integrations/tasks/${id}/`),
   getTaskExecution: (id) => api.get(`/integrations/tasks/${id}/execution/`),
+  getTaskHddExecution: (id) => api.get(`/integrations/tasks/${id}/execution/`),
+  getTasks: (params) => taskService.getMyTasks(params),
   
   getTaskChildren: (id) => {
     const cached = childrenCache.get(id);

@@ -1513,7 +1513,24 @@ export const Attendance = () => {
                   </div>
                 </div>
               ) : typeof activePhotoUrl === 'string' && (activePhotoUrl.startsWith('http') || activePhotoUrl.startsWith('data:image') || activePhotoUrl.startsWith('/media') || activePhotoUrl.includes('.jpg') || activePhotoUrl.includes('.png') || activePhotoUrl.includes('.jpeg')) ? (
-                <img src={activePhotoUrl} alt="Check-in Selfie" style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', objectFit: 'contain' }} />
+                <img
+                  src={
+                    (typeof window !== 'undefined' && window.location.protocol === 'https:' && activePhotoUrl.startsWith('http://'))
+                      ? activePhotoUrl.replace(/^http:\/\//i, 'https://')
+                      : activePhotoUrl
+                  }
+                  alt="Check-in Selfie"
+                  style={{ maxWidth: '100%', maxHeight: '420px', borderRadius: '8px', objectFit: 'contain' }}
+                  onError={(e) => {
+                    const src = e.target.src;
+                    if (src && src.startsWith('http://')) {
+                      e.target.src = src.replace('http://', 'https://');
+                    } else if (src && (src.includes('hero.pramaanu.co.in') || src.includes('localhost'))) {
+                      const relPath = src.replace(/^https?:\/\/[^\/]+/, '');
+                      if (e.target.src !== relPath) e.target.src = relPath;
+                    }
+                  }}
+                />
               ) : (
                 <div style={{ padding: '24px 16px', background: '#1e293b', borderRadius: '10px', color: '#f8fafc' }}>
                   <LucideCamera size={44} style={{ color: '#38bdf8', marginBottom: '10px' }} />

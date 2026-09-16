@@ -355,6 +355,7 @@ export const mapHddExecutionResponse = (task, execution = null) => {
 
   return {
     id: String(task.id),
+    taskId: String(task.id || task.taskCode || ''),
     taskCode: task.taskCode || task.id,
     displayName: task.displayName || loc.locationName || 'HDD Execution Task',
     state: loc.circle || 'RAJASTHAN',
