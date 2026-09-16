@@ -193,35 +193,56 @@ def validate_approval_permission(request_user, attendance_record):
 
     return None
 
-def resolve_target_user(user_id_param):
+def resolve_target_user(user_id_param, request_user=None):
     if not user_id_param:
         return None
     if isinstance(user_id_param, User):
         return user_id_param
-    if str(user_id_param).isdigit():
-        u = User.objects.filter(id=int(user_id_param)).first()
-        if u:
-            return u
+
     param_str = str(user_id_param).strip()
+    if not param_str or param_str.lower() in ('none', 'null', 'undefined'):
+        return None
+
+    # 1. Search FIRST by external_user_id (exact match for iLync ID)
+    u = User.objects.filter(external_user_id=param_str).first()
+    if u:
+        return u
+
+    # 2. Search by employee_id, username, phone_number, email
     u = User.objects.filter(
-        Q(external_user_id=param_str) |
         Q(employee_id=param_str) |
         Q(username=param_str) |
         Q(phone_number=param_str) |
         Q(email__iexact=param_str)
     ).first()
+    if u:
+        return u
 
-    if not u and param_str:
-        # Create lightweight shell user for foreign-key telemetry storage
-        base_name = param_str.split('@')[0] if '@' in param_str else param_str
-        u, _ = User.objects.get_or_create(
-            username=clean_username(base_name),
-            defaults={
-                'external_user_id': param_str if not param_str.isdigit() else None,
-                'first_name': base_name,
-                'is_active': True
-            }
-        )
+    # 3. If not found by external ID / username / email / phone, check if param_str is digit matching local User ID primary key
+    if param_str.isdigit():
+        u = User.objects.filter(id=int(param_str)).first()
+        if u:
+            return u
+
+    # 4. If still not found, create lightweight shell user with external_user_id = param_str
+    base_name = param_str.split('@')[0] if '@' in param_str else param_str
+    clean_u = clean_username(base_name)
+    if User.objects.filter(username=clean_u).exists():
+        clean_u = f"{clean_u}_{int(timezone.now().timestamp())}"
+
+    target_vendor = None
+    if request_user:
+        target_vendor = getattr(request_user, 'vendor', None) or get_user_vendor(request_user)
+
+    u, _ = User.objects.get_or_create(
+        username=clean_u,
+        defaults={
+            'external_user_id': param_str,
+            'first_name': base_name,
+            'vendor': target_vendor,
+            'is_active': True
+        }
+    )
     return u
 
 def clean_username(val):
@@ -455,7 +476,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         user = request.user
         target_user_id = request.data.get('user_id') or request.data.get('marked_for_user_id') or request.data.get('user')
         if target_user_id:
-            target_user = resolve_target_user(target_user_id)
+            target_user = resolve_target_user(target_user_id, request.user)
             if target_user:
                 validate_employee_attendance_access(request.user, target_user)
                 user = target_user
@@ -469,15 +490,19 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         processed_photo = process_attendance_photo(request, 'checkin', user.id)
 
-        # Double Check-In Protection / Update photo if re-submitted
-        existing = AttendanceRecord.objects.filter(user=user, date=today, status='CHECKED_IN').first()
+        # 1. Check if record already exists for today to prevent duplicates
+        existing = AttendanceRecord.objects.filter(user=user, date=today).first()
         if existing:
+            existing.status = 'CHECKED_IN'
+            if not existing.check_in:
+                existing.check_in = timezone.now()
             if processed_photo:
                 existing.check_in_photo = processed_photo
             if lat is not None and str(lat).strip() != '': existing.check_in_latitude = float(lat)
             if lng is not None and str(lng).strip() != '': existing.check_in_longitude = float(lng)
             if acc is not None and str(acc).strip() != '': existing.check_in_accuracy = float(acc)
             if loc_source: existing.location_source = loc_source
+            existing.updated_by = request.user
             existing.save()
             serializer = AttendanceRecordSerializer(existing, context={'request': request})
             return Response({
@@ -527,8 +552,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         user = request.user
         target_user_id = request.data.get('user_id') or request.data.get('marked_for_user_id') or request.data.get('user')
         if target_user_id:
-            target_user = resolve_target_user(target_user_id)
+            target_user = resolve_target_user(target_user_id, request.user)
             if target_user:
+                validate_employee_attendance_access(request.user, target_user)
                 user = target_user
 
         today = timezone.now().date()
@@ -537,13 +563,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if att_id:
             record = AttendanceRecord.objects.filter(id=att_id).first()
         else:
-            record = AttendanceRecord.objects.filter(user=user, date=today, status='CHECKED_IN').order_by('-created_at').first()
-
-        if not record:
             record = AttendanceRecord.objects.filter(user=user, date=today).order_by('-created_at').first()
 
-        if not record:
-            return error_response(message="No active check-in record found for today.", status_code=status.HTTP_400_BAD_REQUEST)
+        if not record or not (record.check_in or record.status in ['CHECKED_IN', 'PRESENT', 'HALF_DAY']):
+            return error_response(message="Cannot check out without a valid check-in record for today.", status_code=status.HTTP_400_BAD_REQUEST)
 
         lat = request.data.get('latitude') or request.data.get('check_out_latitude')
         lng = request.data.get('longitude') or request.data.get('check_out_longitude')
@@ -958,13 +981,16 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 rec_qs = AttendanceRecord.objects.filter(date=req_date)
                 rec = None
                 if ext_u_id:
-                    rec = rec_qs.filter(Q(user__external_user_id=ext_u_id) | Q(user__username=ext_u_id)).first()
+                    rec = rec_qs.filter(
+                        Q(user__external_user_id=ext_u_id) |
+                        Q(user__username=ext_u_id) |
+                        Q(user__employee_id=ext_u_id) |
+                        (Q(user__id=int(ext_u_id)) if ext_u_id.isdigit() else Q(pk=-1))
+                    ).first()
                 if not rec and email and not email.lower().startswith('user@'):
                     rec = rec_qs.filter(user__email__iexact=email).first()
                 if not rec and mobile:
-                    rec = rec_qs.filter(Q(user__phone_number=mobile) | Q(user__username=mobile), user__first_name__iexact=name).first()
-                    if not rec:
-                        rec = rec_qs.filter(Q(user__phone_number=mobile) | Q(user__username=mobile)).first()
+                    rec = rec_qs.filter(Q(user__phone_number=mobile) | Q(user__username=mobile)).first()
 
                 # Also lookup matching local User ID if available for action triggers
                 matched_user = None

@@ -563,8 +563,30 @@ export const Attendance = () => {
   };
 
   const handleCheckOutEmployee = async (userId) => {
+    let lat = null;
+    let lng = null;
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      try {
+        const pos = await new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(resolve, () => resolve(null), { timeout: 4000, enableHighAccuracy: true });
+        });
+        if (pos && pos.coords) {
+          lat = pos.coords.latitude;
+          lng = pos.coords.longitude;
+        }
+      } catch (e) {
+        console.warn("Geolocation position capture warning:", e);
+      }
+    }
+
     try {
-      await attendanceService.checkOut({ user_id: userId });
+      await attendanceService.checkOut({
+        user_id: userId,
+        latitude: lat,
+        longitude: lng,
+        check_out_latitude: lat,
+        check_out_longitude: lng
+      });
       showToast("✓ Employee check-out recorded", "info");
       fetchTeamAttendance();
     } catch (err) {
