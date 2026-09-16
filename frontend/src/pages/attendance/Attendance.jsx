@@ -15,6 +15,7 @@ import {
 import '../../styles/components.css';
 import { SearchableSelect } from '../../components/common/Select';
 import { DateField } from '../../components/common/DateField';
+import { getTodayDateString, getLocalDateString } from '../../utils/dateUtils';
 
 export const Attendance = () => {
   const { user, isAdmin, vendors, selectedVendorId, roles } = useAuth();
@@ -24,7 +25,7 @@ export const Attendance = () => {
   const [activeTab, setActiveTab] = useState('daily'); // 'daily' | 'history' | 'pending_approvals'
 
   // Daily Team Attendance State
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(() => getTodayDateString());
   const [teamMembers, setTeamMembers] = useState([]);
   const [assignedMachines, setAssignedMachines] = useState([]);
   const [summaryStats, setSummaryStats] = useState({
@@ -121,9 +122,9 @@ export const Attendance = () => {
   const [historyDateFrom, setHistoryDateFrom] = useState(() => {
     const d = new Date();
     d.setDate(1);
-    return d.toISOString().split('T')[0];
+    return getLocalDateString(d);
   });
-  const [historyDateTo, setHistoryDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [historyDateTo, setHistoryDateTo] = useState(() => getTodayDateString());
   const [historySearch, setHistorySearch] = useState('');
   const [historyStatus, setHistoryStatus] = useState('ALL');
 

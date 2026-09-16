@@ -10,6 +10,7 @@ import { formatPct, formatScopeStr } from '../../utils/formatters';
 import { PageHeader } from '../../components/common/PageHeader';
 import { BarChart } from '../../components/common/BarChart';
 import { DateField } from '../../components/common/DateField';
+import { getTodayDateString } from '../../utils/dateUtils';
 import { LucideMapPin, LucideCheckSquare, LucideShieldAlert } from 'lucide-react';
 
 export const Dashboard = () => {
@@ -27,7 +28,7 @@ export const Dashboard = () => {
     }
   }, [user, permissions, isAdmin, hasPermission, navigate]);
 
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(() => getTodayDateString());
 
   useEffect(() => {
     setData(null);

@@ -1,5 +1,19 @@
 // Helper for dynamic date formatting without hardcoded year/month strings
 
+export const getLocalDateString = (d = new Date()) => {
+  const dateObj = typeof d === 'string' || typeof d === 'number' ? new Date(d) : d;
+  if (isNaN(dateObj.getTime())) {
+    const fallback = new Date();
+    return `${fallback.getFullYear()}-${String(fallback.getMonth() + 1).padStart(2, '0')}-${String(fallback.getDate()).padStart(2, '0')}`;
+  }
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+export const getTodayDateString = () => getLocalDateString(new Date());
+
 export const getFormattedToday = () => {
   return new Date().toLocaleDateString('en-GB', {
     day: '2-digit',
