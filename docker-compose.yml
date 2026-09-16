@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: deployment/docker/backend.Dockerfile
+    volumes:
+      - hero_media_data:/app/media
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8000:8000"
+    restart: always
+
+  frontend:
+    build:
+      context: .
+      dockerfile: deployment/docker/frontend.Dockerfile
+    ports:
+      - "3000:80"
+    restart: always
+
+volumes:
+  hero_media_data:
+    name: hero_media_data
+    driver: local
