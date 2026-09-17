@@ -193,6 +193,37 @@ def validate_approval_permission(request_user, attendance_record):
 
     return None
 
+def extract_geo(data_dict, keys):
+    if not isinstance(data_dict, dict):
+        return ''
+    for k in keys:
+        val = data_dict.get(k)
+        if not val:
+            continue
+        if isinstance(val, list) and len(val) > 0:
+            res_items = []
+            for item in val:
+                if isinstance(item, dict):
+                    s = str(item.get('name') or item.get('code') or item.get('blockName') or '').strip()
+                elif isinstance(item, (str, int, float)):
+                    s = str(item).strip()
+                else:
+                    s = ''
+                if s and s.upper() not in ('NONE', 'NULL', 'UNDEFINED'):
+                    res_items.append(s)
+            if res_items:
+                return ', '.join(res_items)
+        elif isinstance(val, dict):
+            s = str(val.get('name') or val.get('code') or val.get('blockName') or '').strip()
+            if s and s.upper() not in ('NONE', 'NULL', 'UNDEFINED'):
+                return s
+        elif isinstance(val, (str, int, float)) and str(val).strip():
+            s = str(val).strip()
+            if s and s.upper() not in ('NONE', 'NULL', 'UNDEFINED'):
+                return s
+    return ''
+
+
 def resolve_target_user(user_id_param, request_user=None):
     if not user_id_param:
         return None
@@ -1038,6 +1069,22 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
             v_payload = live_res.get('data') if (isinstance(live_res, dict) and live_res.get('success')) else (live_res if isinstance(live_res, dict) else {})
 
+            v_circle = extract_geo(v_payload, ['circles', 'circle', 'circleName', 'state'])
+            v_district = extract_geo(v_payload, ['districts', 'district', 'districtName', 'city'])
+            v_block = extract_geo(v_payload, ['blocks', 'blockIds', 'block', 'blockName', 'tehsil'])
+
+            v_macs = v_payload.get('machines') or v_payload.get('assigned_machines') or []
+            v_mac_list = []
+            if isinstance(v_macs, list):
+                for m_item in v_macs:
+                    if isinstance(m_item, dict):
+                        m_code = str(m_item.get('machineNo') or m_item.get('name') or m_item.get('code') or '').strip()
+                        if m_code and m_code not in v_mac_list:
+                            v_mac_list.append(m_code)
+                    elif isinstance(m_item, str) and m_item.strip():
+                        v_mac_list.append(m_item.strip())
+            v_vendor_machine = ', '.join(v_mac_list)
+
             # 1. LIVE TEAM MEMBERS directly from iLync response (v_payload.get('users'))
             raw_users = v_payload.get('users') or []
             if not isinstance(raw_users, list):
@@ -1119,34 +1166,29 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 check_in_photo_url = build_secure_media_url(request, rec.check_in_photo) if rec else None
                 check_out_photo_url = build_secure_media_url(request, rec.check_out_photo) if rec else None
 
-                def extract_geo(data_dict, keys):
-                    if not isinstance(data_dict, dict):
-                        return ''
-                    for k in keys:
-                        val = data_dict.get(k)
-                        if not val:
-                            continue
-                        if isinstance(val, list) and len(val) > 0:
-                            first = val[0]
-                            if isinstance(first, dict):
-                                s = str(first.get('name') or first.get('code') or '').strip()
-                            else:
-                                s = str(first).strip()
-                            if s and s.upper() not in ('NONE', 'NULL', 'UNDEFINED'):
-                                return s
-                        elif isinstance(val, dict):
-                            s = str(val.get('name') or val.get('code') or '').strip()
-                            if s and s.upper() not in ('NONE', 'NULL', 'UNDEFINED'):
-                                return s
-                        elif isinstance(val, str) and val.strip():
-                            s = val.strip()
-                            if s and s.upper() not in ('NONE', 'NULL', 'UNDEFINED'):
-                                return s
-                    return ''
-
                 u_circle = extract_geo(u_info, ['circle', 'circleName', 'circles', 'circle_name', 'state'])
                 u_district = extract_geo(u_info, ['district', 'districtName', 'districts', 'district_name', 'city'])
                 u_block = extract_geo(u_info, ['block', 'blockName', 'blocks', 'block_name', 'tehsil'])
+
+                u_mac = (
+                    u_info.get('machine') or u_info.get('machineNo') or u_info.get('machine_no') or
+                    u_info.get('assigned_machine') or u_info.get('machineName') or u_info.get('machine_name') or
+                    u_info.get('machine_chassis_no') or u_info.get('chassis_no') or ''
+                )
+                if isinstance(u_mac, dict):
+                    u_mac = u_mac.get('name') or u_mac.get('machineNo') or u_mac.get('code') or ''
+                elif isinstance(u_mac, list) and len(u_mac) > 0:
+                    first_m = u_mac[0]
+                    if isinstance(first_m, dict):
+                        u_mac = first_m.get('name') or first_m.get('machineNo') or first_m.get('code') or ''
+                    else:
+                        u_mac = str(first_m)
+                u_mac_str = str(u_mac or (rec.machine_chassis_no or rec.machine_id if rec else '') or '').strip()
+
+                final_circle = u_circle or (matched_user.selected_circle.name if (matched_user and getattr(matched_user, 'selected_circle', None)) else '') or v_circle
+                final_district = u_district or (matched_user.selected_district.name if (matched_user and getattr(matched_user, 'selected_district', None)) else '') or v_district
+                final_block = u_block or (matched_user.selected_block.name if (matched_user and getattr(matched_user, 'selected_block', None)) else '') or v_block
+                final_machine = u_mac_str or v_vendor_machine
 
                 effective_user_id = ext_u_id or (matched_user.id if matched_user else f"ILYNC-{name.replace(' ', '_')}_{mobile}")
 
@@ -1160,9 +1202,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'phone_number': mobile,
                     'email': email,
                     'role': u_role,
-                    'circle': u_circle or (matched_user.selected_circle.name if (matched_user and getattr(matched_user, 'selected_circle', None)) else ''),
-                    'district': u_district or (matched_user.selected_district.name if (matched_user and getattr(matched_user, 'selected_district', None)) else ''),
-                    'block': u_block or (matched_user.selected_block.name if (matched_user and getattr(matched_user, 'selected_block', None)) else ''),
+                    'circle': final_circle,
+                    'district': final_district,
+                    'block': final_block,
+                    'machine': final_machine,
                     'vendor_name': v_obj.name,
                     'vendor_id': v_obj.id,
                     'is_active': True,
@@ -1173,7 +1216,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'approval_status': rec.approval_status if rec else 'PENDING',
                     'rejection_reason': rec.rejection_reason if rec else None,
                     'attendance_type': rec.attendance_type if rec else 'TEAM',
-                    'machine_chassis_no': rec.machine_chassis_no if rec else None,
+                    'machine_chassis_no': (rec.machine_chassis_no if rec else u_mac_str) or None,
                     'check_in': timezone.localtime(check_in_dt).strftime('%H:%M') if check_in_dt else None,
                     'check_out': timezone.localtime(check_out_dt).strftime('%H:%M') if check_out_dt else None,
                     'check_in_time': timezone.localtime(check_in_dt).isoformat() if check_in_dt else None,
@@ -1241,8 +1284,94 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             message=f"Fetched live vendor team and machine attendance for {req_date}"
         )
 
-    @action(detail=False, methods=['post'], url_path='bulk-mark')
-    def bulk_mark(self, request):
+
+        if not isinstance(records_data, list):
+            return error_response(message="`records` must be an array of attendance items.", status_code=status.HTTP_400_BAD_REQUEST)
+
+        saved_records = []
+        for item in records_data:
+            u_id = item.get('user_id') or item.get('user')
+            if not u_id:
+                continue
+
+            target_user = resolve_target_user(u_id)
+            if not target_user:
+                continue
+
+            validate_employee_attendance_access(request.user, target_user)
+
+            st_val = (item.get('status') or 'PRESENT').upper().replace(' ', '_')
+            notes_val = item.get('notes') or item.get('remarks') or ''
+            check_in_val = item.get('check_in')
+            check_out_val = item.get('check_out')
+            lat_val = item.get('check_in_latitude') or item.get('latitude')
+            lng_val = item.get('check_in_longitude') or item.get('longitude')
+            acc_val = item.get('check_in_accuracy') or item.get('accuracy')
+            loc_source = item.get('location_source') or 'GPS'
+
+            target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
+            reporting_mgr = resolve_reporting_manager(target_user, marked_by_user=request.user, vendor=target_vendor)
+
+            def safe_float(v):
+                if v is not None and str(v).strip() not in ('', 'null', 'undefined', 'None'):
+                    try:
+                        return float(v)
+                    except Exception:
+                        return None
+                return None
+
+            f_lat = safe_float(lat_val)
+            f_lng = safe_float(lng_val)
+            f_acc = safe_float(acc_val)
+
+            if st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY'] and not check_in_val:
+                check_in_val = timezone.now()
+
+            record = AttendanceRecord.objects.filter(user=target_user, date=req_date).exclude(attendance_type='MACHINE').first()
+            created = False
+            if not record:
+                record = AttendanceRecord.objects.create(
+                    user=target_user,
+                    date=req_date,
+                    attendance_type='TEAM',
+                    vendor=target_vendor,
+                    reporting_manager=reporting_mgr,
+                    status=st_val,
+                    notes=notes_val,
+                    check_in=check_in_val,
+                    check_out=check_out_val,
+                    check_in_latitude=f_lat,
+                    check_in_longitude=f_lng,
+                    check_in_accuracy=f_acc,
+                    location_source=loc_source,
+                    marked_by=request.user,
+                    updated_by=request.user
+                )
+                created = True
+
+            if not created:
+                record.status = st_val
+                record.notes = notes_val
+                if check_in_val is not None:
+                    record.check_in = check_in_val
+                elif not record.check_in and st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY']:
+                    record.check_in = timezone.now()
+                if check_out_val is not None:
+                    record.check_out = check_out_val
+                if f_lat is not None: record.check_in_latitude = f_lat
+                if f_lng is not None: record.check_in_longitude = f_lng
+                if f_acc is not None: record.check_in_accuracy = f_acc
+                record.updated_by = request.user
+                if target_vendor and not record.vendor:
+                    record.vendor = target_vendor
+                record.save()
+
+            saved_records.append(record)
+
+        return success_response(
+            data=AttendanceRecordSerializer(saved_records, many=True, context={'request': request}).data,
+            message=f"Successfully updated attendance for {len(saved_records)} team members."
+        )
         records_data = request.data.get('records') or []
         req_date = request.data.get('date') or str(timezone.localdate())
 
@@ -1354,7 +1483,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         ws.title = "Attendance Report"
 
         headers = [
-            'SR No', 'Employee ID', 'Name', 'Role', 'Contact No',
+            'SR No', 'Employee ID', 'Machine', 'Name', 'Role', 'Contact No',
             'Date', 'Circle', 'District', 'Block', 'Check In',
             'Check Out', 'Latitute', 'Longitute', 'RM', 'Remarks / Notes'
         ]
@@ -1450,200 +1579,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 'user__reporting_manager'
             ).order_by('date', 'id'))
 
-            for rec in records:
-                u = rec.user
-                if not u:
-                    continue
-                emp_id = clean_val(u.employee_id or u.external_user_id or f"EMP-{u.id}")
-                if not emp_id or emp_id.lower() in ('none', 'null', 'undefined'):
-                    emp_id = u.username or f"EMP-{u.id}"
-
-                name = clean_val(u.get_full_name() or u.username)
-                role = clean_val(u.get_role_list()[0] if u.get_role_list() else (u.role or 'OPERATOR'))
-                contact = clean_val(u.phone_number)
-                date_val = format_date_str(rec.date)
-
-                circle = clean_val(u.selected_circle.name if (u and getattr(u, 'selected_circle', None)) else '')
-                district = clean_val(u.selected_district.name if (u and getattr(u, 'selected_district', None)) else '')
-                block = clean_val(u.selected_block.name if (u and getattr(u, 'selected_block', None)) else '')
-
-                check_in = format_time_str(rec.check_in) if rec.check_in else ''
-                check_out = format_time_str(rec.check_out) if rec.check_out else ''
-                lat = clean_val(rec.check_in_latitude)
-                lng = clean_val(rec.check_in_longitude)
-
-                rm = ''
-                if rec.reporting_manager:
-                    rm = clean_val(rec.reporting_manager.get_full_name() or rec.reporting_manager.username)
-                elif u and u.reporting_manager:
-                    rm = clean_val(u.reporting_manager.get_full_name() or u.reporting_manager.username)
-
-                notes = clean_val(rec.notes)
-
-            if st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY'] and not check_in_val:
-                check_in_val = timezone.now()
-
-            record = AttendanceRecord.objects.filter(user=target_user, date=req_date).exclude(attendance_type='MACHINE').first()
-            created = False
-            if not record:
-                record = AttendanceRecord.objects.create(
-                    user=target_user,
-                    date=req_date,
-                    attendance_type='TEAM',
-                    vendor=target_vendor,
-                    reporting_manager=reporting_mgr,
-                    status=st_val,
-                    notes=notes_val,
-                    check_in=check_in_val,
-                    check_out=check_out_val,
-                    check_in_latitude=f_lat,
-                    check_in_longitude=f_lng,
-                    check_in_accuracy=f_acc,
-                    location_source=loc_source,
-                    marked_by=request.user,
-                    updated_by=request.user
-                )
-                created = True
-
-            if not created:
-                record.status = st_val
-                record.notes = notes_val
-                if check_in_val is not None:
-                    record.check_in = check_in_val
-                elif not record.check_in and st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY']:
-                    record.check_in = timezone.now()
-                if check_out_val is not None:
-                    record.check_out = check_out_val
-                if f_lat is not None: record.check_in_latitude = f_lat
-                if f_lng is not None: record.check_in_longitude = f_lng
-                if f_acc is not None: record.check_in_accuracy = f_acc
-                record.updated_by = request.user
-                if target_vendor and not record.vendor:
-                    record.vendor = target_vendor
-                record.save()
-
-            saved_records.append(record)
-
-        return success_response(
-            data=AttendanceRecordSerializer(saved_records, many=True, context={'request': request}).data,
-            message=f"Successfully updated attendance for {len(saved_records)} team members."
-        )
-
-    @action(detail=False, methods=['get'], url_path='export-report')
-    def export_report(self, request):
-        import openpyxl
-        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-        from openpyxl.utils import get_column_letter
-        from django.http import HttpResponse
-
-        req_date = request.query_params.get('date') or str(timezone.localdate())
-        date_from = request.query_params.get('date_from')
-        date_to = request.query_params.get('date_to')
-        req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
-        role_filter = request.query_params.get('role')
-        status_filter = request.query_params.get('status')
-        search_filter = request.query_params.get('search')
-
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Attendance Report"
-
-        headers = [
-            'SR No', 'Employee ID', 'Name', 'Role', 'Contact No',
-            'Date', 'Circle', 'District', 'Block', 'Check In',
-            'Check Out', 'Latitute', 'Longitute', 'RM', 'Remarks / Notes'
-        ]
-
-        ws.append(headers)
-
-        # Style header row
-        header_font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
-        header_fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
-        header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-
-        for col_idx in range(1, len(headers) + 1):
-            cell = ws.cell(row=1, column=col_idx)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = header_align
-
-        ws.row_dimensions[1].height = 28
-
-        def clean_val(val):
-            if val is None:
-                return ''
-            s = str(val).strip()
-            if s.upper() in ('NONE', 'NULL', 'UNDEFINED', 'NAN'):
-                return ''
-            return s
-
-        def format_date_str(d_val):
-            if not d_val:
-                return ''
-            if isinstance(d_val, datetime):
-                return d_val.strftime('%d/%m/%Y')
-            d_str = str(d_val).strip()
-            try:
-                dt_obj = datetime.strptime(d_str[:10], '%Y-%m-%d')
-                return dt_obj.strftime('%d/%m/%Y')
-            except Exception:
-                return d_str
-
-        def format_time_str(t_val):
-            if not t_val:
-                return ''
-            if isinstance(t_val, datetime):
-                return timezone.localtime(t_val).strftime('%I:%M %p')
-            t_str = str(t_val).strip()
-            if not t_str or t_str.upper() in ('NONE', 'NULL', 'UNDEFINED', '--:--', 'NAN'):
-                return ''
-            try:
-                if len(t_str) == 5:
-                    dt_obj = datetime.strptime(t_str, '%H:%M')
-                    return dt_obj.strftime('%I:%M %p')
-                elif len(t_str) == 8:
-                    dt_obj = datetime.strptime(t_str, '%H:%M:%S')
-                    return dt_obj.strftime('%I:%M %p')
-            except Exception:
-                pass
-            return t_str
-
-        rows_to_export = []
-        sr_counter = 1
-
-        if date_from or date_to:
-            qs = self.get_queryset().exclude(attendance_type='MACHINE')
-            if date_from:
-                qs = qs.filter(date__gte=date_from)
-            if date_to:
-                qs = qs.filter(date__lte=date_to)
-            if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
-                qs = qs.filter(
-                    Q(vendor__external_vendor_id=req_v) |
-                    Q(vendor__name__iexact=req_v) |
-                    Q(vendor_id=req_v if str(req_v).isdigit() else None)
-                )
-            if status_filter and status_filter.upper() != 'ALL':
-                qs = qs.filter(status__iexact=status_filter)
-            if role_filter and role_filter.upper() != 'ALL':
-                qs = qs.filter(
-                    Q(user__role__icontains=role_filter) |
-                    Q(user__roles__name__icontains=role_filter)
-                )
-            if search_filter:
-                sp = search_filter.strip()
-                qs = qs.filter(
-                    Q(user__first_name__icontains=sp) |
-                    Q(user__last_name__icontains=sp) |
-                    Q(user__username__icontains=sp) |
-                    Q(user__phone_number__icontains=sp)
-                )
-
-            records = list(qs.select_related(
-                'user', 'vendor', 'reporting_manager',
-                'user__selected_circle', 'user__selected_district', 'user__selected_block',
-                'user__reporting_manager'
-            ).order_by('date', 'id'))
+            vendor_payload_cache = {}
+            from apps.integrations.ilync_client import IlyncClient
+            client = IlyncClient()
 
             for rec in records:
                 u = rec.user
@@ -1653,14 +1591,43 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 if not emp_id or emp_id.lower() in ('none', 'null', 'undefined'):
                     emp_id = u.username or f"EMP-{u.id}"
 
+                v_obj = rec.vendor or getattr(u, 'vendor', None) or get_user_vendor(u, resolve_fallback=False)
+                v_circle, v_district, v_block, v_vendor_machine = '', '', '', ''
+                if v_obj:
+                    ext_v_id = str(v_obj.external_vendor_id or v_obj.id).strip()
+                    if ext_v_id not in vendor_payload_cache:
+                        try:
+                            live_res = client.get_vendor_by_id(ext_v_id)
+                            v_payload = live_res.get('data') if (isinstance(live_res, dict) and live_res.get('success')) else (live_res if isinstance(live_res, dict) else {})
+                            v_c = extract_geo(v_payload, ['circles', 'circle', 'circleName', 'state'])
+                            v_d = extract_geo(v_payload, ['districts', 'district', 'districtName', 'city'])
+                            v_b = extract_geo(v_payload, ['blocks', 'blockIds', 'block', 'blockName', 'tehsil'])
+                            v_macs = v_payload.get('machines') or v_payload.get('assigned_machines') or []
+                            v_mac_list = []
+                            if isinstance(v_macs, list):
+                                for m_item in v_macs:
+                                    if isinstance(m_item, dict):
+                                        m_code = str(m_item.get('machineNo') or m_item.get('name') or m_item.get('code') or '').strip()
+                                        if m_code and m_code not in v_mac_list:
+                                            v_mac_list.append(m_code)
+                                    elif isinstance(m_item, str) and m_item.strip():
+                                        v_mac_list.append(m_item.strip())
+                            v_m = ', '.join(v_mac_list)
+                            vendor_payload_cache[ext_v_id] = (v_c, v_d, v_b, v_m)
+                        except Exception:
+                            vendor_payload_cache[ext_v_id] = ('', '', '', '')
+                    v_circle, v_district, v_block, v_vendor_machine = vendor_payload_cache[ext_v_id]
+
+                mac_val = clean_val(rec.machine_chassis_no or rec.machine_id or v_vendor_machine)
                 name = clean_val(u.get_full_name() or u.username)
                 role = clean_val(u.get_role_list()[0] if u.get_role_list() else (u.role or 'OPERATOR'))
                 contact = clean_val(u.phone_number)
                 date_val = format_date_str(rec.date)
 
-                circle = clean_val(u.selected_circle.name if (u and getattr(u, 'selected_circle', None)) else '')
-                district = clean_val(u.selected_district.name if (u and getattr(u, 'selected_district', None)) else '')
-                block = clean_val(u.selected_block.name if (u and getattr(u, 'selected_block', None)) else '')
+                circle = clean_val((u.selected_circle.name if (u and getattr(u, 'selected_circle', None)) else '') or v_circle)
+                district = clean_val((u.selected_district.name if (u and getattr(u, 'selected_district', None)) else '') or v_district)
+                block = clean_val((u.selected_block.name if (u and getattr(u, 'selected_block', None)) else '') or v_block)
+
 
                 check_in = format_time_str(rec.check_in) if rec.check_in else ''
                 check_out = format_time_str(rec.check_out) if rec.check_out else ''
@@ -1676,7 +1643,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 notes = clean_val(rec.notes)
 
                 rows_to_export.append([
-                    sr_counter, emp_id, name, role, contact,
+                    sr_counter, emp_id, mac_val, name, role, contact,
                     date_val, circle, district, block, check_in,
                     check_out, lat, lng, rm, notes
                 ])
@@ -1704,6 +1671,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 if not emp_id or emp_id.lower() in ('none', 'null', 'undefined'):
                     emp_id = clean_val((matched_u.employee_id or matched_u.external_user_id or matched_u.username) if matched_u else u_id)
 
+                mac_val = clean_val(m.get('machine') or m.get('machine_chassis_no') or m.get('machine_no') or m.get('machine_id'))
                 name = clean_val(m.get('user_name') or (matched_u.get_full_name() if matched_u else ''))
                 role = clean_val(m.get('role') or (matched_u.get_role_list()[0] if (matched_u and matched_u.get_role_list()) else 'OPERATOR'))
                 contact = clean_val(m.get('phone_number') or (matched_u.phone_number if matched_u else ''))
@@ -1722,7 +1690,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 notes = clean_val(m.get('notes'))
 
                 rows_to_export.append([
-                    sr_counter, emp_id, name, role, contact,
+                    sr_counter, emp_id, mac_val, name, role, contact,
                     date_val, circle, district, block, check_in,
                     check_out, lat, lng, rm, notes
                 ])
@@ -1745,9 +1713,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 cell = ws.cell(row=row_idx, column=col_idx)
                 cell.font = data_font
                 cell.border = thin_border
-                if col_idx in (1, 6, 10, 11):
+                if col_idx in (1, 7, 11, 12):
                     cell.alignment = Alignment(horizontal='center', vertical='center')
-                elif col_idx in (12, 13):
+                elif col_idx in (13, 14):
                     cell.alignment = Alignment(horizontal='right', vertical='center')
                 else:
                     cell.alignment = Alignment(horizontal='left', vertical='center')
