@@ -463,7 +463,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     def today_attendance(self, request):
         auto_checkout_overnight_records()
         today = timezone.localdate()
-        record = AttendanceRecord.objects.filter(user=user, date=today).order_by('-created_at').first()
+        user = request.user
+        record = AttendanceRecord.objects.filter(user=user, date=today).exclude(attendance_type='MACHINE').order_by('-created_at').first()
         if not record:
             return Response(None, status=status.HTTP_200_OK)
         serializer = AttendanceRecordSerializer(record, context={'request': request})
@@ -486,11 +487,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         acc = request.data.get('accuracy') or request.data.get('check_in_accuracy')
         loc_source = request.data.get('location_source') or 'GPS'
         att_type = request.data.get('attendance_type') or 'TEAM'
+        if att_type == 'MACHINE':
+            att_type = 'TEAM'
 
         processed_photo = process_attendance_photo(request, 'checkin', user.id)
 
         # 1. Check if record already exists for today to prevent duplicates
-        existing = AttendanceRecord.objects.filter(user=user, date=today).first()
+        existing = AttendanceRecord.objects.filter(user=user, date=today).exclude(attendance_type='MACHINE').first()
         if existing:
             existing.status = 'CHECKED_IN'
             if not existing.check_in:
@@ -560,9 +563,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         att_id = request.data.get('attendance_id') or request.data.get('id')
 
         if att_id:
-            record = AttendanceRecord.objects.filter(id=att_id).first()
+            record = AttendanceRecord.objects.filter(id=att_id).exclude(attendance_type='MACHINE').first()
         else:
-            record = AttendanceRecord.objects.filter(user=user, date=today).order_by('-created_at').first()
+            record = AttendanceRecord.objects.filter(user=user, date=today).exclude(attendance_type='MACHINE').order_by('-created_at').first()
 
         if not record or not (record.check_in or record.status in ['CHECKED_IN', 'PRESENT', 'HALF_DAY']):
             return error_response(message="Cannot check out without a valid check-in record for today.", status_code=status.HTTP_400_BAD_REQUEST)
@@ -619,6 +622,20 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
         reporting_mgr = resolve_reporting_manager(target_user, marked_by_user=request.user, vendor=target_vendor)
+
+        existing = AttendanceRecord.objects.filter(user=target_user, date=today).exclude(attendance_type='MACHINE').first()
+        if existing:
+            existing.status = 'CHECKED_IN'
+            if not existing.check_in:
+                existing.check_in = timezone.now()
+            if photo: existing.check_in_photo = photo
+            if lat is not None and str(lat).strip() != '': existing.check_in_latitude = float(lat)
+            if lng is not None and str(lng).strip() != '': existing.check_in_longitude = float(lng)
+            if acc is not None and str(acc).strip() != '': existing.check_in_accuracy = float(acc)
+            existing.updated_by = request.user
+            existing.save()
+            serializer = AttendanceRecordSerializer(existing, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
 
         record = AttendanceRecord.objects.create(
             user=target_user,
@@ -1052,7 +1069,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                         continue
 
                 # Find today's AttendanceRecord from Hero DB for this user
-                rec_qs = AttendanceRecord.objects.filter(date=req_date)
+                rec_qs = AttendanceRecord.objects.filter(date=req_date).exclude(attendance_type='MACHINE')
                 rec = None
                 if ext_u_id:
                     rec = rec_qs.filter(
@@ -1155,7 +1172,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 chassis_val = str(m_info.get('machineNo') or m_info.get('machine_no') or m_info.get('serial_number') or m_info.get('machine_chassis_no') or '').strip()
                 op_name = m_info.get('operator_name') or (m_info.get('operator', {}).get('name') if isinstance(m_info.get('operator'), dict) else '')
 
-                m_rec = AttendanceRecord.objects.filter(date=req_date).filter(
+                m_rec = AttendanceRecord.objects.filter(date=req_date, attendance_type='MACHINE').filter(
                     Q(machine_id=str(mac_id)) | Q(machine_chassis_no=chassis_val)
                 ).first()
 
@@ -1241,24 +1258,27 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY'] and not check_in_val:
                 check_in_val = timezone.now()
 
-            record, created = AttendanceRecord.objects.get_or_create(
-                user=target_user,
-                date=req_date,
-                defaults={
-                    'vendor': target_vendor,
-                    'reporting_manager': reporting_mgr,
-                    'status': st_val,
-                    'notes': notes_val,
-                    'check_in': check_in_val,
-                    'check_out': check_out_val,
-                    'check_in_latitude': f_lat,
-                    'check_in_longitude': f_lng,
-                    'check_in_accuracy': f_acc,
-                    'location_source': loc_source,
-                    'marked_by': request.user,
-                    'updated_by': request.user
-                }
-            )
+            record = AttendanceRecord.objects.filter(user=target_user, date=req_date).exclude(attendance_type='MACHINE').first()
+            created = False
+            if not record:
+                record = AttendanceRecord.objects.create(
+                    user=target_user,
+                    date=req_date,
+                    attendance_type='TEAM',
+                    vendor=target_vendor,
+                    reporting_manager=reporting_mgr,
+                    status=st_val,
+                    notes=notes_val,
+                    check_in=check_in_val,
+                    check_out=check_out_val,
+                    check_in_latitude=f_lat,
+                    check_in_longitude=f_lng,
+                    check_in_accuracy=f_acc,
+                    location_source=loc_source,
+                    marked_by=request.user,
+                    updated_by=request.user
+                )
+                created = True
 
             if not created:
                 record.status = st_val
@@ -1289,7 +1309,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         import csv
         from django.http import HttpResponse
 
-        qs = self.get_queryset()
+        qs = self.get_queryset().exclude(attendance_type='MACHINE')
         req_date = request.query_params.get('date') or str(timezone.localdate())
         
         response = HttpResponse(content_type='text/csv')

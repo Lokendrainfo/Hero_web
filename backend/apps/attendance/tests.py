@@ -200,3 +200,33 @@ class AttendanceApprovalWorkflowTestCase(TestCase):
         notif = Notification.objects.filter(user=self.lokendra).first()
         self.assertIsNotNone(notif)
         self.assertIn("Attendance Rejected", notif.title)
+
+    def test_team_and_machine_attendance_isolation(self):
+        """Verify machine check-in does not affect human user status or team counters."""
+        # 1. Lokendra performs machine check-in
+        res_mac = self.client_lokendra.post('/api/v1/attendance/machine-check-in/', {
+            'machine_id': 'MAC-101',
+            'machine_chassis_no': 'CHASSIS-101',
+            'latitude': 28.6139,
+            'longitude': 77.2090
+        })
+        self.assertEqual(res_mac.status_code, status.HTTP_201_CREATED)
+
+        # 2. Check today's personal attendance for Lokendra - must be None / NOT marked as checked in yet
+        res_today = self.client_lokendra.get('/api/v1/attendance/today/')
+        self.assertEqual(res_today.status_code, status.HTTP_200_OK)
+        self.assertIsNone(res_today.data)
+
+        # 3. Lokendra performs human check-in
+        res_human = self.client_lokendra.post('/api/v1/attendance/check-in/', {
+            'latitude': 28.6139,
+            'longitude': 77.2090
+        })
+        self.assertEqual(res_human.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res_human.data['data']['attendance_type'], 'TEAM')
+
+        # 4. Verify machine record is distinct from human record
+        mac_rec = AttendanceRecord.objects.get(attendance_type='MACHINE', machine_id='MAC-101')
+        human_rec = AttendanceRecord.objects.get(attendance_type='TEAM', user=self.lokendra)
+        self.assertNotEqual(mac_rec.id, human_rec.id)
+

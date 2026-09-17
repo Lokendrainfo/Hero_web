@@ -249,7 +249,7 @@ class DashboardSummaryView(APIView):
 
         target_vendors = list(v_qs)
         today_date_str = today.strftime('%Y-%m-%d')
-        today_recs = list(AttendanceRecord.objects.filter(date=today_date_str))
+        today_recs = list(AttendanceRecord.objects.filter(date=today_date_str).exclude(attendance_type='MACHINE'))
 
         total_team_members = 0
         present_count = 0
