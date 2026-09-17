@@ -1029,7 +1029,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         }
 
         for v_obj in target_vendors:
-            ext_v_id = v_obj.external_vendor_id or v_obj.id
+            ext_v_id = str(v_obj.external_vendor_id or v_obj.id).strip()
             live_res = None
             try:
                 live_res = client.get_vendor_by_id(ext_v_id)

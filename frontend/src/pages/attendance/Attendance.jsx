@@ -307,7 +307,7 @@ export const Attendance = () => {
     const seenMemberKeys = new Set();
     teamMembers.forEach(m => {
       if (!m) return;
-      const memKey = String(m.employee_id || m.user_id || `${m.user_name}_${m.phone_number}_${m.role}` || '').trim().toLowerCase();
+      const memKey = `${m.vendor_name || ''}_${m.user_id || m.employee_id || ''}_${m.user_name || ''}_${m.phone_number || ''}`.trim().toLowerCase();
       if (memKey && seenMemberKeys.has(memKey)) return;
       if (memKey) seenMemberKeys.add(memKey);
 
@@ -1021,9 +1021,11 @@ export const Attendance = () => {
             )}
 
             {groupedVendorTeams
-              .filter(teamGroup => selectedVendorFilter === 'ALL' || selectedVendorFilter.toLowerCase() === teamGroup.vendorName.toLowerCase())
+              .filter(teamGroup => selectedVendorFilter === 'ALL' || selectedVendorFilter.trim().toLowerCase() === teamGroup.vendorName.trim().toLowerCase())
               .map(teamGroup => {
-                const isExpanded = !!expandedVendors[teamGroup.vendorName] || (selectedVendorFilter !== 'ALL');
+                const isExpanded = expandedVendors[teamGroup.vendorName] !== undefined
+                  ? !!expandedVendors[teamGroup.vendorName]
+                  : true;
                 return (
                   <div key={teamGroup.vendorName} className="app-card" style={{ background: '#ffffff', borderRadius: '14px', border: '1px solid #e2e8f0', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
 
