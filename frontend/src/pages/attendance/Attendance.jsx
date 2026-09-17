@@ -19,7 +19,7 @@ import { getTodayDateString, getLocalDateString } from '../../utils/dateUtils';
 
 export const Attendance = () => {
   const { user, isAdmin, vendors, selectedVendorId, roles } = useAuth();
-  const isVendorUser = !isAdmin && (roles || []).some(r => String(r || '').toUpperCase().includes('VENDOR'));
+  const isVendorUser = !isAdmin && (user?.role === 'VENDOR' || String(user?.role || '').toUpperCase().includes('VENDOR') || (roles || []).some(r => String(r || '').toUpperCase().includes('VENDOR')));
   const { showToast } = useToast();
 
   const [activeTab, setActiveTab] = useState('daily'); // 'daily' | 'history' | 'pending_approvals'
@@ -410,20 +410,24 @@ export const Attendance = () => {
     const params = {
       date_from: historyDateFrom,
       date_to: historyDateTo,
-      page_size: 200
+      page_size: 200,
+      size: 200
     };
     if (historySearch.trim()) params.search = historySearch.trim();
     if (historyStatus !== 'ALL') params.status = historyStatus;
+    if (selectedVendorFilter && selectedVendorFilter !== 'ALL') {
+      params.vendor = selectedVendorFilter;
+    }
 
     attendanceService.getHistory(params)
       .then(res => {
-        const payload = res.data?.data || res.data || {};
+        const payload = res?.data?.data || res?.data || res || {};
         const list = payload.results || (Array.isArray(payload) ? payload : []);
         setHistoryRecords(Array.isArray(list) ? list : []);
       })
       .catch(console.error)
       .finally(() => setHistoryLoading(false));
-  }, [historyDateFrom, historyDateTo, historySearch, historyStatus]);
+  }, [historyDateFrom, historyDateTo, historySearch, historyStatus, selectedVendorFilter]);
 
   useEffect(() => {
     if (activeTab === 'history') {
@@ -436,7 +440,7 @@ export const Attendance = () => {
     setPendingLoading(true);
     attendanceService.getPendingApprovals({ size: 100 })
       .then(res => {
-        const payload = res.data?.data || res.data || {};
+        const payload = res?.data?.data || res?.data || res || {};
         const list = payload.results || (Array.isArray(payload) ? payload : []);
         setPendingRecords(Array.isArray(list) ? list : []);
       })

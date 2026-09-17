@@ -113,6 +113,9 @@ class IlyncClient:
     def get_task_by_id(self, task_id):
         return self.get(f"api/tasks/{task_id}")
 
+    def get_tasks_by_vendor(self, external_vendor_id):
+        return self.get(f"api/tasks/by-vendor/{external_vendor_id}")
+
     def get_task_detail(self, task_id):
         return self.get_task_by_id(task_id)
 
