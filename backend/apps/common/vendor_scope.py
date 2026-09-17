@@ -11,6 +11,8 @@ def get_user_vendor_ids(user, resolve_fallback=True):
         return None
     
     user_roles = [str(r).upper() for r in user.get_role_list()] if hasattr(user, 'get_role_list') else []
+    if getattr(user, 'role', None):
+        user_roles.append(str(user.role).upper())
     
     # Check if user has ADMIN or GIS role or superuser status
     if user.is_superuser or 'ADMIN' in user_roles or any('GIS' in r for r in user_roles):
@@ -30,7 +32,7 @@ def get_user_vendor_ids(user, resolve_fallback=True):
 
     # Fallback: if vendor_ids is empty, try resolving vendor via get_user_vendor
     if not vendor_ids and resolve_fallback:
-        v_obj = get_user_vendor(user, resolve_fallback=False)
+        v_obj = get_user_vendor(user, resolve_fallback=True)
         if v_obj and v_obj.id and v_obj.id not in vendor_ids:
             vendor_ids.append(v_obj.id)
 
@@ -45,7 +47,7 @@ def get_user_vendor_ids(user, resolve_fallback=True):
 
 def get_user_vendor(user, resolve_fallback=True):
     """
-    Resolves authenticated user's vendor record by calling iLync API (/api/vendor/user/{userId})
+    Resolves authenticated user's vendor record by checking direct assignment, calling iLync API (/api/vendor/user/{userId}),
     or resolving direct vendor assignment / HeroVendorAssignment.
     Returns Vendor DB object or None.
     """
@@ -56,12 +58,28 @@ def get_user_vendor(user, resolve_fallback=True):
         return user.vendor
 
     from apps.vendors.models import Vendor, HeroVendorAssignment
+
+    # 1. Direct DB HeroVendorAssignment check
+    assignment = user.hero_vendor_assignments.filter(is_active=True, vendor__is_active=True).first()
+    if assignment and assignment.vendor:
+        user.vendor = assignment.vendor
+        try:
+            user.save(update_fields=['vendor'])
+        except Exception:
+            pass
+        return assignment.vendor
+
     ext_ids = []
     if getattr(user, 'external_user_id', None):
         ext_ids.append(user.external_user_id)
-    ext_ids.append(str(user.id))
+    if getattr(user, 'id', None):
+        ext_ids.append(str(user.id))
     if getattr(user, 'username', None):
         ext_ids.append(user.username)
+    if getattr(user, 'email', None):
+        ext_ids.append(user.email)
+    if getattr(user, 'phone_number', None):
+        ext_ids.append(user.phone_number)
 
     for uid in ext_ids:
         try:
@@ -70,7 +88,7 @@ def get_user_vendor(user, resolve_fallback=True):
             if res and res.get('success') and res.get('data'):
                 v_data = res.get('data', {})
                 ext_v_id = v_data.get('id')
-                v_name = v_data.get('partnerName')
+                v_name = v_data.get('partnerName') or v_data.get('name')
                 if ext_v_id:
                     v_obj = Vendor.objects.filter(external_vendor_id=ext_v_id).first()
                     if not v_obj and v_name:
@@ -88,10 +106,56 @@ def get_user_vendor(user, resolve_fallback=True):
         except Exception:
             pass
 
-    # Direct DB query fallback to prevent infinite recursion
-    assignment = user.hero_vendor_assignments.filter(is_active=True, vendor__is_active=True).first()
-    if assignment:
-        return assignment.vendor
+    if resolve_fallback:
+        # 2. Check if username / email / first_name matches any Vendor name/code in DB
+        u_name = str(getattr(user, 'username', '') or '').strip()
+        u_first = str(getattr(user, 'first_name', '') or '').strip()
+        u_email = str(getattr(user, 'email', '') or '').strip()
+        
+        for search_term in [u_name, u_first, u_email]:
+            if search_term and len(search_term) >= 3:
+                v_db = Vendor.objects.filter(name__icontains=search_term).first()
+                if v_db:
+                    user.vendor = v_db
+                    user.save(update_fields=['vendor'])
+                    HeroVendorAssignment.objects.get_or_create(user=user, vendor=v_db, defaults={'is_active': True})
+                    return v_db
+
+        # 3. Live vendor users list matching fallback
+        try:
+            from apps.integrations.ilync_client import IlyncClient
+            client = IlyncClient()
+            active_vendors = Vendor.objects.filter(is_active=True, external_vendor_id__isnull=False).exclude(external_vendor_id='')
+            for v_cand in active_vendors:
+                try:
+                    res = client.get_vendor_by_id(v_cand.external_vendor_id)
+                    if res and res.get('success') and isinstance(res.get('data'), dict):
+                        users_list = res.get('data', {}).get('users', []) or []
+                        for u_entry in users_list:
+                            if not isinstance(u_entry, dict):
+                                continue
+                            u_ext = str(u_entry.get('userId') or u_entry.get('id') or '').strip()
+                            u_em = str(u_entry.get('email') or '').strip().lower()
+                            u_ph = str(u_entry.get('mobile') or u_entry.get('phone') or '').strip()
+                            
+                            user_ext = str(getattr(user, 'external_user_id', '') or '').strip()
+                            user_em = str(getattr(user, 'email', '') or '').strip().lower()
+                            user_ph = str(getattr(user, 'phone_number', '') or getattr(user, 'username', '') or '').strip()
+
+                            match = False
+                            if user_ext and u_ext and user_ext == u_ext: match = True
+                            elif user_em and u_em and user_em == u_em: match = True
+                            elif user_ph and u_ph and user_ph == u_ph: match = True
+
+                            if match:
+                                user.vendor = v_cand
+                                user.save(update_fields=['vendor'])
+                                HeroVendorAssignment.objects.get_or_create(user=user, vendor=v_cand, defaults={'is_active': True})
+                                return v_cand
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     return None
 
@@ -163,7 +227,7 @@ def get_user_authorized_machines(user, request=None):
                 machines_data = []
 
         for m in machines_data:
-            for key in ['machineNo', 'name', 'code', 'engineNo', 'id']:
+            for key in ['machineNo', 'name', 'engineNo', 'id', 'hddHeroId']:
                 val = m.get(key)
                 if val:
                     all_identifiers.add(normalize_machine_identifier(val))
@@ -173,24 +237,30 @@ def get_user_authorized_machines(user, request=None):
     matched_ids = []
 
     for m_obj in all_machines:
-        # Check if Machine DB record is linked directly via vendor FK
-        if m_obj.vendor_id in allowed_vendor_ids:
-            matched_ids.append(m_obj.id)
-            continue
-
-        # Otherwise match normalized chassis / serial / engine / model / name
         chassis_norm = normalize_machine_identifier(m_obj.machine_chassis_no)
         serial_norm = normalize_machine_identifier(m_obj.serial_number)
         engine_norm = normalize_machine_identifier(m_obj.engine_no)
+        id_norm = normalize_machine_identifier(str(m_obj.id))
+        name_norm = normalize_machine_identifier(m_obj.name)
 
-        if (chassis_norm and chassis_norm in all_identifiers) or \
-           (serial_norm and serial_norm in all_identifiers) or \
-           (engine_norm and engine_norm in all_identifiers):
+        is_assigned_in_ilync = (
+            (chassis_norm and chassis_norm in all_identifiers) or
+            (serial_norm and serial_norm in all_identifiers) or
+            (engine_norm and engine_norm in all_identifiers) or
+            (id_norm and id_norm in all_identifiers) or
+            (name_norm and name_norm in all_identifiers)
+        )
+
+        if is_assigned_in_ilync:
             # Update vendor FK link dynamically
             first_v_id = allowed_vendor_ids[0]
-            m_obj.vendor_id = first_v_id
-            m_obj.save(update_fields=['vendor_id'])
+            if m_obj.vendor_id != first_v_id:
+                m_obj.vendor_id = first_v_id
+                m_obj.save(update_fields=['vendor_id'])
             matched_ids.append(m_obj.id)
+        elif m_obj.vendor_id in allowed_vendor_ids:
+            if not all_identifiers:
+                matched_ids.append(m_obj.id)
 
     return Machine.objects.filter(id__in=matched_ids).order_by('id')
 

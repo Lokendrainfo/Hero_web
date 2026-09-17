@@ -12,6 +12,11 @@ class IsVendorAuthorized(permissions.BasePermission):
         allowed_ids = get_user_vendor_ids(request.user)
         if allowed_ids is None:
             return True
+        user_roles = [str(r).upper() for r in request.user.get_role_list()] if hasattr(request.user, 'get_role_list') else []
+        if getattr(request.user, 'role', None):
+            user_roles.append(str(request.user.role).upper())
+        if any('VENDOR' in r for r in user_roles):
+            return True
         return bool(allowed_ids)
 
     def has_object_permission(self, request, view, obj):

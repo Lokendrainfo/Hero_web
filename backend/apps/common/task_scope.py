@@ -51,36 +51,91 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         req_task_type = None
 
     client = IlyncClient(request=request)
-    raw_data = client.get_my_tasks(task_type=req_task_type, page=page, size=size, params=extra_params)
-    
-    # Extract base task list and pagination metadata
+
+    # Identify target external_vendor_id(s) to fetch tasks specifically by vendor
+    target_ext_vids = []
+    allowed_v_ids = get_user_vendor_ids(user) if user and user.is_authenticated else None
+
+    if allowed_v_ids is not None and len(allowed_v_ids) > 0:
+        for v_db_id in allowed_v_ids:
+            v_obj = Vendor.objects.filter(id=v_db_id).first()
+            if v_obj and v_obj.external_vendor_id:
+                target_ext_vids.append(v_obj.external_vendor_id)
+            elif v_obj:
+                try:
+                    resolved_v = get_user_vendor(user)
+                    if resolved_v and resolved_v.external_vendor_id:
+                        target_ext_vids.append(resolved_v.external_vendor_id)
+                except Exception:
+                    pass
+    elif req_vendor and str(req_vendor).strip() and str(req_vendor).lower() not in ['all', 'undefined', 'null', 'none']:
+        val_str = str(req_vendor).strip()
+        v_obj = Vendor.objects.filter(id=int(val_str)).first() if val_str.isdigit() else Vendor.objects.filter(external_vendor_id=val_str).first() or Vendor.objects.filter(name__icontains=val_str).first()
+        if v_obj and v_obj.external_vendor_id:
+            target_ext_vids.append(v_obj.external_vendor_id)
+        elif not val_str.isdigit():
+            target_ext_vids.append(val_str)
+
     base_content = []
     total_elements = None
     total_pages = None
     current_page = page
     page_size = size
 
-    if isinstance(raw_data, dict):
-        data_field = raw_data.get("data")
-        if isinstance(data_field, dict):
-            base_content = data_field.get("content") or data_field.get("results") or []
-            total_elements = data_field.get("totalElements") if "totalElements" in data_field else data_field.get("total")
-            total_pages = data_field.get("totalPages") if "totalPages" in data_field else data_field.get("total_pages")
-            current_page = data_field.get("currentPage") if "currentPage" in data_field else data_field.get("page", page)
-            page_size = data_field.get("pageSize") if "pageSize" in data_field else data_field.get("size", size)
-        elif isinstance(data_field, list):
-            base_content = data_field
-        elif "results" in raw_data and isinstance(raw_data["results"], list):
-            base_content = raw_data["results"]
-            total_elements = raw_data.get("total") or raw_data.get("totalElements")
-            total_pages = raw_data.get("total_pages") or raw_data.get("totalPages")
-        elif "content" in raw_data and isinstance(raw_data["content"], list):
-            base_content = raw_data["content"]
-            total_elements = raw_data.get("totalElements") or raw_data.get("total")
-            total_pages = raw_data.get("totalPages") or raw_data.get("total_pages")
-            
-    if not isinstance(base_content, list):
-        base_content = []
+    if target_ext_vids:
+        all_vendor_tasks = []
+        seen_t_ids = set()
+        for ext_v_id in set(target_ext_vids):
+            try:
+                res = client.get_tasks_by_vendor(ext_v_id)
+                t_items = res.get('data', []) if isinstance(res, dict) else (res if isinstance(res, list) else [])
+                if isinstance(t_items, list):
+                    for item in t_items:
+                        if isinstance(item, dict):
+                            t_id = item.get('id') or item.get('taskCode')
+                            if t_id and t_id not in seen_t_ids:
+                                seen_t_ids.add(t_id)
+                                if not item.get('vendorId'):
+                                    item['vendorId'] = ext_v_id
+                                all_vendor_tasks.append(item)
+            except Exception as e:
+                pass
+
+        if req_task_type:
+            base_content = [
+                t for t in all_vendor_tasks
+                if str(t.get('taskType') or t.get('task_type') or '').upper() == str(req_task_type).upper()
+            ]
+        else:
+            base_content = all_vendor_tasks
+
+        total_elements = len(base_content)
+        total_pages = 1 if total_elements > 0 else 0
+    else:
+        raw_data = client.get_my_tasks(task_type=req_task_type, page=page, size=size, params=extra_params)
+        
+        # Extract base task list and pagination metadata
+        if isinstance(raw_data, dict):
+            data_field = raw_data.get("data")
+            if isinstance(data_field, dict):
+                base_content = data_field.get("content") or data_field.get("results") or []
+                total_elements = data_field.get("totalElements") if "totalElements" in data_field else data_field.get("total")
+                total_pages = data_field.get("totalPages") if "totalPages" in data_field else data_field.get("total_pages")
+                current_page = data_field.get("currentPage") if "currentPage" in data_field else data_field.get("page", page)
+                page_size = data_field.get("pageSize") if "pageSize" in data_field else data_field.get("size", size)
+            elif isinstance(data_field, list):
+                base_content = data_field
+            elif "results" in raw_data and isinstance(raw_data["results"], list):
+                base_content = raw_data["results"]
+                total_elements = raw_data.get("total") or raw_data.get("totalElements")
+                total_pages = raw_data.get("total_pages") or raw_data.get("totalPages")
+            elif "content" in raw_data and isinstance(raw_data["content"], list):
+                base_content = raw_data["content"]
+                total_elements = raw_data.get("totalElements") or raw_data.get("total")
+                total_pages = raw_data.get("totalPages") or raw_data.get("total_pages")
+                
+        if not isinstance(base_content, list):
+            base_content = []
 
     # Parallel fetch child task hierarchy (Levels 1 & 2)
     def fetch_children_batch(tasks_list):

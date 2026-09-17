@@ -194,6 +194,13 @@ class UserViewSet(viewsets.ModelViewSet):
                 user.role = role_objs.first().name
 
         user.save()
+
+        # If updated role is VENDOR, immediately resolve vendor assignment
+        user_roles = [str(r).upper() for r in user.get_role_list()]
+        if 'VENDOR' in user_roles or (user.role and 'VENDOR' in str(user.role).upper()):
+            from apps.common.vendor_scope import get_user_vendor
+            get_user_vendor(user, resolve_fallback=True)
+
         return success_response(
             data=UserSerializer(user).data,
             message=f"User {user.username} role updated successfully to {user.get_role_list()}"

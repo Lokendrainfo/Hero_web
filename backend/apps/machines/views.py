@@ -173,13 +173,7 @@ class MachineViewSet(viewsets.ModelViewSet):
             except Exception as e:
                 pass
 
-        allowed_vendor_ids = get_user_vendor_ids(user)
-        if allowed_vendor_ids is None:
-            machines = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
-        elif not allowed_vendor_ids:
-            machines = Machine.objects.none()
-        else:
-            machines = Machine.objects.filter(vendor_id__in=allowed_vendor_ids).order_by('id')
+        machines = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
 
         results = []
         for m in machines:

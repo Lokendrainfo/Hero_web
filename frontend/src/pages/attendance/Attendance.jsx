@@ -19,7 +19,7 @@ import { getTodayDateString, getLocalDateString } from '../../utils/dateUtils';
 
 export const Attendance = () => {
   const { user, isAdmin, vendors, selectedVendorId, roles } = useAuth();
-  const isVendorUser = !isAdmin && (roles || []).some(r => String(r || '').toUpperCase().includes('VENDOR'));
+  const isVendorUser = !isAdmin && (user?.role === 'VENDOR' || String(user?.role || '').toUpperCase().includes('VENDOR') || (roles || []).some(r => String(r || '').toUpperCase().includes('VENDOR')));
   const { showToast } = useToast();
 
   const [activeTab, setActiveTab] = useState('daily'); // 'daily' | 'history' | 'pending_approvals'
