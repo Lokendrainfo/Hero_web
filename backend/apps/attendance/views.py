@@ -302,9 +302,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         allowed_vendor_ids = get_user_vendor_ids(user)
 
         if allowed_vendor_ids is None:
-            qs = AttendanceRecord.objects.filter(
-                Q(user__vendor__isnull=False) | Q(user__hero_vendor_assignments__isnull=False)
-            ).exclude(
+            qs = AttendanceRecord.objects.all().exclude(
                 Q(user__is_superuser=True) | Q(user__role__iexact='ADMIN') | Q(user__roles__name__iexact='ADMIN')
             ).distinct().select_related('user', 'vendor', 'marked_by', 'updated_by', 'approved_by', 'marked_for_user')
         elif not allowed_vendor_ids:
@@ -850,7 +848,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='history')
     def attendance_history(self, request):
         page = int(request.query_params.get('page', 0))
-        size = int(request.query_params.get('size', 20))
+        size = int(request.query_params.get('size') or request.query_params.get('page_size') or 200)
         status_param = request.query_params.get('status')
 
         qs = self.get_queryset()

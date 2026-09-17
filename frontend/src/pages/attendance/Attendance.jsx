@@ -410,10 +410,14 @@ export const Attendance = () => {
     const params = {
       date_from: historyDateFrom,
       date_to: historyDateTo,
-      page_size: 200
+      page_size: 200,
+      size: 200
     };
     if (historySearch.trim()) params.search = historySearch.trim();
     if (historyStatus !== 'ALL') params.status = historyStatus;
+    if (selectedVendorFilter && selectedVendorFilter !== 'ALL') {
+      params.vendor = selectedVendorFilter;
+    }
 
     attendanceService.getHistory(params)
       .then(res => {
@@ -423,7 +427,7 @@ export const Attendance = () => {
       })
       .catch(console.error)
       .finally(() => setHistoryLoading(false));
-  }, [historyDateFrom, historyDateTo, historySearch, historyStatus]);
+  }, [historyDateFrom, historyDateTo, historySearch, historyStatus, selectedVendorFilter]);
 
   useEffect(() => {
     if (activeTab === 'history') {
