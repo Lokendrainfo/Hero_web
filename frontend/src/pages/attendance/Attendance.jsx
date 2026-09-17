@@ -421,7 +421,7 @@ export const Attendance = () => {
 
     attendanceService.getHistory(params)
       .then(res => {
-        const payload = res.data?.data || res.data || {};
+        const payload = res?.data?.data || res?.data || res || {};
         const list = payload.results || (Array.isArray(payload) ? payload : []);
         setHistoryRecords(Array.isArray(list) ? list : []);
       })
@@ -440,7 +440,7 @@ export const Attendance = () => {
     setPendingLoading(true);
     attendanceService.getPendingApprovals({ size: 100 })
       .then(res => {
-        const payload = res.data?.data || res.data || {};
+        const payload = res?.data?.data || res?.data || res || {};
         const list = payload.results || (Array.isArray(payload) ? payload : []);
         setPendingRecords(Array.isArray(list) ? list : []);
       })
