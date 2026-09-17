@@ -1119,6 +1119,35 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 check_in_photo_url = build_secure_media_url(request, rec.check_in_photo) if rec else None
                 check_out_photo_url = build_secure_media_url(request, rec.check_out_photo) if rec else None
 
+                def extract_geo(data_dict, keys):
+                    if not isinstance(data_dict, dict):
+                        return ''
+                    for k in keys:
+                        val = data_dict.get(k)
+                        if not val:
+                            continue
+                        if isinstance(val, list) and len(val) > 0:
+                            first = val[0]
+                            if isinstance(first, dict):
+                                s = str(first.get('name') or first.get('code') or '').strip()
+                            else:
+                                s = str(first).strip()
+                            if s and s.upper() not in ('NONE', 'NULL', 'UNDEFINED'):
+                                return s
+                        elif isinstance(val, dict):
+                            s = str(val.get('name') or val.get('code') or '').strip()
+                            if s and s.upper() not in ('NONE', 'NULL', 'UNDEFINED'):
+                                return s
+                        elif isinstance(val, str) and val.strip():
+                            s = val.strip()
+                            if s and s.upper() not in ('NONE', 'NULL', 'UNDEFINED'):
+                                return s
+                    return ''
+
+                u_circle = extract_geo(u_info, ['circle', 'circleName', 'circles', 'circle_name', 'state'])
+                u_district = extract_geo(u_info, ['district', 'districtName', 'districts', 'district_name', 'city'])
+                u_block = extract_geo(u_info, ['block', 'blockName', 'blocks', 'block_name', 'tehsil'])
+
                 effective_user_id = ext_u_id or (matched_user.id if matched_user else f"ILYNC-{name.replace(' ', '_')}_{mobile}")
 
                 check_in_dt = (rec.check_in or rec.created_at) if (rec and rec.status in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT', 'HALF_DAY']) else None
@@ -1131,6 +1160,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'phone_number': mobile,
                     'email': email,
                     'role': u_role,
+                    'circle': u_circle or (matched_user.selected_circle.name if (matched_user and getattr(matched_user, 'selected_circle', None)) else ''),
+                    'district': u_district or (matched_user.selected_district.name if (matched_user and getattr(matched_user, 'selected_district', None)) else ''),
+                    'block': u_block or (matched_user.selected_block.name if (matched_user and getattr(matched_user, 'selected_block', None)) else ''),
                     'vendor_name': v_obj.name,
                     'vendor_id': v_obj.id,
                     'is_active': True,
@@ -1304,43 +1336,435 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='export-report')
     def export_report(self, request):
-        import csv
+        import openpyxl
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
         from django.http import HttpResponse
 
-        qs = self.get_queryset().exclude(attendance_type='MACHINE')
         req_date = request.query_params.get('date') or str(timezone.localdate())
-        
-        response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = f'attachment; filename="Attendance_Report_{req_date}.csv"'
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+        req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
+        role_filter = request.query_params.get('role')
+        status_filter = request.query_params.get('status')
+        search_filter = request.query_params.get('search')
 
-        writer = csv.writer(response)
-        writer.writerow([
-            'Attendance ID', 'Employee ID', 'User Name', 'Phone Number', 'Role',
-            'Vendor Name', 'Date', 'Status', 'Approval Status', 'Check In Time',
-            'Check Out Time', 'Check In Latitude', 'Check In Longitude', 'Check In Accuracy',
-            'Check In Photo Status', 'Total Working Hours', 'Notes'
-        ])
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Attendance Report"
 
-        for rec in qs:
-            u = rec.user
-            writer.writerow([
-                rec.id,
-                u.employee_id or u.external_user_id or f"EMP-{u.id}",
-                u.get_full_name() or u.username,
-                u.phone_number or '',
-                u.get_role_list()[0] if u.get_role_list() else (u.role or 'OPERATOR'),
-                rec.vendor.name if rec.vendor else (u.vendor.name if u.vendor else ''),
-                rec.date,
-                rec.status,
-                rec.approval_status,
-                timezone.localtime(rec.check_in).strftime('%Y-%m-%d %H:%M:%S') if rec.check_in else '',
-                timezone.localtime(rec.check_out).strftime('%Y-%m-%d %H:%M:%S') if rec.check_out else '',
-                str(rec.check_in_latitude) if rec.check_in_latitude else '',
-                str(rec.check_in_longitude) if rec.check_in_longitude else '',
-                str(rec.check_in_accuracy) if rec.check_in_accuracy else '',
-                'Available' if rec.check_in_photo else 'No Photo',
-                rec.total_working_hours or '',
-                rec.notes or ''
-            ])
+        headers = [
+            'SR No', 'Employee ID', 'Name', 'Role', 'Contact No',
+            'Date', 'Circle', 'District', 'Block', 'Check In',
+            'Check Out', 'Latitute', 'Longitute', 'RM', 'Remarks / Notes'
+        ]
 
+        ws.append(headers)
+
+        # Style header row
+        header_font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+        header_fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
+        header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_align
+
+        ws.row_dimensions[1].height = 28
+
+        def clean_val(val):
+            if val is None:
+                return ''
+            s = str(val).strip()
+            if s.upper() in ('NONE', 'NULL', 'UNDEFINED', 'NAN'):
+                return ''
+            return s
+
+        def format_date_str(d_val):
+            if not d_val:
+                return ''
+            if isinstance(d_val, datetime):
+                return d_val.strftime('%d/%m/%Y')
+            d_str = str(d_val).strip()
+            try:
+                dt_obj = datetime.strptime(d_str[:10], '%Y-%m-%d')
+                return dt_obj.strftime('%d/%m/%Y')
+            except Exception:
+                return d_str
+
+        def format_time_str(t_val):
+            if not t_val:
+                return ''
+            if isinstance(t_val, datetime):
+                return timezone.localtime(t_val).strftime('%I:%M %p')
+            t_str = str(t_val).strip()
+            if not t_str or t_str.upper() in ('NONE', 'NULL', 'UNDEFINED', '--:--', 'NAN'):
+                return ''
+            try:
+                if len(t_str) == 5:
+                    dt_obj = datetime.strptime(t_str, '%H:%M')
+                    return dt_obj.strftime('%I:%M %p')
+                elif len(t_str) == 8:
+                    dt_obj = datetime.strptime(t_str, '%H:%M:%S')
+                    return dt_obj.strftime('%I:%M %p')
+            except Exception:
+                pass
+            return t_str
+
+        rows_to_export = []
+        sr_counter = 1
+
+        if date_from or date_to:
+            qs = self.get_queryset().exclude(attendance_type='MACHINE')
+            if date_from:
+                qs = qs.filter(date__gte=date_from)
+            if date_to:
+                qs = qs.filter(date__lte=date_to)
+            if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+                qs = qs.filter(
+                    Q(vendor__external_vendor_id=req_v) |
+                    Q(vendor__name__iexact=req_v) |
+                    Q(vendor_id=req_v if str(req_v).isdigit() else None)
+                )
+            if status_filter and status_filter.upper() != 'ALL':
+                qs = qs.filter(status__iexact=status_filter)
+            if role_filter and role_filter.upper() != 'ALL':
+                qs = qs.filter(
+                    Q(user__role__icontains=role_filter) |
+                    Q(user__roles__name__icontains=role_filter)
+                )
+            if search_filter:
+                sp = search_filter.strip()
+                qs = qs.filter(
+                    Q(user__first_name__icontains=sp) |
+                    Q(user__last_name__icontains=sp) |
+                    Q(user__username__icontains=sp) |
+                    Q(user__phone_number__icontains=sp)
+                )
+
+            records = list(qs.select_related(
+                'user', 'vendor', 'reporting_manager',
+                'user__selected_circle', 'user__selected_district', 'user__selected_block',
+                'user__reporting_manager'
+            ).order_by('date', 'id'))
+
+            for rec in records:
+                u = rec.user
+                if not u:
+                    continue
+                emp_id = clean_val(u.employee_id or u.external_user_id or f"EMP-{u.id}")
+                if not emp_id or emp_id.lower() in ('none', 'null', 'undefined'):
+                    emp_id = u.username or f"EMP-{u.id}"
+
+                name = clean_val(u.get_full_name() or u.username)
+                role = clean_val(u.get_role_list()[0] if u.get_role_list() else (u.role or 'OPERATOR'))
+                contact = clean_val(u.phone_number)
+                date_val = format_date_str(rec.date)
+
+                circle = clean_val(u.selected_circle.name if (u and getattr(u, 'selected_circle', None)) else '')
+                district = clean_val(u.selected_district.name if (u and getattr(u, 'selected_district', None)) else '')
+                block = clean_val(u.selected_block.name if (u and getattr(u, 'selected_block', None)) else '')
+
+                check_in = format_time_str(rec.check_in) if rec.check_in else ''
+                check_out = format_time_str(rec.check_out) if rec.check_out else ''
+                lat = clean_val(rec.check_in_latitude)
+                lng = clean_val(rec.check_in_longitude)
+
+                rm = ''
+                if rec.reporting_manager:
+                    rm = clean_val(rec.reporting_manager.get_full_name() or rec.reporting_manager.username)
+                elif u and u.reporting_manager:
+                    rm = clean_val(u.reporting_manager.get_full_name() or u.reporting_manager.username)
+
+                notes = clean_val(rec.notes)
+
+            if st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY'] and not check_in_val:
+                check_in_val = timezone.now()
+
+            record = AttendanceRecord.objects.filter(user=target_user, date=req_date).exclude(attendance_type='MACHINE').first()
+            created = False
+            if not record:
+                record = AttendanceRecord.objects.create(
+                    user=target_user,
+                    date=req_date,
+                    attendance_type='TEAM',
+                    vendor=target_vendor,
+                    reporting_manager=reporting_mgr,
+                    status=st_val,
+                    notes=notes_val,
+                    check_in=check_in_val,
+                    check_out=check_out_val,
+                    check_in_latitude=f_lat,
+                    check_in_longitude=f_lng,
+                    check_in_accuracy=f_acc,
+                    location_source=loc_source,
+                    marked_by=request.user,
+                    updated_by=request.user
+                )
+                created = True
+
+            if not created:
+                record.status = st_val
+                record.notes = notes_val
+                if check_in_val is not None:
+                    record.check_in = check_in_val
+                elif not record.check_in and st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY']:
+                    record.check_in = timezone.now()
+                if check_out_val is not None:
+                    record.check_out = check_out_val
+                if f_lat is not None: record.check_in_latitude = f_lat
+                if f_lng is not None: record.check_in_longitude = f_lng
+                if f_acc is not None: record.check_in_accuracy = f_acc
+                record.updated_by = request.user
+                if target_vendor and not record.vendor:
+                    record.vendor = target_vendor
+                record.save()
+
+            saved_records.append(record)
+
+        return success_response(
+            data=AttendanceRecordSerializer(saved_records, many=True, context={'request': request}).data,
+            message=f"Successfully updated attendance for {len(saved_records)} team members."
+        )
+
+    @action(detail=False, methods=['get'], url_path='export-report')
+    def export_report(self, request):
+        import openpyxl
+        from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
+        from django.http import HttpResponse
+
+        req_date = request.query_params.get('date') or str(timezone.localdate())
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+        req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
+        role_filter = request.query_params.get('role')
+        status_filter = request.query_params.get('status')
+        search_filter = request.query_params.get('search')
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Attendance Report"
+
+        headers = [
+            'SR No', 'Employee ID', 'Name', 'Role', 'Contact No',
+            'Date', 'Circle', 'District', 'Block', 'Check In',
+            'Check Out', 'Latitute', 'Longitute', 'RM', 'Remarks / Notes'
+        ]
+
+        ws.append(headers)
+
+        # Style header row
+        header_font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+        header_fill = PatternFill(start_color='1F4E78', end_color='1F4E78', fill_type='solid')
+        header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_align
+
+        ws.row_dimensions[1].height = 28
+
+        def clean_val(val):
+            if val is None:
+                return ''
+            s = str(val).strip()
+            if s.upper() in ('NONE', 'NULL', 'UNDEFINED', 'NAN'):
+                return ''
+            return s
+
+        def format_date_str(d_val):
+            if not d_val:
+                return ''
+            if isinstance(d_val, datetime):
+                return d_val.strftime('%d/%m/%Y')
+            d_str = str(d_val).strip()
+            try:
+                dt_obj = datetime.strptime(d_str[:10], '%Y-%m-%d')
+                return dt_obj.strftime('%d/%m/%Y')
+            except Exception:
+                return d_str
+
+        def format_time_str(t_val):
+            if not t_val:
+                return ''
+            if isinstance(t_val, datetime):
+                return timezone.localtime(t_val).strftime('%I:%M %p')
+            t_str = str(t_val).strip()
+            if not t_str or t_str.upper() in ('NONE', 'NULL', 'UNDEFINED', '--:--', 'NAN'):
+                return ''
+            try:
+                if len(t_str) == 5:
+                    dt_obj = datetime.strptime(t_str, '%H:%M')
+                    return dt_obj.strftime('%I:%M %p')
+                elif len(t_str) == 8:
+                    dt_obj = datetime.strptime(t_str, '%H:%M:%S')
+                    return dt_obj.strftime('%I:%M %p')
+            except Exception:
+                pass
+            return t_str
+
+        rows_to_export = []
+        sr_counter = 1
+
+        if date_from or date_to:
+            qs = self.get_queryset().exclude(attendance_type='MACHINE')
+            if date_from:
+                qs = qs.filter(date__gte=date_from)
+            if date_to:
+                qs = qs.filter(date__lte=date_to)
+            if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+                qs = qs.filter(
+                    Q(vendor__external_vendor_id=req_v) |
+                    Q(vendor__name__iexact=req_v) |
+                    Q(vendor_id=req_v if str(req_v).isdigit() else None)
+                )
+            if status_filter and status_filter.upper() != 'ALL':
+                qs = qs.filter(status__iexact=status_filter)
+            if role_filter and role_filter.upper() != 'ALL':
+                qs = qs.filter(
+                    Q(user__role__icontains=role_filter) |
+                    Q(user__roles__name__icontains=role_filter)
+                )
+            if search_filter:
+                sp = search_filter.strip()
+                qs = qs.filter(
+                    Q(user__first_name__icontains=sp) |
+                    Q(user__last_name__icontains=sp) |
+                    Q(user__username__icontains=sp) |
+                    Q(user__phone_number__icontains=sp)
+                )
+
+            records = list(qs.select_related(
+                'user', 'vendor', 'reporting_manager',
+                'user__selected_circle', 'user__selected_district', 'user__selected_block',
+                'user__reporting_manager'
+            ).order_by('date', 'id'))
+
+            for rec in records:
+                u = rec.user
+                if not u:
+                    continue
+                emp_id = clean_val(u.employee_id or u.external_user_id or f"EMP-{u.id}")
+                if not emp_id or emp_id.lower() in ('none', 'null', 'undefined'):
+                    emp_id = u.username or f"EMP-{u.id}"
+
+                name = clean_val(u.get_full_name() or u.username)
+                role = clean_val(u.get_role_list()[0] if u.get_role_list() else (u.role or 'OPERATOR'))
+                contact = clean_val(u.phone_number)
+                date_val = format_date_str(rec.date)
+
+                circle = clean_val(u.selected_circle.name if (u and getattr(u, 'selected_circle', None)) else '')
+                district = clean_val(u.selected_district.name if (u and getattr(u, 'selected_district', None)) else '')
+                block = clean_val(u.selected_block.name if (u and getattr(u, 'selected_block', None)) else '')
+
+                check_in = format_time_str(rec.check_in) if rec.check_in else ''
+                check_out = format_time_str(rec.check_out) if rec.check_out else ''
+                lat = clean_val(rec.check_in_latitude)
+                lng = clean_val(rec.check_in_longitude)
+
+                rm = ''
+                if rec.reporting_manager:
+                    rm = clean_val(rec.reporting_manager.get_full_name() or rec.reporting_manager.username)
+                elif u and u.reporting_manager:
+                    rm = clean_val(u.reporting_manager.get_full_name() or u.reporting_manager.username)
+
+                notes = clean_val(rec.notes)
+
+                rows_to_export.append([
+                    sr_counter, emp_id, name, role, contact,
+                    date_val, circle, district, block, check_in,
+                    check_out, lat, lng, rm, notes
+                ])
+                sr_counter += 1
+        else:
+            res = self.get_team_attendance(request)
+            data_dict = res.data.get('data', {}) if isinstance(res.data, dict) else {}
+            team_members = data_dict.get('team_members', []) or []
+
+            if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+                req_v_str = str(req_v).strip().lower()
+                filtered_members = []
+                for m in team_members:
+                    v_name = str(m.get('vendor_name') or '').strip().lower()
+                    v_id = str(m.get('vendor_id') or '').strip().lower()
+                    if req_v_str == v_name or req_v_str == v_id or req_v_str in v_name or v_name in req_v_str:
+                        filtered_members.append(m)
+                team_members = filtered_members
+
+            for m in team_members:
+                u_id = str(m.get('user_id') or m.get('employee_id') or '').strip()
+                matched_u = resolve_target_user(u_id, request_user=request.user) if u_id else None
+
+                emp_id = clean_val(m.get('employee_id') or m.get('user_id') or '')
+                if not emp_id or emp_id.lower() in ('none', 'null', 'undefined'):
+                    emp_id = clean_val((matched_u.employee_id or matched_u.external_user_id or matched_u.username) if matched_u else u_id)
+
+                name = clean_val(m.get('user_name') or (matched_u.get_full_name() if matched_u else ''))
+                role = clean_val(m.get('role') or (matched_u.get_role_list()[0] if (matched_u and matched_u.get_role_list()) else 'OPERATOR'))
+                contact = clean_val(m.get('phone_number') or (matched_u.phone_number if matched_u else ''))
+                date_val = format_date_str(m.get('date') or req_date)
+
+                circle = clean_val(m.get('circle') or (matched_u.selected_circle.name if (matched_u and getattr(matched_u, 'selected_circle', None)) else ''))
+                district = clean_val(m.get('district') or (matched_u.selected_district.name if (matched_u and getattr(matched_u, 'selected_district', None)) else ''))
+                block = clean_val(m.get('block') or (matched_u.selected_block.name if (matched_u and getattr(matched_u, 'selected_block', None)) else ''))
+
+                check_in = format_time_str(m.get('check_in'))
+                check_out = format_time_str(m.get('check_out'))
+                lat = clean_val(m.get('check_in_latitude'))
+                lng = clean_val(m.get('check_in_longitude'))
+
+                rm = clean_val(m.get('reporting_manager_name') or (matched_u.reporting_manager.get_full_name() if (matched_u and matched_u.reporting_manager) else ''))
+                notes = clean_val(m.get('notes'))
+
+                rows_to_export.append([
+                    sr_counter, emp_id, name, role, contact,
+                    date_val, circle, district, block, check_in,
+                    check_out, lat, lng, rm, notes
+                ])
+                sr_counter += 1
+
+        for row_data in rows_to_export:
+            ws.append(row_data)
+
+        thin_border = Border(
+            left=Side(style='thin', color='D9D9D9'),
+            right=Side(style='thin', color='D9D9D9'),
+            top=Side(style='thin', color='D9D9D9'),
+            bottom=Side(style='thin', color='D9D9D9')
+        )
+        data_font = Font(name='Calibri', size=10)
+
+        for row_idx in range(2, ws.max_row + 1):
+            ws.row_dimensions[row_idx].height = 20
+            for col_idx in range(1, len(headers) + 1):
+                cell = ws.cell(row=row_idx, column=col_idx)
+                cell.font = data_font
+                cell.border = thin_border
+                if col_idx in (1, 6, 10, 11):
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+                elif col_idx in (12, 13):
+                    cell.alignment = Alignment(horizontal='right', vertical='center')
+                else:
+                    cell.alignment = Alignment(horizontal='left', vertical='center')
+
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col:
+                val_str = str(cell.value or '')
+                max_len = max(max_len, len(val_str))
+            ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
+        filename = f"Attendance_Report_{date_from}_to_{date_to}.xlsx" if (date_from and date_to) else f"Attendance_Report_{req_date}.xlsx"
+        response = HttpResponse(
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+        wb.save(response)
         return response

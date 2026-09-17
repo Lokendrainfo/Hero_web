@@ -194,20 +194,40 @@ export const Attendance = () => {
       const params = {};
       if (activeTab === 'daily') {
         params.date = selectedDate;
+        if (roleFilter && roleFilter !== 'ALL') params.role = roleFilter;
+        if (searchQuery && searchQuery.trim()) params.search = searchQuery.trim();
+        if (statusFilter && statusFilter !== 'ALL') params.status = statusFilter;
       } else if (activeTab === 'history') {
         if (historyDateFrom) params.date_from = historyDateFrom;
         if (historyDateTo) params.date_to = historyDateTo;
+        if (historyRoleFilter && historyRoleFilter !== 'ALL') params.role = historyRoleFilter;
+        if (historySearchQuery && historySearchQuery.trim()) params.search = historySearchQuery.trim();
+        if (historyStatusFilter && historyStatusFilter !== 'ALL') params.status = historyStatusFilter;
       }
       if (selectedVendorFilter && selectedVendorFilter !== 'ALL') {
         params.vendor = selectedVendorFilter;
       }
 
-      const res = await attendanceService.exportReport(params);
-      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
+      const responseData = await attendanceService.exportReport(params);
+
+      let blob;
+      if (responseData instanceof Blob) {
+        blob = responseData;
+      } else if (responseData && responseData.data instanceof Blob) {
+        blob = responseData.data;
+      } else {
+        blob = new Blob([responseData], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        });
+      }
+
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      const fileName = `Attendance_Report_${params.date || selectedDate || 'Export'}.csv`;
+      const dateLabel = activeTab === 'history' && (historyDateFrom || historyDateTo)
+        ? `${historyDateFrom || 'Start'}_to_${historyDateTo || 'End'}`
+        : (selectedDate || 'Export');
+      const fileName = `Attendance_Report_${dateLabel}.xlsx`;
       link.setAttribute('download', fileName);
       document.body.appendChild(link);
       link.click();
