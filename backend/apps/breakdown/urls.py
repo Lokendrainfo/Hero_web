@@ -9,12 +9,14 @@ from .views import (
     OpsStopOptionsView,
     OpsStopListCreateView,
     OpsStopCloseView,
+    MachineOpenIssuesView,
 )
 
 router = DefaultRouter()
 router.register(r'', BreakdownViewSet, basename='breakdown')
 
 urlpatterns = [
+    path('open-issues/', MachineOpenIssuesView.as_view(), name='breakdown-open-issues'),
     path('oem/options/', OemBreakdownOptionsView.as_view(), name='breakdown-oem-options'),
     path('oem/close/', OemBreakdownCloseView.as_view(), name='breakdown-oem-close'),
     path('oem/', OemBreakdownListCreateView.as_view(), name='breakdown-oem'),

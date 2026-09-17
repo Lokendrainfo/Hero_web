@@ -871,6 +871,114 @@ textarea:focus {
   font-weight: 600;
 }
 
+/* Embedded team attendance (dashboard) — matches Fuel / Lead machine panels */
+.att-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.att-scope-summary {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.att-scope-summary-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.att-scope-summary-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.att-scope-summary-value span {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.att-scope-summary-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding-bottom: 2px;
+  white-space: nowrap;
+}
+
+.att-scope-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--border-strong, var(--border));
+}
+
+.att-scope-progress {
+  margin-bottom: 4px;
+}
+
+.att-scope-list {
+  margin-top: 4px;
+}
+
+.att-scope-row {
+  align-items: flex-start;
+  padding: 9px 0;
+}
+
+.att-scope-row.is-empty {
+  opacity: 0.45;
+}
+
+.att-scope-name {
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.att-scope-stats {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  text-align: right;
+}
+
+.att-scope-stats strong {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.att-scope-of {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.att-scope-stats em {
+  font-style: normal;
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
 /* Filters */
 
 .filter-row {
@@ -1212,6 +1320,8 @@ textarea:focus {
   height: 100%;
   background: var(--accent);
   border-radius: 0;
+  transform-origin: left center;
+  transition: width 0.55s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .map-frame {

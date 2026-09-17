@@ -31,12 +31,10 @@ class MachineViewSet(viewsets.ModelViewSet):
                 Q(name__icontains=search)
             )
 
-        # Status Filter
+        # Status Filter (COMMISSIONED = vendor-assigned; applied in list())
         status_param = self.request.query_params.get('status', '').strip()
-        if status_param and status_param.upper() != 'ALL':
-            if status_param.upper() == 'COMMISSIONED':
-                qs = qs.filter(is_commissioned=True)
-            elif status_param.upper() == 'LIVE':
+        if status_param and status_param.upper() not in ('ALL', 'COMMISSIONED'):
+            if status_param.upper() == 'LIVE':
                 qs = qs.filter(is_online=True)
             elif status_param.upper() == 'OFFLINE':
                 qs = qs.filter(is_online=False)
@@ -52,70 +50,96 @@ class MachineViewSet(viewsets.ModelViewSet):
             try:
                 from .services import sync_fiberforce_machines
                 sync_fiberforce_machines()
-            except Exception as e:
+            except Exception:
                 pass
 
         base_qs = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
 
-        # Determine vendor assigned count & empty state code for non-admin users
-        from apps.common.vendor_scope import get_user_vendor_ids
         from apps.vendors.models import Vendor
-        allowed_vendor_ids = get_user_vendor_ids(user)
+        from .services import (
+            collect_ilync_assigned_chassis,
+            filter_queryset_to_assigned,
+        )
 
-        vendor_assigned_count = base_qs.count()
+        allowed_vendor_ids = get_user_vendor_ids(user)
+        v_qs = Vendor.objects.filter(is_active=True)
+        if allowed_vendor_ids is not None:
+            v_qs = v_qs.filter(id__in=allowed_vendor_ids)
+
+        req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
+        if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+            v_filter = Q(external_vendor_id=req_v) | Q(name__iexact=req_v)
+            if str(req_v).isdigit():
+                v_filter |= Q(id=int(req_v))
+            v_qs = v_qs.filter(v_filter)
+
+        assigned_chassis = collect_ilync_assigned_chassis(list(v_qs))
+        assigned_qs = filter_queryset_to_assigned(base_qs, assigned_chassis)
+        vendor_assigned_count = assigned_qs.count()
+
         empty_state_code = "OK"
         empty_state_message = ""
+        if allowed_vendor_ids is not None and not allowed_vendor_ids:
+            empty_state_code = "NO_ASSIGNED_MACHINES"
+            empty_state_message = "No machines are assigned to this vendor."
+            vendor_assigned_count = 0
+        elif len(assigned_chassis) == 0:
+            empty_state_code = "NO_ASSIGNED_MACHINES"
+            empty_state_message = "No machines are assigned to this vendor."
+        elif vendor_assigned_count == 0 and base_qs.count() == 0:
+            empty_state_code = "NOT_IN_FIBERFORCE"
+            empty_state_message = "Machine assigned to vendor but not available in FiberForce."
+        elif vendor_assigned_count == 0 and len(assigned_chassis) > 0:
+            empty_state_code = "NOT_IN_FIBERFORCE"
+            empty_state_message = "Machine assigned to vendor but not available in FiberForce."
 
-        if allowed_vendor_ids is not None:
-            if not allowed_vendor_ids:
-                empty_state_code = "NO_ASSIGNED_MACHINES"
-                empty_state_message = "No machines are assigned to this vendor."
-                vendor_assigned_count = 0
-            else:
-                assigned_vendors = Vendor.objects.filter(id__in=allowed_vendor_ids)
-                assigned_m_set = set()
-                for v_obj in assigned_vendors:
-                    if v_obj.external_vendor_id:
-                        try:
-                            from apps.integrations.ilync_client import IlyncClient
-                            v_detail = IlyncClient().get_vendor_by_id(v_obj.external_vendor_id)
-                            if v_detail and v_detail.get('success'):
-                                m_list = v_detail.get('data', {}).get('machines', []) or []
-                                for m_item in m_list:
-                                    m_id_str = m_item.get('machineNo') or m_item.get('name') or m_item.get('id')
-                                    if m_id_str:
-                                        assigned_m_set.add(m_id_str)
-                        except Exception:
-                            pass
-                vendor_assigned_count = len(assigned_m_set)
-                if vendor_assigned_count == 0:
-                    empty_state_code = "NO_ASSIGNED_MACHINES"
-                    empty_state_message = "No machines are assigned to this vendor."
-                elif base_qs.count() == 0:
-                    empty_state_code = "NOT_IN_FIBERFORCE"
-                    empty_state_message = "Machine assigned to vendor but not available in FiberForce."
-
-        # Counts calculated strictly within current vendor scope
+        # Counts: COMMISSIONED = vendor-assigned machines only
         status_counts = {
             'ALL': base_qs.count(),
+            'COMMISSIONED': vendor_assigned_count,
             'LIVE': base_qs.filter(is_online=True).count(),
             'RUNNING': base_qs.filter(status__iexact='RUNNING').count(),
             'IDLE': base_qs.filter(status__iexact='IDLE').count(),
             'MAINTENANCE': base_qs.filter(status__iexact='MAINTENANCE').count(),
             'BREAKDOWN': base_qs.filter(status__iexact='BREAKDOWN').count(),
             'OFFLINE': base_qs.filter(is_online=False).count(),
-            'COMMISSIONED': base_qs.filter(is_commissioned=True).count(),
         }
 
         qs = self.get_queryset()
+        status_param = (request.query_params.get('status') or '').strip().upper()
+        if status_param == 'COMMISSIONED':
+            qs = filter_queryset_to_assigned(qs, assigned_chassis)
+
+        assigned_id_set = set(assigned_qs.values_list('id', flat=True))
+
+        def decorate(rows):
+            out = []
+            for row in rows:
+                item = dict(row)
+                chassis = str(
+                    item.get('machine_chassis_no')
+                    or item.get('serial_number')
+                    or item.get('name')
+                    or item.get('code')
+                    or ''
+                ).strip()
+                is_assigned = bool(chassis and chassis in assigned_chassis)
+                if not is_assigned:
+                    mid = item.get('id')
+                    is_assigned = bool(mid and mid in assigned_id_set)
+                item['is_vendor_assigned'] = is_assigned
+                item['is_commissioned_tab'] = is_assigned
+                out.append(item)
+            return out
 
         page = self.paginate_queryset(qs)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            res_data = self.get_paginated_response(serializer.data).data
+            res_data = self.get_paginated_response(decorate(serializer.data)).data
             res_data['status_counts'] = status_counts
             res_data['vendor_assigned_count'] = vendor_assigned_count
             res_data['fiberforce_matched_count'] = base_qs.count()
+            res_data['assigned_chassis'] = sorted(assigned_chassis)
             res_data['empty_state_code'] = empty_state_code
             res_data['empty_state_message'] = empty_state_message
             return Response(res_data)
@@ -123,10 +147,11 @@ class MachineViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(qs, many=True)
         return success_response(data={
             "count": len(serializer.data),
-            "results": serializer.data,
+            "results": decorate(serializer.data),
             "status_counts": status_counts,
             "vendor_assigned_count": vendor_assigned_count,
             "fiberforce_matched_count": base_qs.count(),
+            "assigned_chassis": sorted(assigned_chassis),
             "empty_state_code": empty_state_code,
             "empty_state_message": empty_state_message
         })

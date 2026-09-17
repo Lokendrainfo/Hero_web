@@ -178,10 +178,19 @@ code {
 .gis-marker.leaflet-div-icon,
 .gis-dp-marker.leaflet-div-icon,
 .gis-pit-marker.leaflet-div-icon,
-.custom-live-location-disc-marker.leaflet-div-icon {
+.custom-live-location-disc-marker.leaflet-div-icon,
+.custom-live-location-arrow-marker.leaflet-div-icon,
+.tracking-arrow-marker.leaflet-div-icon {
   background: transparent !important;
   border: none !important;
   overflow: visible !important;
+  box-shadow: none !important;
+}
+
+.tracking-arrow-marker .tracking-arrow-wrap,
+.custom-live-location-arrow-marker .tracking-arrow-wrap {
+  background: transparent !important;
+  border: none !important;
 }
 
 .leaflet-marker-icon.gis-dp-marker:hover,

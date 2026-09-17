@@ -80,6 +80,8 @@ export const Users = () => {
     is_active: true
   });
   const [statusMessage, setStatusMessage] = useState(null);
+  const [activeTab, setActiveTab] = useState('Internal'); // Internal | External
+  const [originCounts, setOriginCounts] = useState({ INTERNAL: 0, EXTERNAL: 0 });
 
   const parseList = (res) => {
     if (!res) return [];
@@ -161,16 +163,19 @@ export const Users = () => {
     total_pages: 1
   });
 
-  const fetchUsers = async (page = pagination.page, size = pagination.size, searchOverride = null) => {
+  const fetchUsers = async (page = pagination.page, size = pagination.size, searchOverride = null, tabOverride = null) => {
     setLoading(true);
     const querySearch = searchOverride !== null ? searchOverride : search;
+    const tab = tabOverride || activeTab;
+    const origin = tab === 'External' ? 'external' : 'internal';
     try {
       const [userRes, roleRes, vendorRes, allUsersRes, ilyncRoleRes] = await Promise.all([
         userService.getAll({
           page,
           size,
           search: querySearch,
-          role: selectedRoleFilter !== 'ALL' ? selectedRoleFilter : ''
+          role: selectedRoleFilter !== 'ALL' ? selectedRoleFilter : '',
+          origin
         }),
         roleService.getRoles(),
         vendorService.getIntegrationsVendors({ size: 100 }).catch(() => vendorService.getVendors({ page: 0, size: 100 }).catch(() => ({ data: [] }))),
@@ -197,6 +202,14 @@ export const Users = () => {
       setSystemVendors(vendorList);
       setAllSystemUsers(allUsersList);
 
+      const counts = payload.origin_counts || payload.data?.origin_counts || null;
+      if (counts) {
+        setOriginCounts({
+          INTERNAL: counts.INTERNAL ?? counts.internal ?? 0,
+          EXTERNAL: counts.EXTERNAL ?? counts.external ?? 0,
+        });
+      }
+
       const totalCount = payload.total !== undefined ? payload.total : (payload.count !== undefined ? payload.count : userList.length);
       const sizeNum = size === 'all' ? totalCount : Number(size);
       const totalPages = payload.total_pages || (sizeNum > 0 ? Math.ceil(totalCount / sizeNum) : 1);
@@ -217,7 +230,7 @@ export const Users = () => {
   useEffect(() => {
     fetchUsers(0, pagination.size);
     fetchCircles();
-  }, [selectedRoleFilter]);
+  }, [selectedRoleFilter, activeTab]);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -385,7 +398,8 @@ export const Users = () => {
         email: createForm.email.trim(),
         phone_number: createForm.phone_number.trim(),
         employee_id: createForm.employee_id.trim(),
-        external_user_id: createForm.external_user_id.trim() || createForm.employee_id.trim() || null,
+        // Keep internal users without external_user_id so they stay on the Internal tab
+        external_user_id: createForm.external_user_id.trim() || null,
         role: createForm.role || 'VIEWER',
         reporting_manager_id: createForm.reporting_manager_id ? Number(createForm.reporting_manager_id) : null,
         vendor_id: createForm.vendor_id ? (isNaN(Number(createForm.vendor_id)) ? createForm.vendor_id : Number(createForm.vendor_id)) : null,
@@ -491,62 +505,84 @@ export const Users = () => {
             <h1 className="page-title">Users</h1>
           </div>
           <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '2px' }}>
-            Platform accounts, roles, and vendor assignments
+            {activeTab === 'Internal'
+              ? 'Users created in HERO'
+              : 'Users synced from external APIs (iLync)'}
           </p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button
-            onClick={() => {
-              fetchCircles();
-              setCreateForm({
-                username: '',
-                first_name: '',
-                last_name: '',
-                email: '',
-                phone_number: '',
-                employee_id: '',
-                external_user_id: '',
-                role: 'VIEWER',
-                reporting_manager_id: '',
-                vendor_id: '',
-                password: '',
-                user_type: 'NORMAL',
-                advance_scope_type: 'CIRCLE',
-                selected_circle_id: '',
-                selected_district_id: '',
-                selected_block_id: ''
-              });
-              setVendorSearchInCreateModal('');
-              setManagerSearchInCreateModal('');
-              setCreateModalOpen(true);
-            }}
-            className="btn-primary"
-            style={{
-              padding: '8px 16px',
-              fontSize: '0.82rem',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              background: '#059669',
-              borderColor: '#059669',
-              fontWeight: '600'
-            }}
-          >
-            <LucidePlus size={16} />
-            Add New User
-          </button>
+          {activeTab === 'Internal' && (
+            <button
+              onClick={() => {
+                fetchCircles();
+                setCreateForm({
+                  username: '',
+                  first_name: '',
+                  last_name: '',
+                  email: '',
+                  phone_number: '',
+                  employee_id: '',
+                  external_user_id: '',
+                  role: 'VIEWER',
+                  reporting_manager_id: '',
+                  vendor_id: '',
+                  password: '',
+                  user_type: 'NORMAL',
+                  advance_scope_type: 'CIRCLE',
+                  selected_circle_id: '',
+                  selected_district_id: '',
+                  selected_block_id: ''
+                });
+                setVendorSearchInCreateModal('');
+                setManagerSearchInCreateModal('');
+                setCreateModalOpen(true);
+              }}
+              className="btn-primary"
+              style={{
+                padding: '8px 16px',
+                fontSize: '0.82rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                background: '#059669',
+                borderColor: '#059669',
+                fontWeight: '600'
+              }}
+            >
+              <LucidePlus size={16} />
+              Add New User
+            </button>
+          )}
 
-          <button
-            onClick={handleSync}
-            disabled={syncing}
-            className="btn-primary"
-            style={{ padding: '8px 16px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
-          >
-            <LucideRefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Syncing External Users...' : 'Sync External Users'}
-          </button>
+          {activeTab === 'External' && (
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className="btn-primary"
+              style={{ padding: '8px 16px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+            >
+              <LucideRefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
+              {syncing ? 'Syncing External Users...' : 'Sync External Users'}
+            </button>
+          )}
         </div>
+      </div>
+
+      <div className="filter-row">
+        {[
+          { label: 'Internal', count: originCounts.INTERNAL },
+          { label: 'External', count: originCounts.EXTERNAL },
+        ].map((tab) => (
+          <button
+            key={tab.label}
+            type="button"
+            className={`filter-chip ${activeTab === tab.label ? 'active' : ''}`}
+            onClick={() => setActiveTab(tab.label)}
+          >
+            {tab.label} {tab.count}
+          </button>
+        ))}
       </div>
 
       {statusMessage && (
@@ -706,7 +742,9 @@ export const Users = () => {
             ) : filteredUsers.length === 0 ? (
               <tr>
                 <td colSpan={9} style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
-                  No users found matching your search query.
+                  {activeTab === 'Internal'
+                    ? 'No internal users found. Use Add New User to create one.'
+                    : 'No external users found. Use Sync External Users to pull from the API.'}
                 </td>
               </tr>
             ) : (

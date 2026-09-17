@@ -170,3 +170,81 @@ def sync_fiberforce_machines():
         "total": len(machines_data),
         "message": f"Successfully synced {synced_count} machines with live FiberForce telemetry."
     }
+
+
+def collect_ilync_assigned_chassis(vendors):
+    """
+    Collect chassis / machineNo values assigned to vendors on live iLync.
+    Used by Machines "Commissioned" tab and dashboard machine KPIs.
+    """
+    assigned = set()
+    if not vendors:
+        return assigned
+    try:
+        from apps.integrations.ilync_client import IlyncClient
+        client = IlyncClient()
+    except Exception:
+        return assigned
+
+    for v_obj in vendors:
+        ext_v_id = getattr(v_obj, 'external_vendor_id', None) or getattr(v_obj, 'id', None)
+        if not ext_v_id:
+            continue
+        try:
+            live_res = client.get_vendor_by_id(ext_v_id)
+        except Exception:
+            continue
+        payload = (
+            live_res.get('data')
+            if (isinstance(live_res, dict) and live_res.get('success'))
+            else (live_res if isinstance(live_res, dict) else {})
+        )
+        macs = (payload or {}).get('machines') or (payload or {}).get('assigned_machines') or []
+        if not isinstance(macs, list):
+            continue
+        for item in macs:
+            if isinstance(item, dict):
+                code = str(
+                    item.get('machineNo')
+                    or item.get('machine_no')
+                    or item.get('machine_chassis_no')
+                    or item.get('serial_number')
+                    or item.get('chassis_no')
+                    or item.get('name')
+                    or item.get('code')
+                    or item.get('id')
+                    or ''
+                ).strip()
+                if code:
+                    assigned.add(code)
+            elif isinstance(item, str) and item.strip():
+                assigned.add(item.strip())
+    return assigned
+
+
+def machine_matches_assigned(machine, assigned_chassis):
+    if not assigned_chassis:
+        return False
+    candidates = [
+        getattr(machine, 'machine_chassis_no', None),
+        getattr(machine, 'serial_number', None),
+        getattr(machine, 'name', None),
+        getattr(machine, 'code', None),
+    ]
+    for value in candidates:
+        text = str(value or '').strip()
+        if text and text in assigned_chassis:
+            return True
+    return False
+
+
+def filter_queryset_to_assigned(machines_qs, assigned_chassis):
+    from django.db.models import Q
+    if not assigned_chassis:
+        return machines_qs.none()
+    return machines_qs.filter(
+        Q(machine_chassis_no__in=assigned_chassis)
+        | Q(serial_number__in=assigned_chassis)
+        | Q(name__in=assigned_chassis)
+        | Q(code__in=assigned_chassis)
+    ).distinct()

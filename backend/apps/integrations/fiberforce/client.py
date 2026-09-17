@@ -105,3 +105,43 @@ class FiberForceClient:
             "status": status or "open",
             "limit": limit,
         })
+
+    def list_refuels(
+        self,
+        *,
+        machine_chassis_no=None,
+        days=30,
+        date=None,
+        status=None,
+        acknowledged=None,
+        page=1,
+        page_size=50,
+    ):
+        """
+        Sensor-detected tank fills from FiberForce.
+        POST /api/ext/v1/machines/refuel/
+        status: PENDING | CONFIRMED | DENIED (omit for all)
+        """
+        body = {
+            "page": int(page or 1),
+            "page_size": min(200, max(1, int(page_size or 50))),
+        }
+        if machine_chassis_no:
+            body["machine_chassis_no"] = str(machine_chassis_no).strip()
+        if date:
+            body["date"] = str(date).strip()
+        else:
+            body["days"] = min(365, max(1, int(days or 30)))
+        if status:
+            body["status"] = str(status).strip().upper()
+        if acknowledged is not None:
+            body["acknowledged"] = bool(acknowledged)
+        return self._request("POST", "/api/ext/v1/machines/refuel/", json=body)
+
+    def confirm_refuel(self, payload):
+        """Map slip / litres to 1..N sensor fills. POST /api/ext/v1/machines/refuel/confirm/"""
+        return self._request("POST", "/api/ext/v1/machines/refuel/confirm/", json=payload or {})
+
+    def deny_refuel(self, payload):
+        """Archive false spike. POST /api/ext/v1/machines/refuel/deny/"""
+        return self._request("POST", "/api/ext/v1/machines/refuel/deny/", json=payload or {})

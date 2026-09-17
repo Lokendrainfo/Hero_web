@@ -280,6 +280,187 @@ def clean_username(val):
     clean = "".join(c for c in val if c.isalnum() or c in ('_', '-'))
     return clean if clean else f"user_{int(timezone.now().timestamp())}"
 
+
+ATTENDANCE_SCOPE_ROLES = ('HERO', 'VENDOR', 'OPERATOR', 'TRACKER', 'HELPER')
+
+
+def normalize_attendance_role(designation_or_role):
+    """
+    Map iLync designation / local role into dashboard attendance scopes:
+    HERO | VENDOR | OPERATOR | TRACKER | HELPER
+    """
+    raw = str(designation_or_role or '').strip().upper()
+    if not raw:
+        return 'OPERATOR'
+    compact = raw.replace('-', '_').replace(' ', '_')
+    # Prefer specific scopes before generic OPERATOR fallback
+    if compact in ATTENDANCE_SCOPE_ROLES:
+        return compact
+    if 'HELPER' in compact or compact in ('HELP', 'HELPERS', 'MAZDOOR', 'LABOUR', 'LABOR'):
+        return 'HELPER'
+    if 'TRACK' in compact:
+        return 'TRACKER'
+    if compact == 'VENDOR' or compact.startswith('VENDOR') or 'VENDOR_ADMIN' in compact:
+        return 'VENDOR'
+    # designation "HERO" / "HERO STAFF" — avoid matching random vendor names here
+    if compact == 'HERO' or compact.startswith('HERO_') or compact.endswith('_HERO'):
+        return 'HERO'
+    if any(token in compact for token in ('OPERAT', 'DRIVER', 'FIELD', 'SURVEY', 'TECHNICIAN')):
+        return 'OPERATOR'
+    return 'OPERATOR'
+
+
+def empty_scope_matrix():
+    return [
+        {'scope': scope, 'total': 0, 'present': 0, 'not_marked': 0}
+        for scope in ATTENDANCE_SCOPE_ROLES
+    ]
+
+
+def bump_scope_matrix(matrix_by_scope, role, status):
+    scope = normalize_attendance_role(role)
+    if scope not in matrix_by_scope:
+        scope = 'OPERATOR'
+    row = matrix_by_scope[scope]
+    row['total'] += 1
+    st = str(status or 'NOT_MARKED').upper().replace(' ', '_')
+    if st in ('PRESENT', 'CHECKED_IN', 'CHECKED_OUT'):
+        row['present'] += 1
+    elif st in ('NOT_MARKED', 'NOT_CHECKED_IN', ''):
+        row['not_marked'] += 1
+
+
+def _issue_reason_text(row):
+    """Build a human-readable reason from OEM breakdown / Ops stop payload."""
+    if not isinstance(row, dict):
+        return ''
+    keys = row.get('reason_keys') or []
+    labels = []
+    if isinstance(keys, list):
+        for key in keys:
+            if isinstance(key, dict):
+                label = str(key.get('label') or key.get('code') or '').strip()
+                if label:
+                    labels.append(label)
+            elif key:
+                labels.append(str(key).strip())
+    text = str(row.get('reason') or row.get('note') or '').strip()
+    if labels and text:
+        return f"{', '.join(labels)} — {text}"
+    if labels:
+        return ', '.join(labels)
+    return text
+
+
+def _is_open_issue(row):
+    """Only treat explicitly open (and not closed/resolved) tickets as active issues."""
+    if not isinstance(row, dict):
+        return False
+    st = str(row.get('status') or '').strip().upper().replace(' ', '_')
+    if st in ('CLOSED', 'RESOLVED', 'DONE', 'COMPLETED', 'CANCELLED', 'CANCELED'):
+        return False
+    # Must be an open-like status — never infer open from blank/unknown
+    if st not in ('OPEN', 'SEEN', 'ACCEPTED', 'IN_PROGRESS', 'PENDING', 'ACTIVE'):
+        return False
+    # Hard stop if close/resolve timestamps exist
+    if row.get('closed_at') or row.get('resolved_at') or row.get('closed_by'):
+        return False
+    return True
+
+
+def _issue_sort_key(row):
+    return str(
+        row.get('started_at')
+        or row.get('occurred_at')
+        or row.get('created_at')
+        or row.get('id')
+        or ''
+    )
+
+
+def _index_open_machine_issues():
+    """
+    Fetch open OEM breakdowns + Ops stops once and index by chassis.
+    Used to show Not Working reason next to machine attendance.
+    Only OPEN (non-closed) FiberForce tickets are included.
+    """
+    oem_by_chassis = {}
+    ops_by_chassis = {}
+    try:
+        from apps.integrations.fiberforce.client import FiberForceClient
+        client = FiberForceClient()
+
+        def ingest(payload, bucket, kind):
+            data = payload.get('data') if isinstance(payload, dict) else payload
+            rows = data if isinstance(data, list) else (
+                data.get('results') if isinstance(data, dict) else []
+            )
+            if not isinstance(rows, list):
+                return
+            open_rows = [row for row in rows if isinstance(row, dict) and _is_open_issue(row)]
+            # Newest first so setdefault keeps the latest open ticket
+            open_rows.sort(key=_issue_sort_key, reverse=True)
+            for row in open_rows:
+                chassis = str(
+                    row.get('machine_chassis_no')
+                    or row.get('chassis_no')
+                    or row.get('machine_no')
+                    or ''
+                ).strip()
+                if not chassis:
+                    continue
+                entry = {
+                    'kind': kind,
+                    'id': row.get('id'),
+                    'tt_number': row.get('tt_number') or (
+                        f"{'BD' if kind == 'OEM' else 'OS'}-{row.get('id')}" if row.get('id') is not None else None
+                    ),
+                    'status': str(row.get('status') or 'OPEN').upper(),
+                    'reason': _issue_reason_text(row),
+                    'severity': row.get('severity'),
+                    'started_at': row.get('occurred_at') or row.get('started_at'),
+                }
+                bucket.setdefault(chassis, entry)
+
+        ingest(client.fleet_breakdowns(status='open', limit=500), oem_by_chassis, 'OEM')
+        ingest(client.fleet_ops_stops(status='open', limit=500), ops_by_chassis, 'OPS')
+    except Exception as e:
+        print(f"[AttendanceRoster] Failed loading open machine issues: {e}")
+
+    return oem_by_chassis, ops_by_chassis
+
+
+def _machine_working_payload(m_status, chassis_val, oem_by_chassis, ops_by_chassis):
+    chassis = str(chassis_val or '').strip()
+    oem = oem_by_chassis.get(chassis)
+    ops = ops_by_chassis.get(chassis)
+    # Prefer OEM breakdown over Ops stop when both open
+    issue = oem or ops
+
+    working_attendance = m_status in ('CHECKED_IN', 'PRESENT', 'OPERATING', 'CHECKED_OUT', 'WORKING')
+
+    if issue:
+        working_state = 'NOT_WORKING'
+    elif working_attendance:
+        working_state = 'WORKING'
+    else:
+        working_state = 'NOT_MARKED'
+
+    return {
+        'working_state': working_state,
+        'is_working': working_state == 'WORKING',
+        'issue_kind': issue.get('kind') if issue else None,
+        'issue_id': issue.get('id') if issue else None,
+        'issue_ticket': issue.get('tt_number') if issue else None,
+        'issue_status': issue.get('status') if issue else None,
+        'issue_reason': issue.get('reason') if issue else None,
+        'issue_severity': issue.get('severity') if issue else None,
+        'issue_started_at': issue.get('started_at') if issue else None,
+        'open_oem': bool(oem),
+        'open_ops': bool(ops),
+    }
+
+
 def validate_employee_attendance_access(request_user, target_user):
     """
     Validates if request_user is authorized to manage/view attendance for target_user.
@@ -1058,6 +1239,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             'week_off': 0,
             'not_marked': 0
         }
+        scope_matrix_map = {
+            scope: {'scope': scope, 'total': 0, 'present': 0, 'not_marked': 0}
+            for scope in ATTENDANCE_SCOPE_ROLES
+        }
+
+        oem_by_chassis, ops_by_chassis = _index_open_machine_issues()
 
         for v_obj in target_vendors:
             ext_v_id = str(v_obj.external_vendor_id or v_obj.id).strip()
@@ -1101,8 +1288,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 name = str(u_info.get('name') or u_info.get('contactName') or 'Team Member').strip()
                 designation = str(u_info.get('designation') or u_info.get('role') or 'OPERATOR').strip()
 
-                # Role filter check
-                u_role = 'VENDOR' if designation.upper() == 'VENDOR' else ('TRACKER' if 'TRACK' in designation.upper() else 'OPERATOR')
+                # Role filter check — keep iLync designation scopes (HELPER/TRACKER/etc)
+                u_role = normalize_attendance_role(designation)
                 if role_filter and role_filter.upper() != 'ALL':
                     if role_filter.upper() != u_role.upper():
                         continue
@@ -1158,6 +1345,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     counts['not_marked'] += 1
                     st = 'NOT_MARKED'
 
+                bump_scope_matrix(scope_matrix_map, u_role, st)
+
                 if status_filter and status_filter.upper() != 'ALL':
                     sf = status_filter.upper().replace(' ', '_')
                     if sf != st:
@@ -1202,6 +1391,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'phone_number': mobile,
                     'email': email,
                     'role': u_role,
+                    'designation': designation,
                     'circle': final_circle,
                     'district': final_district,
                     'block': final_block,
@@ -1250,6 +1440,16 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 ).first()
 
                 m_status = (m_rec.status if m_rec else 'NOT_MARKED').upper()
+                working_meta = _machine_working_payload(
+                    m_status, chassis_val, oem_by_chassis, ops_by_chassis
+                )
+                # Surface not-working clearly in status for existing UI consumers
+                display_status = m_status
+                if working_meta['working_state'] == 'NOT_WORKING':
+                    display_status = 'NOT_WORKING'
+                elif working_meta['working_state'] == 'WORKING' and m_status == 'NOT_MARKED':
+                    display_status = 'WORKING'
+
                 assigned_machines_list.append({
                     'machine_id': mac_id,
                     'name': mac_name,
@@ -1259,7 +1459,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'vendor_name': v_obj.name,
                     'vendor_id': v_obj.id,
                     'operator_name': op_name,
-                    'status': m_status,
+                    'status': display_status,
+                    'attendance_status': m_status,
                     'attendance_type': 'MACHINE',
                     'check_in': timezone.localtime(m_rec.check_in).strftime('%H:%M') if (m_rec and m_rec.check_in) else None,
                     'check_out': timezone.localtime(m_rec.check_out).strftime('%H:%M') if (m_rec and m_rec.check_out) else None,
@@ -1272,125 +1473,110 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'total_working_hours': m_rec.total_working_hours if m_rec else None,
                     'attendance_id': m_rec.id if m_rec else None,
                     'approval_status': m_rec.approval_status if m_rec else 'PENDING',
+                    **working_meta,
                 })
 
         return success_response(
             data={
                 'date': req_date,
                 'summary': counts,
+                'scope_matrix': [scope_matrix_map[s] for s in ATTENDANCE_SCOPE_ROLES],
                 'team_members': result_list,
                 'assigned_machines': assigned_machines_list
             },
             message=f"Fetched live vendor team and machine attendance for {req_date}"
         )
 
-
-        if not isinstance(records_data, list):
-            return error_response(message="`records` must be an array of attendance items.", status_code=status.HTTP_400_BAD_REQUEST)
-
-        saved_records = []
-        for item in records_data:
-            u_id = item.get('user_id') or item.get('user')
-            if not u_id:
-                continue
-
-            target_user = resolve_target_user(u_id)
-            if not target_user:
-                continue
-
-            validate_employee_attendance_access(request.user, target_user)
-
-            st_val = (item.get('status') or 'PRESENT').upper().replace(' ', '_')
-            notes_val = item.get('notes') or item.get('remarks') or ''
-            check_in_val = item.get('check_in')
-            check_out_val = item.get('check_out')
-            lat_val = item.get('check_in_latitude') or item.get('latitude')
-            lng_val = item.get('check_in_longitude') or item.get('longitude')
-            acc_val = item.get('check_in_accuracy') or item.get('accuracy')
-            loc_source = item.get('location_source') or 'GPS'
-
-            target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
-            reporting_mgr = resolve_reporting_manager(target_user, marked_by_user=request.user, vendor=target_vendor)
-
-            def safe_float(v):
-                if v is not None and str(v).strip() not in ('', 'null', 'undefined', 'None'):
-                    try:
-                        return float(v)
-                    except Exception:
-                        return None
-                return None
-
-            f_lat = safe_float(lat_val)
-            f_lng = safe_float(lng_val)
-            f_acc = safe_float(acc_val)
-
-            if st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY'] and not check_in_val:
-                check_in_val = timezone.now()
-
-            record = AttendanceRecord.objects.filter(user=target_user, date=req_date).exclude(attendance_type='MACHINE').first()
-            created = False
-            if not record:
-                record = AttendanceRecord.objects.create(
-                    user=target_user,
-                    date=req_date,
-                    attendance_type='TEAM',
-                    vendor=target_vendor,
-                    reporting_manager=reporting_mgr,
-                    status=st_val,
-                    notes=notes_val,
-                    check_in=check_in_val,
-                    check_out=check_out_val,
-                    check_in_latitude=f_lat,
-                    check_in_longitude=f_lng,
-                    check_in_accuracy=f_acc,
-                    location_source=loc_source,
-                    marked_by=request.user,
-                    updated_by=request.user
-                )
-                created = True
-
-            if not created:
-                record.status = st_val
-                record.notes = notes_val
-                if check_in_val is not None:
-                    record.check_in = check_in_val
-                elif not record.check_in and st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY']:
-                    record.check_in = timezone.now()
-                if check_out_val is not None:
-                    record.check_out = check_out_val
-                if f_lat is not None: record.check_in_latitude = f_lat
-                if f_lng is not None: record.check_in_longitude = f_lng
-                if f_acc is not None: record.check_in_accuracy = f_acc
-                record.updated_by = request.user
-                if target_vendor and not record.vendor:
-                    record.vendor = target_vendor
-                record.save()
-
-            saved_records.append(record)
-
-        return success_response(
-            data=AttendanceRecordSerializer(saved_records, many=True, context={'request': request}).data,
-            message=f"Successfully updated attendance for {len(saved_records)} team members."
-        )
+    @action(detail=False, methods=['post'], url_path='bulk-mark')
+    def bulk_mark(self, request):
+        """
+        Bulk save/update team attendance for a date.
+        Body: { date: 'YYYY-MM-DD', records: [{ user_id, status, notes, check_in, check_out, ... }] }
+        """
+        auto_checkout_overnight_records()
         records_data = request.data.get('records') or []
         req_date = request.data.get('date') or str(timezone.localdate())
 
         if not isinstance(records_data, list):
-            return error_response(message="`records` must be an array of attendance items.", status_code=status.HTTP_400_BAD_REQUEST)
+            return error_response(
+                message="`records` must be an array of attendance items.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        def safe_float(v):
+            if v is not None and str(v).strip() not in ('', 'null', 'undefined', 'None'):
+                try:
+                    return float(v)
+                except Exception:
+                    return None
+            return None
 
         saved_records = []
+        skipped = 0
         for item in records_data:
-            u_id = item.get('user_id') or item.get('user')
+            if not isinstance(item, dict):
+                skipped += 1
+                continue
+
+            u_id = item.get('user_id') or item.get('user') or item.get('employee_id')
             if not u_id:
+                skipped += 1
                 continue
 
-            target_user = resolve_target_user(u_id)
+            target_user = resolve_target_user(u_id, request.user)
             if not target_user:
+                skipped += 1
                 continue
 
-            validate_employee_attendance_access(request.user, target_user)
+            # Enrich shell / iLync-linked users with roster metadata when provided
+            updates = []
+            phone = str(item.get('phone_number') or item.get('phone') or '').strip()
+            email = str(item.get('email') or '').strip()
+            name = str(item.get('user_name') or item.get('name') or '').strip()
+            if phone and not target_user.phone_number:
+                target_user.phone_number = phone
+                updates.append('phone_number')
+            if email and (not target_user.email or str(target_user.email).lower().startswith('user@')):
+                target_user.email = email
+                updates.append('email')
+            if name and (not target_user.first_name or target_user.first_name == str(u_id)):
+                parts = name.split(None, 1)
+                target_user.first_name = parts[0]
+                if len(parts) > 1:
+                    target_user.last_name = parts[1]
+                    updates.append('last_name')
+                updates.append('first_name')
+            vendor_id = item.get('vendor_id')
+            if vendor_id and not target_user.vendor_id:
+                try:
+                    from apps.vendors.models import Vendor
+                    v_obj = Vendor.objects.filter(
+                        Q(id=vendor_id if str(vendor_id).isdigit() else None) |
+                        Q(external_vendor_id=str(vendor_id))
+                    ).first()
+                    if v_obj:
+                        target_user.vendor = v_obj
+                        updates.append('vendor')
+                except Exception:
+                    pass
+            if updates:
+                try:
+                    target_user.save(update_fields=list(dict.fromkeys(updates)))
+                except Exception as e:
+                    print(f"[BulkMark] Failed enriching user {u_id}: {e}")
+
+            try:
+                validate_employee_attendance_access(request.user, target_user)
+            except PermissionDenied:
+                skipped += 1
+                continue
 
             st_val = (item.get('status') or 'PRESENT').upper().replace(' ', '_')
+            if st_val in ('NOT_MARKED', 'NOT_CHECKED_IN', ''):
+                # Leave unmarked rows out of DB unless explicitly requested
+                skipped += 1
+                continue
+
             notes_val = item.get('notes') or item.get('remarks') or ''
             check_in_val = item.get('check_in')
             check_out_val = item.get('check_out')
@@ -1400,15 +1586,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             loc_source = item.get('location_source') or 'GPS'
 
             target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
-            reporting_mgr = resolve_reporting_manager(target_user, marked_by_user=request.user, vendor=target_vendor)
-
-            def safe_float(v):
-                if v is not None and str(v).strip() not in ('', 'null', 'undefined', 'None'):
-                    try:
-                        return float(v)
-                    except Exception:
-                        return None
-                return None
+            reporting_mgr = resolve_reporting_manager(
+                target_user, marked_by_user=request.user, vendor=target_vendor
+            )
 
             f_lat = safe_float(lat_val)
             f_lng = safe_float(lng_val)
@@ -1417,7 +1597,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY'] and not check_in_val:
                 check_in_val = timezone.now()
 
-            record = AttendanceRecord.objects.filter(user=target_user, date=req_date).exclude(attendance_type='MACHINE').first()
+            record = (
+                AttendanceRecord.objects.filter(user=target_user, date=req_date)
+                .exclude(attendance_type='MACHINE')
+                .first()
+            )
             created = False
             if not record:
                 record = AttendanceRecord.objects.create(
@@ -1435,11 +1619,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     check_in_accuracy=f_acc,
                     location_source=loc_source,
                     marked_by=request.user,
-                    updated_by=request.user
+                    updated_by=request.user,
+                    marked_for_user=target_user,
                 )
                 created = True
-
-            if not created:
+            else:
                 record.status = st_val
                 record.notes = notes_val
                 if check_in_val is not None:
@@ -1448,19 +1632,38 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     record.check_in = timezone.now()
                 if check_out_val is not None:
                     record.check_out = check_out_val
-                if f_lat is not None: record.check_in_latitude = f_lat
-                if f_lng is not None: record.check_in_longitude = f_lng
-                if f_acc is not None: record.check_in_accuracy = f_acc
+                if f_lat is not None:
+                    record.check_in_latitude = f_lat
+                if f_lng is not None:
+                    record.check_in_longitude = f_lng
+                if f_acc is not None:
+                    record.check_in_accuracy = f_acc
                 record.updated_by = request.user
                 if target_vendor and not record.vendor:
                     record.vendor = target_vendor
+                if reporting_mgr and not record.reporting_manager:
+                    record.reporting_manager = reporting_mgr
                 record.save()
+
+            if created and reporting_mgr:
+                notify_user(
+                    reporting_mgr,
+                    "Pending Attendance Approval",
+                    f"Attendance for {target_user.get_full_name() or target_user.username} submitted for {req_date} requires your approval.",
+                )
 
             saved_records.append(record)
 
         return success_response(
-            data=AttendanceRecordSerializer(saved_records, many=True, context={'request': request}).data,
-            message=f"Successfully updated attendance for {len(saved_records)} team members."
+            data={
+                'saved': AttendanceRecordSerializer(
+                    saved_records, many=True, context={'request': request}
+                ).data,
+                'saved_count': len(saved_records),
+                'skipped_count': skipped,
+                'date': req_date,
+            },
+            message=f"Successfully updated attendance for {len(saved_records)} team members.",
         )
 
     @action(detail=False, methods=['get'], url_path='export-report')

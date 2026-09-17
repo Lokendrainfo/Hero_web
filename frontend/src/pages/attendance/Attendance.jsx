@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { attendanceService } from '../../services/attendanceService';
 import { vendorService } from '../../services/vendorService';
 import { userService } from '../../services/userService';
@@ -10,7 +11,8 @@ import {
   LucideAlertCircle, LucideUser, LucideRefreshCw,
   LucideBuilding2, LucideCheck, LucideList, LucideHistory, LucideCheckSquare,
   LucideMapPin, LucideCamera, LucideTruck, LucideShieldCheck, LucideEye, LucideX,
-  LucideChevronDown, LucideChevronUp, LucidePower, LucideDownload, LucideExternalLink
+  LucideChevronDown, LucideChevronUp, LucidePower, LucideDownload, LucideExternalLink,
+  LucideWrench, LucideAlertTriangle
 } from 'lucide-react';
 import '../../styles/components.css';
 import { SearchableSelect } from '../../components/common/Select';
@@ -18,6 +20,7 @@ import { DateField } from '../../components/common/DateField';
 import { getTodayDateString, getLocalDateString } from '../../utils/dateUtils';
 
 export const Attendance = () => {
+  const navigate = useNavigate();
   const { user, isAdmin, vendors, selectedVendorId, roles } = useAuth();
   const isVendorUser = !isAdmin && (user?.role === 'VENDOR' || String(user?.role || '').toUpperCase().includes('VENDOR') || (roles || []).some(r => String(r || '').toUpperCase().includes('VENDOR')));
   const { showToast } = useToast();
@@ -380,7 +383,7 @@ export const Attendance = () => {
     // Filter vendor team groups: keep groups that have members OR machines
     const groupList = Object.values(groups);
     return groupList.filter(g => (g.members && g.members.length > 0) || (g.machines && g.machines.length > 0));
-  }, [teamMembers, vendors, vendorList, vendorDetailsMap]);
+  }, [teamMembers, assignedMachines, vendors, vendorList, vendorDetailsMap]);
 
   const vendorTeamList = useMemo(() => {
     return groupedVendorTeams.map(g => ({
@@ -527,6 +530,10 @@ export const Attendance = () => {
         user_id: item.user_id,
         status: item.status === 'NOT_MARKED' ? 'PRESENT' : item.status,
         notes: item.notes || '',
+        phone_number: item.phone_number || '',
+        email: item.email || '',
+        user_name: item.user_name || '',
+        vendor_id: item.vendor_id || null,
         check_in_latitude: lat,
         check_in_longitude: lng,
         latitude: lat,
@@ -544,7 +551,7 @@ export const Attendance = () => {
       fetchTeamAttendance();
     } catch (err) {
       console.error("Save attendance error:", err);
-      const errMsg = err.response?.data?.detail || err.response?.data?.message || "Failed to save team attendance.";
+      const errMsg = err?.message || err?.detail || err?.response?.data?.detail || err?.response?.data?.message || "Failed to save team attendance.";
       showToast(`⚠️ ${errMsg}`, "error");
     } finally {
       setSaving(false);
@@ -1323,13 +1330,55 @@ export const Attendance = () => {
                         )}
 
                         {/* Machine Attendance Section */}
-                        {teamGroup.machines && teamGroup.machines.length > 0 && (
-                          <div style={{ background: '#f8fafc', borderTop: '1px solid #e2e8f0', padding: '16px 20px' }}>
-                            <div style={{ fontSize: '0.88rem', fontWeight: '700', color: '#334155', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <LucideTruck size={18} style={{ color: '#d97706' }} />
+                        {teamGroup.machines && teamGroup.machines.length > 0 && (() => {
+                          const hasNotWorking = teamGroup.machines.some((m) => {
+                            const state = m.working_state
+                              || (m.status === 'NOT_WORKING' ? 'NOT_WORKING' : null);
+                            return state === 'NOT_WORKING' || m.open_oem || m.open_ops;
+                          });
+                          const notWorkingCount = teamGroup.machines.filter((m) => {
+                            const state = m.working_state
+                              || (m.status === 'NOT_WORKING' ? 'NOT_WORKING' : null);
+                            return state === 'NOT_WORKING' || m.open_oem || m.open_ops;
+                          }).length;
+
+                          return (
+                          <div style={{
+                            background: hasNotWorking ? '#fef2f2' : '#f8fafc',
+                            borderTop: `1px solid ${hasNotWorking ? '#fecaca' : '#e2e8f0'}`,
+                            padding: '16px 20px',
+                          }}>
+                            <div style={{
+                              fontSize: '0.88rem',
+                              fontWeight: '700',
+                              color: hasNotWorking ? '#991b1b' : '#334155',
+                              marginBottom: '12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              flexWrap: 'wrap',
+                            }}>
+                              <LucideTruck size={18} style={{ color: hasNotWorking ? '#dc2626' : '#d97706' }} />
                               <span>Assigned Machines & Equipment Attendance ({teamGroup.machines.length})</span>
+                              {hasNotWorking && (
+                                <span style={{
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  color: '#b91c1c',
+                                  background: '#fee2e2',
+                                  border: '1px solid #fecaca',
+                                  borderRadius: 999,
+                                  padding: '2px 8px',
+                                }}>
+                                  {notWorkingCount} not working
+                                </span>
+                              )}
                             </div>
-                            <div className="table-container" style={{ borderRadius: '10px', border: '1px solid #cbd5e1', background: '#ffffff' }}>
+                            <div className="table-container" style={{
+                              borderRadius: '10px',
+                              border: `1px solid ${hasNotWorking ? '#fecaca' : '#cbd5e1'}`,
+                              background: '#ffffff',
+                            }}>
                               <table className="data-table">
                                 <thead>
                                   <tr>
@@ -1338,12 +1387,24 @@ export const Attendance = () => {
                                     <th>Operator</th>
                                     <th>Check-In / Out</th>
                                     <th>Telemetry / Photos</th>
-                                    <th>Attendance Status</th>
+                                    <th>Working status</th>
+                                    <th>Issue / Reason</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {teamGroup.machines.map(mac => (
-                                    <tr key={mac.machine_id}>
+                                  {teamGroup.machines.map(mac => {
+                                    const workingState = mac.working_state
+                                      || (mac.status === 'NOT_WORKING' ? 'NOT_WORKING'
+                                        : (['CHECKED_IN', 'PRESENT', 'OPERATING', 'CHECKED_OUT', 'WORKING'].includes(mac.status) ? 'WORKING' : 'NOT_MARKED'));
+                                    const isWorking = workingState === 'WORKING';
+                                    const isNotWorking = workingState === 'NOT_WORKING';
+                                    const issueKind = mac.issue_kind;
+                                    const issueReason = mac.issue_reason || mac.notes || '';
+                                    const issueTicket = mac.issue_ticket;
+                                    const attStatus = mac.attendance_status || (isNotWorking ? null : mac.status);
+
+                                    return (
+                                    <tr key={mac.machine_id || mac.chassis_no || mac.machine_no}>
                                       <td style={{ paddingLeft: '16px' }}>
                                         <div style={{ fontWeight: '700', color: '#0f172a' }}>{mac.name}</div>
                                         <div style={{ fontSize: '0.72rem', color: '#64748b' }}>{mac.code}</div>
@@ -1364,7 +1425,7 @@ export const Attendance = () => {
                                             <span style={{ fontSize: '0.78rem', fontWeight: '600', color: mac.check_in ? '#047857' : '#94a3b8' }}>
                                               In: {mac.check_in || '--:--'}
                                             </span>
-                                            {!mac.check_in && (
+                                            {!mac.check_in && !isNotWorking && (
                                               <button
                                                 type="button"
                                                 onClick={() => handleCheckInMachine(mac)}
@@ -1457,17 +1518,102 @@ export const Attendance = () => {
                                         </div>
                                       </td>
                                       <td>
-                                        <span className={`badge-pill ${mac.status === 'CHECKED_IN' || mac.status === 'PRESENT' || mac.status === 'OPERATING' ? 'badge-green' : mac.status === 'CHECKED_OUT' ? 'badge-blue' : mac.status === 'ABSENT' ? 'badge-red' : 'badge-gray'}`} style={{ fontSize: '0.72rem', fontWeight: '700' }}>
-                                          {mac.status || 'NOT_MARKED'}
-                                        </span>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
+                                          {isWorking && (
+                                            <span className="badge-pill badge-green" style={{ fontSize: '0.72rem', fontWeight: '700' }}>
+                                              Working
+                                            </span>
+                                          )}
+                                          {isNotWorking && (
+                                            <span className="badge-pill badge-amber" style={{ fontSize: '0.72rem', fontWeight: '700', background: '#fef2f2', color: '#b91c1c', borderColor: '#fecaca' }}>
+                                              Not Working
+                                            </span>
+                                          )}
+                                          {!isWorking && !isNotWorking && (
+                                            <span className="badge-pill badge-amber" style={{ fontSize: '0.72rem', fontWeight: '700' }}>
+                                              Not marked
+                                            </span>
+                                          )}
+                                          {attStatus && attStatus !== 'NOT_MARKED' && (
+                                            <span style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: 600 }}>
+                                              Attendance: {attStatus.replace(/_/g, ' ')}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td style={{ minWidth: 180, maxWidth: 280 }}>
+                                        {isNotWorking ? (
+                                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                              <span
+                                                className="badge-pill"
+                                                style={{
+                                                  fontSize: '0.68rem',
+                                                  fontWeight: 700,
+                                                  background: issueKind === 'OEM' ? '#fff7ed' : '#eff6ff',
+                                                  color: issueKind === 'OEM' ? '#c2410c' : '#1d4ed8',
+                                                  border: `1px solid ${issueKind === 'OEM' ? '#fed7aa' : '#bfdbfe'}`,
+                                                }}
+                                              >
+                                                {issueKind === 'OEM' ? (
+                                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                    <LucideWrench size={11} /> OEM Breakdown
+                                                  </span>
+                                                ) : (
+                                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                    <LucideAlertTriangle size={11} /> Ops Stop
+                                                  </span>
+                                                )}
+                                              </span>
+                                              {issueTicket && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => navigate('/breakdown')}
+                                                  style={{
+                                                    border: 'none',
+                                                    background: 'transparent',
+                                                    color: '#0369a1',
+                                                    fontSize: '0.72rem',
+                                                    fontWeight: 700,
+                                                    cursor: 'pointer',
+                                                    padding: 0,
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: 3,
+                                                  }}
+                                                >
+                                                  {issueTicket} <LucideExternalLink size={11} />
+                                                </button>
+                                              )}
+                                            </div>
+                                            <div style={{ fontSize: '0.78rem', color: '#334155', fontWeight: 600, lineHeight: 1.35 }}>
+                                              {issueReason || 'No reason provided'}
+                                            </div>
+                                            {mac.issue_severity && (
+                                              <div style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                                                Severity: {String(mac.issue_severity).toUpperCase()}
+                                              </div>
+                                            )}
+                                          </div>
+                                        ) : isWorking ? (
+                                          <span style={{ fontSize: '0.75rem', color: '#047857', fontWeight: 600 }}>
+                                            Machine attendance marked
+                                          </span>
+                                        ) : (
+                                          <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                                            No attendance or open issue
+                                          </span>
+                                        )}
                                       </td>
                                     </tr>
-                                  ))}
+                                    );
+                                  })}
                                 </tbody>
                               </table>
                             </div>
                           </div>
-                        )}
+                          );
+                        })()}
                       </>
                     )}
 

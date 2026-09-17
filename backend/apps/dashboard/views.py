@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework import permissions
 from django.utils import timezone
+from django.db.models import Q
 from datetime import timedelta
 from apps.machines.models import Machine
 from apps.tasks.models import Task
@@ -14,6 +15,68 @@ def safe_float(val, default=0.0):
         return float(val) if val is not None else default
     except (ValueError, TypeError):
         return default
+
+
+def _ilync_assigned_chassis_for_vendors(vendors):
+    """
+    Collect machine chassis / machineNo values assigned on live iLync vendor records.
+    Dashboard machine KPIs should only count these assigned machines, not the full FiberForce fleet.
+    """
+    assigned = set()
+    if not vendors:
+        return assigned
+    try:
+        from apps.integrations.ilync_client import IlyncClient
+        client = IlyncClient()
+    except Exception:
+        return assigned
+
+    for v_obj in vendors:
+        ext_v_id = getattr(v_obj, 'external_vendor_id', None) or getattr(v_obj, 'id', None)
+        if not ext_v_id:
+            continue
+        try:
+            live_res = client.get_vendor_by_id(ext_v_id)
+        except Exception:
+            continue
+        payload = (
+            live_res.get('data')
+            if (isinstance(live_res, dict) and live_res.get('success'))
+            else (live_res if isinstance(live_res, dict) else {})
+        )
+        macs = (payload or {}).get('machines') or (payload or {}).get('assigned_machines') or []
+        if not isinstance(macs, list):
+            continue
+        for item in macs:
+            if isinstance(item, dict):
+                code = str(
+                    item.get('machineNo')
+                    or item.get('machine_no')
+                    or item.get('machine_chassis_no')
+                    or item.get('serial_number')
+                    or item.get('chassis_no')
+                    or item.get('name')
+                    or item.get('code')
+                    or item.get('id')
+                    or ''
+                ).strip()
+                if code:
+                    assigned.add(code)
+            elif isinstance(item, str) and item.strip():
+                assigned.add(item.strip())
+    return assigned
+
+
+def _filter_machines_to_assigned(machines_qs, chassis_set):
+    if not chassis_set:
+        return machines_qs.none()
+    return machines_qs.filter(
+        Q(machine_chassis_no__in=chassis_set)
+        | Q(serial_number__in=chassis_set)
+        | Q(name__in=chassis_set)
+        | Q(code__in=chassis_set)
+    ).distinct()
+
 
 class DashboardSummaryView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -42,14 +105,25 @@ class DashboardSummaryView(APIView):
         machines_qs = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
         tasks_qs = filter_queryset_by_vendor(Task.objects.all(), user, 'vendor_id', request=request)
 
+        # Restrict machine KPIs/widgets to iLync-assigned machines only (not full fleet dump)
+        from apps.vendors.models import Vendor
+        vendor_ids = get_user_vendor_ids(user)
+        v_qs = Vendor.objects.filter(is_active=True)
+        if vendor_ids is not None:
+            v_qs = v_qs.filter(id__in=vendor_ids)
+        if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+            v_qs = v_qs.filter(
+                Q(external_vendor_id=req_v) | Q(name__iexact=req_v) | Q(id=req_v if str(req_v).isdigit() else None)
+            )
+        assigned_chassis = _ilync_assigned_chassis_for_vendors(list(v_qs))
+        machines_qs = _filter_machines_to_assigned(machines_qs, assigned_chassis)
+
         # Query first available machine for widgets
         first_machine = machines_qs.filter(site_name__isnull=False).exclude(site_name='').first() or machines_qs.first()
 
         # Dynamic Project / Site Name from Vendor assignment or Machines DB
-        vendor_ids = get_user_vendor_ids(user)
         site_name = None
         if vendor_ids:
-            from apps.vendors.models import Vendor
             assigned_v = Vendor.objects.filter(id__in=vendor_ids).first()
             if assigned_v:
                 site_name = assigned_v.address or f"{assigned_v.name} Site"
@@ -198,6 +272,8 @@ class DashboardSummaryView(APIView):
         quick_stats = {
             "total_machines": total_machines,
             "running_machines": running_machines,
+            "assigned_machines": total_machines,
+            "assigned_chassis_count": len(assigned_chassis),
             "shots_in_progress": 1 if total_machines > 0 else 0,
             "tasks_pending": pending_tasks,
             "tasks_total": task_stats.get("total", 0),
@@ -233,6 +309,11 @@ class DashboardSummaryView(APIView):
 
         # Vendor Scoped Team & Attendance Statistics for Dashboard (LIVE from iLync)
         from apps.attendance.models import AttendanceRecord
+        from apps.attendance.views import (
+            ATTENDANCE_SCOPE_ROLES,
+            bump_scope_matrix,
+            normalize_attendance_role,
+        )
         from apps.vendors.models import Vendor
         from apps.integrations.ilync_client import IlyncClient
 
@@ -248,22 +329,53 @@ class DashboardSummaryView(APIView):
             )
 
         target_vendors = list(v_qs)
-        today_date_str = today.strftime('%Y-%m-%d')
-        today_recs = list(AttendanceRecord.objects.filter(date=today_date_str).exclude(attendance_type='MACHINE'))
+        # Normalize selected date to a Date (not datetime) for AttendanceRecord.date
+        att_date = today.date() if hasattr(today, 'date') else today
+        today_date_str = att_date.strftime('%Y-%m-%d') if hasattr(att_date, 'strftime') else str(att_date)
+        today_recs = list(
+            AttendanceRecord.objects.filter(date=att_date)
+            .exclude(attendance_type='MACHINE')
+            .select_related('user')
+        )
+
+        # Index records for O(1) lookup across iLync roster users
+        by_external = {}
+        by_username = {}
+        by_email = {}
+        by_phone = {}
+        for r in today_recs:
+            u = r.user
+            if not u:
+                continue
+            if u.external_user_id:
+                by_external[str(u.external_user_id).strip()] = r
+            if u.username:
+                by_username[str(u.username).strip()] = r
+            if u.employee_id:
+                by_username[str(u.employee_id).strip()] = r
+            if u.email and not str(u.email).lower().startswith('user@'):
+                by_email[str(u.email).strip().lower()] = r
+            if u.phone_number:
+                by_phone[str(u.phone_number).strip()] = r
 
         total_team_members = 0
         present_count = 0
         absent_count = 0
         half_day_count = 0
         leave_count = 0
+        week_off_count = 0
         not_marked_count = 0
+        scope_matrix_map = {
+            scope: {'scope': scope, 'total': 0, 'present': 0, 'not_marked': 0}
+            for scope in ATTENDANCE_SCOPE_ROLES
+        }
 
         for v_obj in target_vendors:
             ext_v_id = v_obj.external_vendor_id or v_obj.id
             live_res = None
             try:
                 live_res = client.get_vendor_by_id(ext_v_id)
-            except Exception as e:
+            except Exception:
                 pass
 
             v_payload = live_res.get('data') if (isinstance(live_res, dict) and live_res.get('success')) else (live_res if isinstance(live_res, dict) else {})
@@ -280,26 +392,37 @@ class DashboardSummaryView(APIView):
                     ext_u_id = None
                 mobile = str(u_info.get('mobile') or u_info.get('phone') or u_info.get('phoneNumber') or '').strip()
                 email = str(u_info.get('email') or '').strip()
+                name = str(u_info.get('name') or u_info.get('contactName') or 'Team Member').strip()
+                designation = str(u_info.get('designation') or u_info.get('role') or 'OPERATOR').strip()
+                u_role = normalize_attendance_role(designation)
+                synthetic_id = f"ILYNC-{name.replace(' ', '_')}_{mobile}" if (name or mobile) else None
 
                 rec = None
                 if ext_u_id:
-                    rec = next((r for r in today_recs if r.user and (str(r.user.external_user_id) == ext_u_id or str(r.user.username) == ext_u_id)), None)
+                    rec = by_external.get(ext_u_id) or by_username.get(ext_u_id)
+                if not rec and synthetic_id:
+                    rec = by_external.get(synthetic_id) or by_username.get(synthetic_id)
                 if not rec and email and not email.lower().startswith('user@'):
-                    rec = next((r for r in today_recs if r.user and r.user.email and r.user.email.lower() == email.lower()), None)
+                    rec = by_email.get(email.lower())
                 if not rec and mobile:
-                    rec = next((r for r in today_recs if r.user and (str(r.user.phone_number) == mobile or str(r.user.username) == mobile)), None)
+                    rec = by_phone.get(mobile) or by_username.get(mobile)
 
-                st = (rec.status if rec else 'NOT_MARKED').upper()
+                st = (rec.status if rec else 'NOT_MARKED').upper().replace(' ', '_')
                 if st in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT']:
                     present_count += 1
                 elif st == 'ABSENT':
                     absent_count += 1
-                elif st in ['HALF_DAY', 'HALF DAY']:
+                elif st in ['HALF_DAY', 'HALFDAY']:
                     half_day_count += 1
                 elif st == 'LEAVE':
                     leave_count += 1
+                elif st in ['WEEK_OFF', 'WEEKOFF']:
+                    week_off_count += 1
                 else:
                     not_marked_count += 1
+                    st = 'NOT_MARKED'
+
+                bump_scope_matrix(scope_matrix_map, u_role, st)
 
         quick_stats["team_present"] = present_count
         quick_stats["team_total"] = total_team_members
@@ -310,8 +433,11 @@ class DashboardSummaryView(APIView):
             "absent": absent_count,
             "half_day": half_day_count,
             "leave": leave_count,
+            "week_off": week_off_count,
             "not_marked": not_marked_count,
-            "attendance_text": f"{present_count} / {total_team_members} Present"
+            "date": today_date_str,
+            "attendance_text": f"{present_count} / {total_team_members} Present",
+            "scope_matrix": [scope_matrix_map[s] for s in ATTENDANCE_SCOPE_ROLES],
         }
 
         data = {

@@ -6,9 +6,7 @@ import { taskService } from '../../services/taskService';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../context/ToastContext';
 import { getDefaultRoute } from '../../utils/permissions';
-import { formatPct, formatScopeStr } from '../../utils/formatters';
 import { PageHeader } from '../../components/common/PageHeader';
-import { BarChart } from '../../components/common/BarChart';
 import { DateField } from '../../components/common/DateField';
 import { getTodayDateString } from '../../utils/dateUtils';
 import { LucideMapPin, LucideCheckSquare, LucideShieldAlert } from 'lucide-react';
@@ -34,7 +32,44 @@ export const Dashboard = () => {
     setData(null);
     const params = { date: selectedDate };
     if (selectedVendorId && selectedVendorId !== 'all') params.vendor_id = selectedVendorId;
-    dashboardService.getSummary(params).then(res => setData(res.data)).catch(console.error);
+
+    let cancelled = false;
+    Promise.all([
+      dashboardService.getSummary(params),
+      attendanceService.getTeamAttendance(params).catch(() => null),
+    ]).then(([summaryRes, teamRes]) => {
+      if (cancelled) return;
+      const summary = summaryRes?.data || summaryRes || {};
+      const teamPayload = teamRes?.data?.data || teamRes?.data || teamRes || null;
+      const teamSummary = teamPayload?.summary;
+      const scopeMatrix = teamPayload?.scope_matrix;
+      if (teamSummary && typeof teamSummary === 'object') {
+        summary.vendor_team_attendance = {
+          ...(summary.vendor_team_attendance || {}),
+          total_team: teamSummary.total ?? summary.vendor_team_attendance?.total_team ?? 0,
+          present: teamSummary.present ?? 0,
+          absent: teamSummary.absent ?? 0,
+          half_day: teamSummary.half_day ?? 0,
+          leave: teamSummary.leave ?? 0,
+          week_off: teamSummary.week_off ?? 0,
+          not_marked: teamSummary.not_marked ?? 0,
+          attendance_text: `${teamSummary.present ?? 0} / ${teamSummary.total ?? 0} Present`,
+          scope_matrix: Array.isArray(scopeMatrix)
+            ? scopeMatrix
+            : (summary.vendor_team_attendance?.scope_matrix || []),
+        };
+        if (summary.quick_stats) {
+          summary.quick_stats = {
+            ...summary.quick_stats,
+            team_present: teamSummary.present ?? 0,
+            team_total: teamSummary.total ?? 0,
+          };
+        }
+      }
+      setData(summary);
+    }).catch(console.error);
+
+    return () => { cancelled = true; };
   }, [selectedDate, selectedVendorId]);
 
   useEffect(() => {
@@ -80,6 +115,15 @@ export const Dashboard = () => {
 
   const projectName = data?.project_name || (user?.vendor_name ? `${user.vendor_name} Project` : 'Site operations');
   const team = data?.vendor_team_attendance || {};
+  const scopeMatrix = Array.isArray(team.scope_matrix) && team.scope_matrix.length
+    ? team.scope_matrix
+    : [
+        { scope: 'HERO', total: 0, present: 0, not_marked: 0 },
+        { scope: 'VENDOR', total: 0, present: 0, not_marked: 0 },
+        { scope: 'OPERATOR', total: 0, present: 0, not_marked: 0 },
+        { scope: 'TRACKER', total: 0, present: 0, not_marked: 0 },
+        { scope: 'HELPER', total: 0, present: 0, not_marked: 0 },
+      ];
 
   return (
     <div className="screen-container">
@@ -125,15 +169,56 @@ export const Dashboard = () => {
             <h2 className="panel-title">Team attendance</h2>
             <button type="button" className="panel-link" onClick={() => navigate('/attendance')}>Open attendance</button>
           </div>
-          <BarChart
-            items={[
-              { label: 'Present', value: team.present ?? 0 },
-              { label: 'Absent', value: team.absent ?? 0 },
-              { label: 'Half day', value: team.half_day ?? 0 },
-              { label: 'Leave', value: team.leave ?? 0 },
-              { label: 'Not marked', value: team.not_marked ?? 0 }
-            ]}
-          />
+
+          {(() => {
+            const totalAll = Number(team.total_team ?? scopeMatrix.reduce((s, r) => s + (Number(r.total) || 0), 0)) || 0;
+            const presentAll = Number(team.present ?? scopeMatrix.reduce((s, r) => s + (Number(r.present) || 0), 0)) || 0;
+            const notMarkedAll = Number(team.not_marked ?? scopeMatrix.reduce((s, r) => s + (Number(r.not_marked) || 0), 0)) || 0;
+            const presentPct = totalAll > 0 ? Math.min(100, Math.round((presentAll / totalAll) * 100)) : 0;
+
+            return (
+              <div className="att-scope">
+                <div className="att-scope-summary">
+                  <div className="att-scope-summary-text">
+                    <div className="att-scope-summary-label">Present today</div>
+                    <div className="att-scope-summary-value">
+                      {presentAll}
+                      <span> / {totalAll}</span>
+                    </div>
+                  </div>
+                  <div className="att-scope-summary-meta">
+                    <span>{presentPct}%</span>
+                    <span className="att-scope-dot" />
+                    <span>{notMarkedAll} not marked</span>
+                  </div>
+                </div>
+                <div className="progress-track att-scope-progress">
+                  <div className="progress-fill" style={{ width: `${presentPct}%` }} />
+                </div>
+
+                <div className="metric-list att-scope-list">
+                  {scopeMatrix.map((row) => {
+                    const total = Number(row.total) || 0;
+                    const present = Number(row.present) || 0;
+                    const notMarked = Number(row.not_marked) || 0;
+                    const empty = total === 0;
+                    return (
+                      <div key={row.scope} className={`metric-row att-scope-row${empty ? ' is-empty' : ''}`}>
+                        <span className="att-scope-name">{row.scope}</span>
+                        <div className="att-scope-stats">
+                          <strong>
+                            {present}
+                            <span className="att-scope-of"> / {total}</span>
+                          </strong>
+                          <em>{empty ? 'No crew' : `${notMarked} not marked`}</em>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
         </section>
 
         <section className="panel">

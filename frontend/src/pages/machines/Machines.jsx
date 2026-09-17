@@ -34,7 +34,7 @@ export const Machines = () => {
   const [emptyStateCode, setEmptyStateCode] = useState(null);
   const [emptyStateMessage, setEmptyStateMessage] = useState('');
   const [loading, setLoading] = useState(true);
-  const [activeFilter, setActiveFilter] = useState('All');
+  const [activeFilter, setActiveFilter] = useState('Commissioned');
   const [search, setSearch] = useState('');
   const navigate = useNavigate();
 
@@ -65,7 +65,11 @@ export const Machines = () => {
     return () => clearInterval(interval);
   }, []);
 
+  const isVendorAssigned = (m) => Boolean(m?.is_vendor_assigned || m?.is_commissioned_tab);
+
   const counts = {
+    Commissioned: statusCounts?.COMMISSIONED
+      ?? allMachines.filter(isVendorAssigned).length,
     All: statusCounts?.ALL ?? allMachines.length,
     Live: statusCounts?.LIVE ?? allMachines.filter((m) => m.is_online).length,
     Running: statusCounts?.RUNNING ?? allMachines.filter((m) => (m.status || '').toUpperCase() === 'RUNNING').length,
@@ -76,6 +80,7 @@ export const Machines = () => {
   const machines = useMemo(() => {
     const q = search.trim().toLowerCase();
     return allMachines.filter((m) => {
+      if (activeFilter === 'Commissioned' && !isVendorAssigned(m)) return false;
       if (activeFilter === 'Live' && !m.is_online) return false;
       if (activeFilter === 'Running' && (m.status || '').toUpperCase() !== 'RUNNING') return false;
       if (activeFilter === 'Idle' && (m.status || '').toUpperCase() !== 'IDLE') return false;
@@ -113,7 +118,7 @@ export const Machines = () => {
     <div className="screen-container">
       <PageHeader
         title="Machines"
-        subtitle={`${counts.All} units from FiberForce (${counts.Live} live), scoped to your vendor`}
+        subtitle={`${counts.Commissioned} commissioned · ${counts.All} FiberForce (${counts.Live} live)`}
         actions={
           <button type="button" className="btn-secondary" onClick={() => fetchMachines(true)}>
             <LucideRefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -135,6 +140,7 @@ export const Machines = () => {
 
       <div className="filter-row">
         {[
+          { label: 'Commissioned', count: counts.Commissioned },
           { label: 'All', count: counts.All },
           { label: 'Live', count: counts.Live },
           { label: 'Running', count: counts.Running },

@@ -1,7 +1,71 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useNavigate } from 'react-router-dom';
+
+const statusColors = {
+  RUNNING: { fill: '#059669', ring: '#047857', glow: 'rgba(5, 150, 105, 0.28)', label: 'Working' },
+  IDLE: { fill: '#d97706', ring: '#b45309', glow: 'rgba(217, 119, 6, 0.28)', label: 'Idle' },
+  MAINTENANCE: { fill: '#7c3aed', ring: '#6d28d9', glow: 'rgba(124, 58, 237, 0.28)', label: 'Maintenance' },
+  OFFLINE: { fill: '#64748b', ring: '#475569', glow: 'rgba(100, 116, 139, 0.28)', label: 'Offline' },
+};
+
+function fmt(val, digits = 1, suffix = '') {
+  if (val === null || val === undefined || val === '') return '—';
+  const n = Number(val);
+  if (Number.isNaN(n)) return String(val);
+  return `${n.toFixed(digits)}${suffix}`;
+}
+
+function buildMarkerHtml(course, status) {
+  const colors = statusColors[status] || statusColors.RUNNING;
+  const deg = Number.isFinite(Number(course)) ? Number(course) : 0;
+  return `
+    <div class="tracking-arrow-wrap" style="
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+    ">
+      <div style="
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: ${colors.fill};
+        border: 2.5px solid #ffffff;
+        box-shadow:
+          0 0 0 2px ${colors.ring},
+          0 2px 8px rgba(15, 23, 42, 0.35);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      ">
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          style="
+            transform: rotate(${deg}deg);
+            transform-origin: center center;
+            display: block;
+            transition: transform 0.3s ease;
+          "
+        >
+          <path
+            d="M12 2.5 L19.5 20.5 L12 16.2 L4.5 20.5 Z"
+            fill="#ffffff"
+            stroke="rgba(15,23,42,0.18)"
+            stroke-width="0.8"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </div>
+    </div>
+  `;
+}
 
 export const LeafletMap = ({
   machines = [],
@@ -13,7 +77,8 @@ export const LeafletMap = ({
   title = "Location",
   loading = false,
   chrome = true,
-  fill = false
+  fill = false,
+  fitToken = null,
 }) => {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -25,6 +90,10 @@ export const LeafletMap = ({
   const navigate = useNavigate();
 
   const activeMachines = singleMachine ? [singleMachine] : machines;
+  const machinesKey = useMemo(
+    () => activeMachines.map((m) => m.id || m.machine_id || m.chassis_no).join(','),
+    [activeMachines]
+  );
 
   const toggleFullscreen = () => {
     if (!wrapperRef.current) return;
@@ -36,9 +105,12 @@ export const LeafletMap = ({
   };
 
   useEffect(() => {
+    hasFittedBoundsRef.current = false;
+  }, [fitToken, machinesKey, singleMachine?.id]);
+
+  useEffect(() => {
     if (!mapContainerRef.current) return;
 
-    // Initialize map instance if not existing
     if (!mapInstanceRef.current) {
       const defaultCenter = singleMachine
         ? [singleMachine.latitude || singleMachine.current_latitude || 27.714995, singleMachine.longitude || singleMachine.current_longitude || 74.64694]
@@ -51,13 +123,11 @@ export const LeafletMap = ({
         attributionControl: false
       });
 
-      // Google Maps Roadmap Tile Layer
       L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
         subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
         maxZoom: 20
       }).addTo(map);
 
-      // Custom Attribution Control matching screenshot
       const attributionControl = L.control({ position: 'bottomright' });
       attributionControl.onAdd = function() {
         const div = L.DomUtil.create('div', 'leaflet-control-attribution');
@@ -78,7 +148,6 @@ export const LeafletMap = ({
     const map = mapInstanceRef.current;
     const markersGroup = markersGroupRef.current;
 
-    // Clear previous markers & polylines
     markersGroup.clearLayers();
     if (polylineRef.current) {
       map.removeLayer(polylineRef.current);
@@ -90,76 +159,72 @@ export const LeafletMap = ({
     const bounds = [];
 
     activeMachines.forEach(m => {
-      const lat = parseFloat(m.latitude || m.current_latitude || 27.714995);
-      const lng = parseFloat(m.longitude || m.current_longitude || 74.64694);
+      const lat = parseFloat(m.latitude ?? m.current_latitude);
+      const lng = parseFloat(m.longitude ?? m.current_longitude);
 
       if (isNaN(lat) || isNaN(lng)) return;
 
       bounds.push([lat, lng]);
 
-      const course = m.course_deg || m.heading || 45;
+      const course = m.course_deg ?? m.tilt ?? m.heading ?? 0;
       const status = (m.status || 'RUNNING').toUpperCase();
+      const colors = statusColors[status] || statusColors.RUNNING;
+      const headingLabel = m.heading_label || '';
 
-      // Custom mint-green circular disc directional arrow marker matching screenshot 1
       const customIcon = L.divIcon({
-        className: 'custom-live-location-disc-marker',
-        html: `
-          <div style="
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            background: #6ee7b7;
-            border: 2.5px solid #059669;
-            box-shadow: 0 0 0 5px rgba(16, 185, 129, 0.28), 0 3px 8px rgba(0, 0, 0, 0.18);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: transform 0.15s ease;
-          ">
-            <svg width="18" height="18" viewBox="0 0 24 24" style="transform: rotate(${course}deg); transform-origin: center;">
-              <path d="M12 2L19 21L12 17L5 21L12 2Z" fill="#0f172a" />
-            </svg>
-          </div>
-        `,
-        iconSize: [36, 36],
-        iconAnchor: [18, 18],
-        popupAnchor: [0, -18]
+        className: 'tracking-arrow-marker custom-live-location-arrow-marker',
+        html: buildMarkerHtml(course, status),
+        iconSize: [44, 44],
+        iconAnchor: [22, 22],
+        popupAnchor: [0, -20],
       });
 
       const marker = L.marker([lat, lng], { icon: customIcon });
 
       const popupContent = `
-        <div style="font-family: Inter, sans-serif; min-width: 220px; padding: 4px;">
-          <div style="font-family: Inter, sans-serif; font-size: 0.9375rem; font-weight: 600; color: #111827;">
+        <div style="font-family: inherit; min-width: 240px; max-width: 280px; padding: 2px;">
+          <div style="font-size: 0.95rem; font-weight: 700; color: #0f172a;">
             ${m.name || m.model_name || 'HDD Machine'}
           </div>
-          <div style="font-size: 0.75rem; color: #6b7280; margin-bottom: 6px;">
-            Chassis: <strong>${m.chassis_no || m.machine_chassis_no || m.serial_number || '600202608396'}</strong>
+          <div style="font-size: 0.75rem; color: #64748b; margin: 2px 0 8px;">
+            Chassis <strong style="color:#334155">${m.chassis_no || m.machine_chassis_no || m.serial_number || '—'}</strong>
           </div>
-          <div style="display: flex; gap: 6px; margin-bottom: 8px;">
-            <span style="background: #111827; color: #fff; padding: 2px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 600;">
-              ${status}
+          <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;">
+            <span style="background: ${colors.fill}; color: #fff; padding: 2px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 700;">
+              ${colors.label || status}
             </span>
-            <span style="background: #f3f4f6; color: #374151; padding: 2px 8px; border-radius: 6px; font-size: 0.7rem; font-weight: 600;">
-              ${m.speed !== undefined ? m.speed + ' km/h' : '0.92 km/h'}
+            <span style="background: #f1f5f9; color: #334155; padding: 2px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 600;">
+              ${fmt(m.speed, 2)} km/h
+            </span>
+            <span style="background: #eff6ff; color: #1d4ed8; padding: 2px 8px; border-radius: 999px; font-size: 0.7rem; font-weight: 600;">
+              Heading ${fmt(course, 0)}° ${headingLabel}
             </span>
           </div>
-          <div style="font-size: 0.78rem; color: #4b5563; line-height: 1.5;">
-            📍 Latitude: <strong>${lat.toFixed(6)}</strong><br/>
-            📍 Longitude: <strong>${lng.toFixed(6)}</strong><br/>
-            📍 Site: <strong>${m.site_name || m.location_name || ''}</strong><br/>
-            👤 Operator: <strong>${m.operator_name || (m.operator?.name) || 'Swarnim Mittal'}</strong><br/>
-            ⛽ Fuel Level: <strong>${m.fuel_level || m.current_fuel_level || 6} L</strong>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; font-size: 0.75rem; color: #475569; line-height: 1.35;">
+            <div>Lat <strong style="color:#0f172a">${lat.toFixed(6)}</strong></div>
+            <div>Lng <strong style="color:#0f172a">${lng.toFixed(6)}</strong></div>
+            <div>Fuel <strong style="color:#0f172a">${fmt(m.fuel_level ?? m.current_fuel_level, 1, ' L')}</strong></div>
+            <div>Fuel % <strong style="color:#0f172a">${m.fuel_percentage != null ? `${m.fuel_percentage}%` : '—'}</strong></div>
+            <div>RPM <strong style="color:#0f172a">${fmt(m.rpm, 0)}</strong></div>
+            <div>Coolant <strong style="color:#0f172a">${fmt(m.coolant_temp, 1, '°C')}</strong></div>
+            <div>Oil <strong style="color:#0f172a">${fmt(m.oil_pressure, 1)}</strong></div>
+            <div>Voltage <strong style="color:#0f172a">${fmt(m.supply_voltage, 1, ' V')}</strong></div>
+            <div>Battery <strong style="color:#0f172a">${fmt(m.internal_battery_v, 1, ' V')}</strong></div>
+            <div>GNSS <strong style="color:#0f172a">${m.gnss_valid == null ? '—' : (m.gnss_valid ? 'Valid' : 'Invalid')}</strong></div>
+          </div>
+          <div style="margin-top: 8px; font-size: 0.72rem; color: #64748b;">
+            ${m.state_label || m.state || ''}
+            ${m.site_name || m.location_name ? `<br/>Site: <strong style="color:#334155">${m.site_name || m.location_name}</strong>` : ''}
+            ${m.operator_name ? `<br/>Operator: <strong style="color:#334155">${m.operator_name}</strong>` : ''}
           </div>
           <button id="btn-inspect-${m.id || 1}" style="
             margin-top: 10px;
             width: 100%;
-            background: #111827;
+            background: #0f172a;
             color: #ffffff;
             border: none;
-            padding: 6px 12px;
-            border-radius: 6px;
+            padding: 7px 12px;
+            border-radius: 8px;
             font-size: 0.78rem;
             font-weight: 600;
             cursor: pointer;
@@ -180,7 +245,6 @@ export const LeafletMap = ({
       markersGroup.addLayer(marker);
     });
 
-    // Draw historic route polyline only if showRoute is true AND explicit routePoints are provided
     if (showRoute && Array.isArray(routePoints) && routePoints.length > 1) {
       polylineRef.current = L.polyline(routePoints, {
         color: '#111827',
@@ -192,7 +256,6 @@ export const LeafletMap = ({
       }).addTo(map);
     }
 
-    // Fit map view bounds (only on initial load or singleMachine selection)
     if (!hasFittedBoundsRef.current || singleMachine) {
       if (bounds.length > 1) {
         map.fitBounds(bounds, { padding: [50, 50] });
@@ -206,7 +269,7 @@ export const LeafletMap = ({
     setTimeout(() => {
       try { map.invalidateSize(); } catch (e) { /* ignore */ }
     }, 80);
-  }, [machines, singleMachine, zoom, showRoute, routePoints]);
+  }, [machines, singleMachine, zoom, showRoute, routePoints, fitToken, machinesKey, navigate]);
 
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -273,11 +336,9 @@ export const LeafletMap = ({
         </button>
       )}
 
-      {/* Map Container */}
       <div style={{ flex: 1, width: '100%', position: 'relative' }}>
         <div ref={mapContainerRef} style={{ width: '100%', height: '100%', zIndex: 1 }} />
 
-        {/* Compass Rose Widget in Bottom Right */}
         <div style={{
           position: 'absolute',
           bottom: '24px',

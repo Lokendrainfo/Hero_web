@@ -472,3 +472,180 @@ class OpsStopCloseView(FiberForceBreakdownMixin, APIView):
         _, index, _ = self.machines_payload(request)
         row = _enrich_row(_as_object(ff), index)
         return success_response(data=row, message=ff.get('message') or 'Ops Stop closed.')
+
+
+def _issue_reason_text(row):
+    if not isinstance(row, dict):
+        return ''
+    keys = row.get('reason_keys') or []
+    labels = []
+    if isinstance(keys, list):
+        for key in keys:
+            if isinstance(key, dict):
+                label = _clean_text(key.get('label') or key.get('code'))
+                if label:
+                    labels.append(label)
+            elif key:
+                labels.append(str(key).strip())
+    text = _clean_text(row.get('reason') or row.get('note'))
+    if labels and text:
+        return f"{', '.join(labels)} — {text}"
+    if labels:
+        return ', '.join(labels)
+    return text
+
+
+def _is_open_issue_row(row):
+    if not isinstance(row, dict):
+        return False
+    st = _clean_text(row.get('status')).upper().replace(' ', '_')
+    if st in ('CLOSED', 'RESOLVED', 'DONE', 'COMPLETED', 'CANCELLED', 'CANCELED'):
+        return False
+    if st and st not in ('OPEN', 'SEEN', 'ACCEPTED', 'IN_PROGRESS', 'PENDING', 'ACTIVE'):
+        return False
+    if row.get('closed_at') or row.get('resolved_at') or row.get('closed_by'):
+        return False
+    # Blank status with no close markers → treat as open when coming from status=open API
+    return True
+
+
+def _serialize_open_issue(row, kind):
+    item = dict(row) if isinstance(row, dict) else {}
+    issue_id = item.get('id')
+    return {
+        'kind': kind,
+        'id': issue_id,
+        'tt_number': item.get('tt_number') or (
+            f"{'BD' if kind == 'OEM' else 'OS'}-{issue_id}" if issue_id is not None else None
+        ),
+        'status': _clean_text(item.get('status') or 'OPEN').upper() or 'OPEN',
+        'reason': _issue_reason_text(item),
+        'severity': item.get('severity'),
+        'started_at': item.get('occurred_at') or item.get('started_at'),
+        'machine_chassis_no': _clean_text(item.get('machine_chassis_no')),
+        'machine_name': item.get('machine_name') or item.get('model_name'),
+    }
+
+
+class MachineOpenIssuesView(FiberForceBreakdownMixin, APIView):
+    """
+    Aggregate open OEM breakdowns + Ops stops from FiberForce (HDD) for the app.
+    Query:
+      - machine_chassis_no / chassis: single machine
+      - chassis=a,b,c: batch
+      - (none): fleet open issues scoped to accessible machines
+    """
+
+    def get(self, request):
+        data = _request_data(request)
+        machines, index, machine_rows = self.machines_payload(request)
+        client = FiberForceClient()
+
+        raw_chassis = data.get('machine_chassis_no') or data.get('chassis') or ''
+        chassis_list = []
+        if isinstance(raw_chassis, (list, tuple)):
+            chassis_list = [_clean_text(c) for c in raw_chassis if _clean_text(c)]
+        else:
+            text = _clean_text(raw_chassis)
+            if text:
+                chassis_list = [part.strip() for part in text.split(',') if part.strip()]
+
+        by_chassis = {}
+
+        def ensure(chassis):
+            if chassis not in by_chassis:
+                by_chassis[chassis] = {'oem': [], 'ops': [], 'issues': []}
+            return by_chassis[chassis]
+
+        def add_rows(rows, kind, force_chassis=None):
+            for row in rows:
+                if not _is_open_issue_row(row):
+                    continue
+                chassis = force_chassis or _clean_text(row.get('machine_chassis_no'))
+                if not chassis:
+                    continue
+                if chassis_list and chassis not in chassis_list and chassis not in set(chassis_list):
+                    # allow case-insensitive match
+                    matched = next((c for c in chassis_list if c.lower() == chassis.lower()), None)
+                    if not matched:
+                        continue
+                    chassis = matched
+                if index and chassis not in index and not force_chassis:
+                    # still include if explicitly requested
+                    if chassis_list and chassis in chassis_list:
+                        pass
+                    elif not chassis_list:
+                        continue
+                serialized = _serialize_open_issue(row, kind)
+                serialized['machine_chassis_no'] = chassis
+                bucket = ensure(chassis)
+                if kind == 'OEM':
+                    bucket['oem'].append(serialized)
+                else:
+                    bucket['ops'].append(serialized)
+                bucket['issues'].append(serialized)
+
+        if len(chassis_list) == 1:
+            chassis = chassis_list[0]
+            machine, err = _require_chassis(request.user, request, chassis)
+            if err:
+                return err
+            chassis = machine.machine_chassis_no
+            oem_payload, oem_err = _ff_or_error(
+                client.list_machine_breakdowns(chassis, status='open', days=90, limit=100),
+                'Could not load open breakdowns.',
+            )
+            if oem_err:
+                return oem_err
+            ops_payload, ops_err = _ff_or_error(
+                client.list_machine_ops_stops(chassis, status='open', days=90, limit=100),
+                'Could not load open Ops Stops.',
+            )
+            if ops_err:
+                return ops_err
+            add_rows(_as_rows(oem_payload), 'OEM', force_chassis=chassis)
+            add_rows(_as_rows(ops_payload), 'OPS', force_chassis=chassis)
+            # ensure empty entry exists
+            ensure(chassis)
+        else:
+            oem_payload, oem_err = _ff_or_error(
+                client.fleet_breakdowns(status='open', limit=500),
+                'Could not load open fleet breakdowns.',
+            )
+            if oem_err:
+                return oem_err
+            ops_payload, ops_err = _ff_or_error(
+                client.fleet_ops_stops(status='open', limit=500),
+                'Could not load open fleet Ops Stops.',
+            )
+            if ops_err:
+                return ops_err
+            oem_rows = _filter_scope(_as_rows(oem_payload), index, restrict_to_known=not chassis_list)
+            ops_rows = _filter_scope(_as_rows(ops_payload), index, restrict_to_known=not chassis_list)
+            add_rows(oem_rows, 'OEM')
+            add_rows(ops_rows, 'OPS')
+            for chassis in chassis_list:
+                ensure(chassis)
+
+        results = []
+        for chassis, bucket in by_chassis.items():
+            machine = index.get(chassis)
+            results.append({
+                'machine_chassis_no': chassis,
+                'machine_name': (machine.model_name or machine.name) if machine else chassis,
+                'has_open_issue': bool(bucket['issues']),
+                'open_count': len(bucket['issues']),
+                'oem': bucket['oem'],
+                'ops': bucket['ops'],
+                'issues': bucket['issues'],
+            })
+
+        results.sort(key=lambda r: (not r['has_open_issue'], r['machine_chassis_no']))
+        return success_response(
+            data={
+                'results': results,
+                'by_chassis': by_chassis,
+                'total_open': sum(1 for r in results if r['has_open_issue']),
+            },
+            message='Open machine issues loaded.',
+        )

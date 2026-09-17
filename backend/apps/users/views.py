@@ -85,9 +85,28 @@ class UserViewSet(viewsets.ModelViewSet):
 
         return qs
 
+    @staticmethod
+    def _split_by_origin(qs):
+        """Internal = locally created (no external_user_id). External = API/iLync fed."""
+        internal_qs = qs.filter(Q(external_user_id__isnull=True) | Q(external_user_id=''))
+        external_qs = qs.exclude(Q(external_user_id__isnull=True) | Q(external_user_id=''))
+        return internal_qs, external_qs
+
 
     def list(self, request, *args, **kwargs):
         qs = self.get_queryset()
+        internal_qs, external_qs = self._split_by_origin(qs)
+        origin_counts = {
+            'INTERNAL': internal_qs.count(),
+            'EXTERNAL': external_qs.count(),
+        }
+
+        origin = (request.query_params.get('origin') or request.query_params.get('source') or '').strip().lower()
+        if origin in ('external', 'api', 'ilync'):
+            qs = external_qs
+        elif origin in ('internal', 'local', 'hero'):
+            qs = internal_qs
+
         total_count = qs.count()
 
         page_str = request.query_params.get('page', '0')
@@ -101,6 +120,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 "page": 0,
                 "size": total_count,
                 "total_pages": 1,
+                "origin_counts": origin_counts,
                 "results": serializer.data
             })
 
@@ -126,6 +146,7 @@ class UserViewSet(viewsets.ModelViewSet):
             "page": page_num,
             "size": size_num,
             "total_pages": total_pages,
+            "origin_counts": origin_counts,
             "results": serializer.data
         })
 
