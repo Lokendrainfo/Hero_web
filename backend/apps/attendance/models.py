@@ -88,6 +88,7 @@ class AttendanceRecord(models.Model):
     user_name_snapshot = models.CharField(max_length=255, null=True, blank=True)
     phone_number_snapshot = models.CharField(max_length=50, null=True, blank=True)
     role_snapshot = models.CharField(max_length=100, null=True, blank=True)
+    vendor_external_id_snapshot = models.CharField(max_length=100, null=True, blank=True, db_index=True)
     vendor_name_snapshot = models.CharField(max_length=255, null=True, blank=True)
 
     class Meta:
@@ -109,12 +110,17 @@ class AttendanceRecord(models.Model):
                 self.phone_number_snapshot = self.user.phone_number or None
             if force or not self.role_snapshot:
                 roles = self.user.get_role_list() if hasattr(self.user, 'get_role_list') else []
-                self.role_snapshot = roles[0] if roles else (self.user.role or self.user.designation or 'OPERATOR')
+                self.role_snapshot = roles[0] if roles else (self.user.role or getattr(self.user, 'designation', None) or 'OPERATOR')
         if force or not self.vendor_name_snapshot:
             if self.vendor:
                 self.vendor_name_snapshot = self.vendor.name
             elif self.user and self.user.vendor:
                 self.vendor_name_snapshot = self.user.vendor.name
+        if force or not self.vendor_external_id_snapshot:
+            if self.vendor and self.vendor.external_vendor_id:
+                self.vendor_external_id_snapshot = self.vendor.external_vendor_id
+            elif self.user and self.user.vendor and self.user.vendor.external_vendor_id:
+                self.vendor_external_id_snapshot = self.user.vendor.external_vendor_id
 
     def save(self, *args, **kwargs):
         if not self.pk:

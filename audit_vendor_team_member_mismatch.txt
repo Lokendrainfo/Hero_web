@@ -1,0 +1,467 @@
+====================================================================================================
+                 HERO vs. iLYNC PRODUCTION DATA CONSISTENCY AUDIT REPORT
+====================================================================================================
+
+DETECTED MODELS & FIELDS (HERO POSTGRESQL PRODUCTION):
+• Vendor Model:            apps.vendors.models.Vendor (Table: vendors_vendor)
+  Fields:                  id, name, external_vendor_id, is_active, status, code, vendor_code, vendor_type
+• User Model:              apps.authentication.models.User (Table: authentication_user)
+  Fields:                  id, username, first_name, last_name, phone_number, employee_id, role, vendor_id, external_user_id, is_active
+• Vendor-User M2M Mapping: apps.vendors.models.HeroVendorAssignment (Table: vendors_herovendorassignment)
+  Fields:                  id, user_id, vendor_id, is_active, assigned_at, assigned_by_id
+• AttendanceRecord Model:  apps.attendance.models.AttendanceRecord (Table: attendance_attendancerecord)
+  Fields:                  id, date, user_id, vendor_id, status, external_user_id_snapshot, employee_id_snapshot, user_name_snapshot, phone_number_snapshot, role_snapshot, vendor_name_snapshot
+  Note:                    vendor_external_id_snapshot is preserved via vendor_name_snapshot (no standalone vendor_external_id_snapshot column)
+• iLync Live Client:       apps.integrations.ilync_client.IlyncClient
+  Live Endpoints:          api/vendor/list, api/vendor/{id}
+
+SECTION 1 — SUMMARY
+----------------------------------------------------------------------------------------------------
+Total Hero Vendors:                26
+Total iLync Vendors:               21
+Vendor matches:                    20
+Vendor mismatches:                 6
+Total Hero Team Members:           124
+Total active iLync Team Members:   86
+Fully matched members:             43
+User ID mismatches:                0
+Vendor mismatches:                 4
+Cross-vendor collisions:           6
+Missing in Hero:                   0
+Missing in iLync:                  40
+Duplicate Hero mappings:           0
+Duplicate Phone mappings:          3
+Phone mismatches:                  24
+Employee ID mismatches:            14
+Name mismatches:                   21
+Role mismatches:                   21
+
+SECTION 2 — VENDOR MISMATCHES
+----------------------------------------------------------------------------------------------------
+Hero Vendor ID | Hero Vendor Name             | Hero external_vendor_id    | iLync Vendor ID            | iLync Vendor Name          | Problem
+----------------------------------------------------------------------------------------------------------------------------------------------
+17             | Telecrats                    | None                       | N/A                        | N/A                        | Hero vendor has no external_vendor_id
+22             | HERO INFRASTRUCTURE          | None                       | N/A                        | N/A                        | Hero vendor has no external_vendor_id
+23             | Empty Vendor Test            | ext_empty_123              | N/A                        | N/A                        | MISSING_IN_ILYNC (external_vendor_id not found in live iLync roster)
+24             | Vendor Alpha                 | VEND-ALPHA-01              | N/A                        | N/A                        | MISSING_IN_ILYNC (external_vendor_id not found in live iLync roster)
+25             | Vendor Beta                  | VEND-BETA-02               | N/A                        | N/A                        | MISSING_IN_ILYNC (external_vendor_id not found in live iLync roster)
+33             | MS Rekharam                  | 6aaab77412381cfcdf6a1ed9   | 6aaab77412381cfcdf6a1ed9   | Pranjal Enterprises-1      | VENDOR_NAME_CHANGED (Hero: "MS Rekharam" vs iLync: "Pranjal Enterprises-1")
+
+SECTION 3 — TEAM MEMBER MISMATCHES
+----------------------------------------------------------------------------------------------------
+Hero User ID | Hero Name              | Hero Vendor              | Hero external_user_id      | iLync userId               | iLync Name           | iLync Vendor             | Problem
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+541          | 6a95114cf475d920736bd8 | Vikas kumar              | 6a95114cf475d920736bd827   | 6a95114cf475d920736bd827   | Rakesh karwasra      | Premium infra solutions  | VENDOR_ID_MISMATCH (Hero: 'Vikas kumar' vs iLync: 'Premium infra solutions'); CROSS_VENDOR_COLLISION (Hero vendors: [21]; iLync vendors: ['Premium infra solutions', 'Vikas kumar']); PHONE_MISMATCH (Hero: '' vs iLync: '9116485564'); NAME_MISMATCH (Hero: '6a95114cf475d920736bd827' vs iLync: 'Rakesh karwasra'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'OPERATOR')
+447          | Balaram                | Premium infra solutions  | 6a95116a9b9a3a047ebccb9d   | 6a95116a9b9a3a047ebccb9d   | Balaram              | Premium infra solutions  | CROSS_VENDOR_COLLISION (Hero vendors: [28, 21]; iLync vendors: ['Premium infra solutions', 'Vikas kumar'])
+412          | RAJ-HID-0003 - Sh Sukh | Gurukripa Enterprises    | 6a7c2b4faaf73755a1cc3203   | 6a7c2b4faaf73755a1cc3203   | Sh Sukhram           | Gurukripa Enterprises    | PHONE_MISMATCH (Hero: '9799506422' vs iLync: '9799506421'); EMPLOYEE_ID_MISMATCH (Hero: 'VND-9799506422-null' vs iLync: 'VND-9799506421'); NAME_MISMATCH (Hero: 'RAJ-HID-0003 - Sh Sukhram' vs iLync: 'Sh Sukhram')
+535          | 6a85399a41bed9bf55ce1a | Gurukripa Enterprises    | 6a85399a41bed9bf55ce1a89   | 6a85399a41bed9bf55ce1a89   | Raghu Gurjar         | Gurukripa Enterprises    | PHONE_MISMATCH (Hero: '' vs iLync: '8421615137'); NAME_MISMATCH (Hero: '6a85399a41bed9bf55ce1a89' vs iLync: 'Raghu Gurjar'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'TRACKER')
+414          | Harpal Singh           | HARPAL INFRA DEVELOPMENT | 6a852f2541bed9bf55ce1a75   | 6a852f2541bed9bf55ce1a75   | Harpal Singh         | HARPAL INFRA DEVELOPMENT | PHONE_MISMATCH (Hero: '7296905661' vs iLync: '7426008949'); EMPLOYEE_ID_MISMATCH (Hero: 'VND-7296905661-null' vs iLync: 'VND-7426008949')
+417          | Kulwant Singh          | KHALSA TELECOM           | 6a8bdb939870687d64354f57   | 6a8bdb939870687d64354f57   | Kulwant Singh        | KHALSA TELECOM           | PHONE_MISMATCH (Hero: '9001799261' vs iLync: '9001799264'); EMPLOYEE_ID_MISMATCH (Hero: 'VND-9001799261-null' vs iLync: 'VND-9001799264')
+420          | Naveen Chouhan         | Naveen Chouhan           | 6a9550b49b9a3a047ebccbc0   | 6a9550b49b9a3a047ebccbc0   | Naveen Chouhan       | Naveen Chouhan           | EMPLOYEE_ID_MISMATCH (Hero: 'VND-9468018361-null' vs iLync: 'VND-9468018361')
+421          | Sonu Kumar             | Naveen Chouhan           | 6a9580c19b9a3a047ebccbdc   | 6a9580c19b9a3a047ebccbdc   | Sonu Kumar           | Naveen Chouhan           | CROSS_VENDOR_COLLISION (Hero vendors: [10, 26]; iLync vendors: ['Naveen Chouhan'])
+423          | Papu Ram               | Naveen Telecom           | 6a8a77d49870687d64354ed7   | 6a8a77d49870687d64354ed7   | Papu Ram             | Naveen Telecom           | EMPLOYEE_ID_MISMATCH (Hero: 'VND-9799272425-null' vs iLync: 'VND-9799272425')
+503          | 6a8a78e29870687d64354e | Naveen Telecom           | 6a8a78e29870687d64354ed8   | 6a8a78e29870687d64354ed8   | Ranjeet Jat          | Naveen Telecom           | PHONE_MISMATCH (Hero: '' vs iLync: '8000882403'); NAME_MISMATCH (Hero: '6a8a78e29870687d64354ed8' vs iLync: 'Ranjeet Jat'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'OPERATOR')
+426          | Papu Ram 1             | Naveen Telecom Network   | 6a8badb19870687d64354f34   | 6a8badb19870687d64354f34   | Rajendra Singh 1     | Naveen Telecom Network   | EMPLOYEE_ID_MISMATCH (Hero: 'VND-9799272426-null' vs iLync: 'VND-9799272426'); NAME_MISMATCH (Hero: 'Papu Ram 1' vs iLync: 'Rajendra Singh 1')
+429          | Rajendra Singh         | Naveen Telecom Network 1 | 6a97b260f475d920736bd96f   | 6a97b260f475d920736bd96f   | Rajendra Singh       | Naveen Telecom Network 1 | PHONE_MISMATCH (Hero: '8619545411' vs iLync: '8619545417'); EMPLOYEE_ID_MISMATCH (Hero: 'VND-8619545411-null' vs iLync: 'VND-8619545417')
+545          | 6a97cc4af475d920736bd9 | Naveen Telecom Network 1 | 6a97cc4af475d920736bd980   | 6a97cc4af475d920736bd980   | Mukesh Singh         | Naveen Telecom Network 1 | PHONE_MISMATCH (Hero: '' vs iLync: '9461476036'); NAME_MISMATCH (Hero: '6a97cc4af475d920736bd980' vs iLync: 'Mukesh Singh'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'OPERATOR')
+546          | 6a97cc809b9a3a047ebccd | Naveen Telecom Network 1 | 6a97cc809b9a3a047ebccd1e   | 6a97cc809b9a3a047ebccd1e   | Deva Ram             | Naveen Telecom Network 1 | PHONE_MISMATCH (Hero: '' vs iLync: '6376243735'); NAME_MISMATCH (Hero: '6a97cc809b9a3a047ebccd1e' vs iLync: 'Deva Ram'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'OPERATOR')
+504          | 6a9d1efe19febef7adae1e | Naveen Telecom Network 2 | 6a9d1efe19febef7adae1e04   | 6a9d1efe19febef7adae1e04   | Papu Ram 2           | Naveen Telecom Network 2 | NAME_MISMATCH (Hero: '6a9d1efe19febef7adae1e04' vs iLync: 'Papu Ram 2')
+431          | DEVA RAM               | Naveen Telecom Network 2 | 36f88f625f06424b63241593   | 36f88f625f06424b63241593   | DEVA RAM             | Naveen Telecom Network 2 | CROSS_VENDOR_COLLISION (Hero vendors: [13, 14]; iLync vendors: ['Naveen Telecom Network 2'])
+430          | MUKESH                 | Naveen Telecom Network 2 | 09669ca0f00d92a3f06a626f   | 09669ca0f00d92a3f06a626f   | MUKESH               | Naveen Telecom Network 2 | CROSS_VENDOR_COLLISION (Hero vendors: [13, 14]; iLync vendors: ['Naveen Telecom Network 2'])
+432          | Rajkamal bisnoi        | Pranjal Enterprises      | 6a82e6f2aaf73755a1cc360d   | 6a82e6f2aaf73755a1cc360d   | Rajkamal bisnoi      | Pranjal Enterprises      | EMPLOYEE_ID_MISMATCH (Hero: 'VND-7062891007-null' vs iLync: 'VND-7062891007')
+508          | Rekharam               | MS Rekharam              | 6aaab774dc6b416504ddd41e   | 6aaab774dc6b416504ddd41e   | Rajkamal 1           | Pranjal Enterprises-1    | PHONE_MISMATCH (Hero: '9950690891' vs iLync: '7742418807'); NAME_MISMATCH (Hero: 'Rekharam' vs iLync: 'Rajkamal 1')
+487          | Banvari                | Rekha ram                | f63b8e2c904a17d5c6f0a329   | f63b8e2c904a17d5c6f0a329   | Banvari Lal          | Pranjal Enterprises-1    | VENDOR_ID_MISMATCH (Hero: 'Rekha ram' vs iLync: 'Pranjal Enterprises-1'); NAME_MISMATCH (Hero: 'Banvari' vs iLync: 'Banvari Lal')
+556          | Megharam               | MS Rekharam              | 91c4e7a03d5f82b6a9e1c740   | 91c4e7a03d5f82b6a9e1c740   | Megharam             | Pranjal Enterprises-1    | ROLE_MISMATCH (Hero: 'OPERATOR' vs iLync: 'HELPER')
+557          | idanram                | MS Rekharam              | b7d2f8a516c903e4a1b65d29   | b7d2f8a516c903e4a1b65d29   | idanram              | Pranjal Enterprises-1    | ROLE_MISMATCH (Hero: 'OPERATOR' vs iLync: 'HELPER')
+558          | chimaram               | MS Rekharam              | e05a3c79f2b814d6c8a071be   | e05a3c79f2b814d6c8a071be   | chimaram             | Pranjal Enterprises-1    | ROLE_MISMATCH (Hero: 'OPERATOR' vs iLync: 'HELPER')
+559          | gordhan ram            | MS Rekharam              | 3f8d1a62c507e9b4d6f230ac   | 3f8d1a62c507e9b4d6f230ac   | gordhan ram          | Pranjal Enterprises-1    | ROLE_MISMATCH (Hero: 'OPERATOR' vs iLync: 'HELPER')
+553          | 6b0e4c93a7d512f8e1c629 | Raj Enterprises          | 6b0e4c93a7d512f8e1c6295a   | 6b0e4c93a7d512f8e1c6295a   | nibaram              | Pranjal Enterprises-1    | VENDOR_ID_MISMATCH (Hero: 'Raj Enterprises' vs iLync: 'Pranjal Enterprises-1'); PHONE_MISMATCH (Hero: '' vs iLync: '9001753061'); NAME_MISMATCH (Hero: '6b0e4c93a7d512f8e1c6295a' vs iLync: 'nibaram'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'HELPER')
+435          | Sanwar lal             | Raj Enterprises          | 6a8fc283df8e893b758aa2e7   | 6a8fc283df8e893b758aa2e7   | Sanwar lal           | Raj Enterprises          | PHONE_MISMATCH (Hero: '9928396031' vs iLync: '9928396030'); EMPLOYEE_ID_MISMATCH (Hero: 'VND-9928396031-null' vs iLync: 'VND-9928396030')
+506          | 9460172117             | Raza Enterprises         | d90bc1b2b692843103b23ad6   | d90bc1b2b692843103b23ad6   | Kishan Lal Jat       | Raza Enterprises         | PHONE_MISMATCH (Hero: '' vs iLync: '9460172117'); NAME_MISMATCH (Hero: '9460172117' vs iLync: 'Kishan Lal Jat'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'OPERATOR')
+507          | 9691678073             | Raza Enterprises         | 3273467d25b475318c0e4f83   | 3273467d25b475318c0e4f83   | Ramputra             | Raza Enterprises         | PHONE_MISMATCH (Hero: '' vs iLync: '9691678073'); NAME_MISMATCH (Hero: '9691678073' vs iLync: 'Ramputra'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'TRACKER')
+547          | 69cfafeabc629ec7bfa265 | Rekha ram                | 69cfafeabc629ec7bfa2658e   | 69cfafeabc629ec7bfa2658e   | Banvari              | Rekha ram                | PHONE_MISMATCH (Hero: '' vs iLync: '9549898157'); NAME_MISMATCH (Hero: '69cfafeabc629ec7bfa2658e' vs iLync: 'Banvari'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'TRACKER')
+467          | Narendra               | SHREE SHYAM ENTERPRISES  | 6aa3f3dedc6b416504ddd2a4   | 6aa3f3dedc6b416504ddd2a4   | Narendra             | SHREE SHYAM ENTERPRISES  | PHONE_MISMATCH (Hero: '7988566390' vs iLync: '7988566396'); EMPLOYEE_ID_MISMATCH (Hero: 'VND-7988566390' vs iLync: 'VND-7988566396')
+544          | 52e8a0c7f3149d6b3a5f02 | SHREE SHYAM ENTERPRISES  | 52e8a0c7f3149d6b3a5f028e   | 52e8a0c7f3149d6b3a5f028e   | Sonu                 | SHREE SHYAM ENTERPRISES  | PHONE_MISMATCH (Hero: '' vs iLync: '9817869480'); NAME_MISMATCH (Hero: '52e8a0c7f3149d6b3a5f028e' vs iLync: 'Sonu'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'OPERATOR')
+482          | Vinod Chotiya          | SHYAM ENTERPRISES        | 6aa9377bea7c1bedb4c9c64c   | 6aa9377bea7c1bedb4c9c64c   | Vinod Chotiya        | SHYAM ENTERPRISES        | PHONE_MISMATCH (Hero: '9983510036' vs iLync: '9983510035'); EMPLOYEE_ID_MISMATCH (Hero: 'VND-9983510036' vs iLync: 'VND-9983510035')
+446          | Rakesh kumar           | SHYAM ENTERPRISES        | a4f7c921d83b5e60f1a294c7   | a4f7c921d83b5e60f1a294c7   | Rakesh kumar         | SHYAM ENTERPRISES        | CROSS_VENDOR_COLLISION (Hero vendors: [28, 21, 31]; iLync vendors: ['SHYAM ENTERPRISES']); PHONE_MISMATCH (Hero: '9116485564' vs iLync: '9664099036')
+440          | 9602222651             | Shri Balaji Infra Projec | 6a7e941daaf73755a1cc3508   | 6a7e941daaf73755a1cc3508   | Sh Bajarang Lal      | Shri Balaji Infra Projec | PHONE_MISMATCH (Hero: '9602222651' vs iLync: '9602222653'); EMPLOYEE_ID_MISMATCH (Hero: 'VND-9602222651-null' vs iLync: 'VND-9602222653'); NAME_MISMATCH (Hero: '9602222651' vs iLync: 'Sh Bajarang Lal')
+540          | 6a853aec41bed9bf55ce1a | Shri Balaji Infra Projec | 6a853aec41bed9bf55ce1a88   | 6a853aec41bed9bf55ce1a88   | Jitendra singh       | Shri Balaji Infra Projec | PHONE_MISMATCH (Hero: '' vs iLync: '8668548706'); NAME_MISMATCH (Hero: '6a853aec41bed9bf55ce1a88' vs iLync: 'Jitendra singh'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'OPERATOR')
+489          | Ramniwas               | Shri Balaji Infra Projec | 40abc40458a3e0483d104d02   | 40abc40458a3e0483d104d02   | Ramniwas             | Shri Balaji Infra Projec | ROLE_MISMATCH (Hero: 'OPERATOR' vs iLync: 'HELPER')
+490          | Bajrang                | Shri Balaji Infra Projec | 223cd18ca1086e0b0f556c2d   | 223cd18ca1086e0b0f556c2d   | Bajrang              | Shri Balaji Infra Projec | ROLE_MISMATCH (Hero: 'OPERATOR' vs iLync: 'HELPER')
+443          | TEST VENDOR            | TEST PARTNER             | 6a7c8c07aaf73755a1cc3243   | 6a7c8c07aaf73755a1cc3243   | TEST VENDOR          | TEST PARTNER             | EMPLOYEE_ID_MISMATCH (Hero: 'VND-9000000010-null' vs iLync: 'VND-9000000010')
+445          | vikas kumar            | Vikas kumar              | 6a95092f9b9a3a047ebccb98   | 6a95092f9b9a3a047ebccb98   | Vikas kumar          | Vikas kumar              | EMPLOYEE_ID_MISMATCH (Hero: 'VND-8949969455-null' vs iLync: 'VND-8949969455')
+541          | 6a95114cf475d920736bd8 | Vikas kumar              | 6a95114cf475d920736bd827   | 6a95114cf475d920736bd827   | Rakesh               | Vikas kumar              | CROSS_VENDOR_COLLISION (Hero vendors: [21]; iLync vendors: ['Premium infra solutions', 'Vikas kumar']); PHONE_MISMATCH (Hero: '' vs iLync: '9116485564'); NAME_MISMATCH (Hero: '6a95114cf475d920736bd827' vs iLync: 'Rakesh'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'OPERATOR')
+447          | Balaram                | Premium infra solutions  | 6a95116a9b9a3a047ebccb9d   | 6a95116a9b9a3a047ebccb9d   | Tracker Balaram      | Vikas kumar              | VENDOR_ID_MISMATCH (Hero: 'Premium infra solutions' vs iLync: 'Vikas kumar'); CROSS_VENDOR_COLLISION (Hero vendors: [28, 21]; iLync vendors: ['Premium infra solutions', 'Vikas kumar']); NAME_MISMATCH (Hero: 'Balaram' vs iLync: 'Tracker Balaram'); ROLE_MISMATCH (Hero: 'TRACKER' vs iLync: 'OPERATOR')
+542          | e38a71c904f526bd7a1e0c | Vikas kumar              | e38a71c904f526bd7a1e0c43   | e38a71c904f526bd7a1e0c43   | Balaram              | Vikas kumar              | PHONE_MISMATCH (Hero: '' vs iLync: '8955011301'); NAME_MISMATCH (Hero: 'e38a71c904f526bd7a1e0c43' vs iLync: 'Balaram'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'TRACKER')
+543          | 1a6d93f8b2047ce51f9a36 | Vikas kumar              | 1a6d93f8b2047ce51f9a362b   | 1a6d93f8b2047ce51f9a362b   | Vidhyadhar           | Vikas kumar              | PHONE_MISMATCH (Hero: '' vs iLync: '8529229017'); NAME_MISMATCH (Hero: '1a6d93f8b2047ce51f9a362b' vs iLync: 'Vidhyadhar'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'TRACKER')
+
+SECTION 4 — CROSS-VENDOR COLLISIONS
+----------------------------------------------------------------------------------------------------
+iLync userId               | Hero User IDs  | Hero Vendors                         | iLync Vendor                         | Phone          | Employee ID      | Problem
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+6a95114cf475d920736bd827   | 541            | Vikas kumar (ID 21)                  | Premium infra solutions; Vikas kumar | 9116485564     | N/A              | Appears under 1 Hero vendor(s) and 2 iLync vendor(s)
+6a95116a9b9a3a047ebccb9d   | 447            | Vikas kumar (ID 21); Premium infra s | Premium infra solutions; Vikas kumar | 8955011301     | N/A              | Appears under 2 Hero vendor(s) and 2 iLync vendor(s)
+6a9580c19b9a3a047ebccbdc   | 421            | Naveen Chouhan (ID 10); SHREE SHYAM  | Naveen Chouhan                       | 9817869480     | N/A              | Appears under 2 Hero vendor(s) and 1 iLync vendor(s)
+36f88f625f06424b63241593   | 431            | Naveen Telecom Network 2 (ID 14); Na | Naveen Telecom Network 2             | 6376243735     | N/A              | Appears under 2 Hero vendor(s) and 1 iLync vendor(s)
+09669ca0f00d92a3f06a626f   | 430            | Naveen Telecom Network 2 (ID 14); Na | Naveen Telecom Network 2             | 9461476036     | N/A              | Appears under 2 Hero vendor(s) and 1 iLync vendor(s)
+a4f7c921d83b5e60f1a294c7   | 446            | Vikas kumar (ID 21); SHYAM ENTERPRIS | SHYAM ENTERPRISES                    | 9664099036     | N/A              | Appears under 3 Hero vendor(s) and 1 iLync vendor(s)
+
+SECTION 5 — MISSING USERS
+----------------------------------------------------------------------------------------------------
+A. Exists in Hero but missing from current iLync (40 users):
+  Hero UID   | Username           | Name                   | Phone          | Role         | Hero Vendor                | external_user_id
+  ----------------------------------------------------------------------------------------------------------------------------------------
+  1          | admin              | ADMIN Sharma           |                | Admin        |                            | 
+  4          | 6350491603         | Mukesh Panday          | 6350491603     | ENGINEER     | Telecrats                  | 6a97c8abf475d920736bd975
+  20         | 8000882403         | Ranjeet Jat            | 8000882404     | OPERATOR     | Naveen Telecom             | 6a8a84e69870687d64354ede
+  25         | 10001              | Harpal Singh Gill      | 7426008949     | VENDOR       | HARPAL INFRA DEVELOPMENT   | 6a854e6941bed9bf55ce1ab9
+  27         | 12121              | Narendra Kumar Rathore | 8302549341     | VENDOR       | Telecrats                  | 6a7eec2baaf73755a1cc356f
+  34         | 738                | Lokendra               | 8146598903     | Gis          | Telecrats                  | 6a7d1816aaf73755a1cc3257
+  79         | 1000231            | Vinod Kumar            | 9983510035     | VENDOR       | SHYAM ENTERPRISES          | 6a17fad6eaa324be682e01f5
+  204        | 1000202            | Sukhram Hudda          | 9799506421     | VENDOR       | Gurukripa Enterprises      | 69ef970d5983e6e230cd3640
+  229        | 1000017            | BAJRANG HUDDA          | 9602222653     | VENDOR       | Shri Balaji Infra Project  | 69ef970c5983e6e230cd3627
+  253        | gk_admin           | Gurukripa Admin        |                | VENDOR_ADMIN | Gurukripa Enterprises      | 
+  254        | VND-9799272429     | Papu Ram 2             | 9799272429     | VENDOR       | Naveen Telecom Network 2   | 6a9d1fd43fe4e1b061d189a7
+  298        | 1000084            | KULVANT SINGH          | 9001799264     | VIEWER       | KHALSA TELECOM             | 69ef970c5983e6e230cd35ee
+  320        | 1000153            | RAJENDRA SINGH         | 8619545417     | VENDOR       | Naveen Telecom Network 1   | 69ef970c5983e6e230cd35d8
+  448        | vendor_0_test      | vendor_0_test          |                | VIEWER       | Shree Shyam Enterprise     | 
+  449        | empty_vendor_user  | empty_vendor_user      |                | VIEWER       | Empty Vendor Test          | 
+  450        | papu_ram_2         | Papu Ram 2             |                | VENDOR       | Naveen Telecom Network 2   | 
+  461        | test_vendor_user_1 | test_vendor_user_101   |                | VENDOR       | Gurukripa Enterprises      | 
+  462        | vendor_user_a      | VendorA                |                | VENDOR       | Vendor Alpha               | 
+  463        | emp_a1             | EmpA1                  |                | OPERATOR     | Vendor Alpha               | 
+  464        | vendor_user_b      | VendorB                |                | VENDOR       | Vendor Beta                | 
+  465        | emp_b1             | EmpB1                  |                | OPERATOR     | Vendor Beta                | 
+  491        | 8421615137         | Raghu Gurjar           | 8421615137     | TRACKER      | Gurukripa Enterprises      | 
+  509        | 6791697375513247   | 6791697375513247       |                | VIEWER       | TEST PARTNER               | 
+  510        | 678077375513243    | 678077375513243        |                | VIEWER       | TEST PARTNER               | 
+  511        | 679417375513508    | 679417375513508        |                | VIEWER       | Shri Balaji Infra Project  | 679417375513508
+  512        | 67247375513203     | 67247375513203         |                | VIEWER       | Gurukripa Enterprises      | 67247375513203
+  513        | 626063714945       | 626063714945           |                | VIEWER       | Rekha ram                  | 626063714945
+  514        | 68262737551360     | 68262737551360         |                | VIEWER       | Pranjal Enterprises        | 68262737551360
+  515        | 6853341955194      | 6853341955194          |                | VIEWER       | Pranjal Enterprises        | 6853341955194
+  516        | 68536041955193     | 68536041955193         |                | VIEWER       | Pranjal Enterprises        | 68536041955193
+  517        | 685341955188       | 685341955188           |                | VIEWER       | Shri Balaji Infra Project  | 685341955188
+  518        | 67467375513539     | 67467375513539         |                | VIEWER       | Shri Balaji Infra Project  | 67467375513539
+  520        | ILYNC-Vidhyadhar_8 | ILYNC-Vidhyadhar_85292 |                | VIEWER       | Vikas kumar                | ILYNC-Vidhyadhar_8529229017
+  521        | 67267375513208     | 67267375513208         |                | VIEWER       | Gurukripa Enterprises      | 67267375513208
+  522        | 68539941955184     | 68539941955184         |                | VIEWER       | Gurukripa Enterprises      | 68539941955184
+  523        | ILYNC-Kishan_Lal_J | ILYNC-Kishan_Lal_Jat_9 |                | VIEWER       | Raza Enterprises           | ILYNC-Kishan_Lal_Jat_9460172117
+  524        | ILYNC-Ramputra_969 | ILYNC-Ramputra_9691678 |                | VIEWER       | Raza Enterprises           | ILYNC-Ramputra_9691678073
+  532        | 65405714951        | 65405714951            |                | VIEWER       | Premium infra solutions    | 65405714951
+  533        | 688698706876435435 | 688698706876435435     |                | VIEWER       | Naveen Telecom Network     | 688698706876435435
+  534        | 6898706876435436   | 6898706876435436       |                | VIEWER       | Naveen Telecom Network     | 6898706876435436
+
+B. Exists in iLync but missing from Hero (0 users):
+  None (All 86 active iLync vendor users currently exist in Hero by external_user_id)
+
+SECTION 6 — ATTENDANCE HISTORY RISKS
+----------------------------------------------------------------------------------------------------
+Attendance records where current identity/vendor differs from the attendance snapshot or vendor assignment:
+Attendance ID  | Date       | Current Hero User          | Current Vendor               | Snapshot User ID   | Snapshot Vendor ID   | Snapshot Vendor Name   | Problem
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+134            | 2026-09-17 | RAJENDRA SINGH (ID 320)    | Naveen Telecom Network 1 (ID | NULL               | NULL                 | NULL                   | NULL_ATTENDANCE_VENDOR: Attendance vendor_id is NULL while User currently belongs to Vendor ID 13 ('Naveen Telecom Network 1'); Historical snapshot fields are completely NULL
+133            | 2026-09-17 | RAJENDRA SINGH (ID 320)    | Naveen Telecom Network 1 (ID | NULL               | NULL                 | NULL                   | NULL_ATTENDANCE_VENDOR: Attendance vendor_id is NULL while User currently belongs to Vendor ID 13 ('Naveen Telecom Network 1'); Historical snapshot fields are completely NULL
+63             | 2026-09-16 | Vinod Kumar (ID 79)        | SHYAM ENTERPRISES (ID 31)    | NULL               | NULL                 | NULL                   | NULL_ATTENDANCE_VENDOR: Attendance vendor_id is NULL while User currently belongs to Vendor ID 31 ('SHYAM ENTERPRISES'); Historical snapshot fields are completely NULL
+47             | 2026-09-16 | BAJRANG HUDDA (ID 229)     | Shri Balaji Infra Project (I | NULL               | NULL                 | NULL                   | NULL_ATTENDANCE_VENDOR: Attendance vendor_id is NULL while User currently belongs to Vendor ID 19 ('Shri Balaji Infra Project'); Historical snapshot fields are completely NULL
+2              | 2026-09-08 | Papu Ram 2 (ID 254)        | Naveen Telecom Network 2 (ID | NULL               | NULL                 | NULL                   | VENDOR_DRIFT: Attendance was marked for Vendor ID 17 ('Telecrats'), but User currently belongs to Vendor ID 14 ('Naveen Telecom Network 2'); Historical snapshot fields are completely NULL
+
+ATTENDANCE SNAPSHOT STATUS ON PRODUCTION:
+• Total Attendance Records: 218
+• Populated Snapshots:      0 (All 218 existing records currently have NULL values for snapshots)
+• Consequence:              Any user reassignment or identity alteration retroactively modifies historical records.
+
+SECTION 7 — EXACT RECORDS REQUIRING REVIEW
+----------------------------------------------------------------------------------------------------
+Total Priority Records Requiring Human Review: 41
+
+[1] VENDOR (ID: 17)
+    What Hero currently says:       Hero Vendor ID 17: Name='Telecrats', external_vendor_id='None'
+    What iLync currently says:      iLync Vendor ID: 'N/A', partnerName='N/A'
+    Why it is a mismatch:           Hero vendor has no external_vendor_id
+    Nature of mismatch:             UNMAPPED_OR_LOCAL_VENDOR
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[2] VENDOR (ID: 22)
+    What Hero currently says:       Hero Vendor ID 22: Name='HERO INFRASTRUCTURE', external_vendor_id='None'
+    What iLync currently says:      iLync Vendor ID: 'N/A', partnerName='N/A'
+    Why it is a mismatch:           Hero vendor has no external_vendor_id
+    Nature of mismatch:             UNMAPPED_OR_LOCAL_VENDOR
+    Historical attendance affected: NO
+
+[3] VENDOR (ID: 23)
+    What Hero currently says:       Hero Vendor ID 23: Name='Empty Vendor Test', external_vendor_id='ext_empty_123'
+    What iLync currently says:      iLync Vendor ID: 'N/A', partnerName='N/A'
+    Why it is a mismatch:           MISSING_IN_ILYNC (external_vendor_id not found in live iLync roster)
+    Nature of mismatch:             UNMAPPED_OR_LOCAL_VENDOR
+    Historical attendance affected: NO
+
+[4] VENDOR (ID: 24)
+    What Hero currently says:       Hero Vendor ID 24: Name='Vendor Alpha', external_vendor_id='VEND-ALPHA-01'
+    What iLync currently says:      iLync Vendor ID: 'N/A', partnerName='N/A'
+    Why it is a mismatch:           MISSING_IN_ILYNC (external_vendor_id not found in live iLync roster)
+    Nature of mismatch:             UNMAPPED_OR_LOCAL_VENDOR
+    Historical attendance affected: NO
+
+[5] VENDOR (ID: 25)
+    What Hero currently says:       Hero Vendor ID 25: Name='Vendor Beta', external_vendor_id='VEND-BETA-02'
+    What iLync currently says:      iLync Vendor ID: 'N/A', partnerName='N/A'
+    Why it is a mismatch:           MISSING_IN_ILYNC (external_vendor_id not found in live iLync roster)
+    Nature of mismatch:             UNMAPPED_OR_LOCAL_VENDOR
+    Historical attendance affected: NO
+
+[6] VENDOR (ID: 33)
+    What Hero currently says:       Hero Vendor ID 33: Name='MS Rekharam', external_vendor_id='6aaab77412381cfcdf6a1ed9'
+    What iLync currently says:      iLync Vendor ID: '6aaab77412381cfcdf6a1ed9', partnerName='Pranjal Enterprises-1'
+    Why it is a mismatch:           VENDOR_NAME_CHANGED (Hero: "MS Rekharam" vs iLync: "Pranjal Enterprises-1")
+    Nature of mismatch:             VENDOR_NAME_CHANGED (partnerName updated in iLync)
+    Historical attendance affected: NO
+
+[7] TEAM_MEMBER (ID: 541)
+    What Hero currently says:       User ID 541 (6a95114cf475d920736bd827, 6a95114cf475d920736bd827), Vendor: Vikas kumar [ID 21], Phone: , Role: VIEWER
+    What iLync currently says:      userId: 6a95114cf475d920736bd827, Name: Rakesh karwasra, Vendor: Premium infra solutions [ext_id 6aa540a512381cfcdf6a1ed5], Mobile: 9116485564, Desig: OPERATOR
+    Why it is a mismatch:           VENDOR_ID_MISMATCH (Hero: 'Vikas kumar' vs iLync: 'Premium infra solutions'); CROSS_VENDOR_COLLISION (Hero vendors: [21]; iLync vendors: ['Premium infra solutions', 'Vikas kumar']); PHONE_MISMATCH (Hero: '' vs iLync: '9116485564'); NAME_MISMATCH (Hero: '6a95114cf475d920736bd827' vs iLync: 'Rakesh karwasra'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'OPERATOR')
+    Nature of mismatch:             CROSS-VENDOR MAPPING / REASSIGNMENT REQUIRED
+    Historical attendance affected: NO
+
+[8] TEAM_MEMBER (ID: 447)
+    What Hero currently says:       User ID 447 (8955011301, Balaram), Vendor: Premium infra solutions [ID 28], Phone: 8955011301, Role: TRACKER
+    What iLync currently says:      userId: 6a95116a9b9a3a047ebccb9d, Name: Balaram, Vendor: Premium infra solutions [ext_id 6aa540a512381cfcdf6a1ed5], Mobile: 8955011301, Desig: TRACKER
+    Why it is a mismatch:           CROSS_VENDOR_COLLISION (Hero vendors: [28, 21]; iLync vendors: ['Premium infra solutions', 'Vikas kumar'])
+    Nature of mismatch:             CROSS-VENDOR MAPPING / REASSIGNMENT REQUIRED
+    Historical attendance affected: NO
+
+[9] TEAM_MEMBER (ID: 421)
+    What Hero currently says:       User ID 421 (9817869480, Sonu Kumar), Vendor: Naveen Chouhan [ID 10], Phone: 9817869480, Role: OPERATOR
+    What iLync currently says:      userId: 6a9580c19b9a3a047ebccbdc, Name: Sonu Kumar, Vendor: Naveen Chouhan [ext_id 6a9550b4544bdedf53d4ec0b], Mobile: 9817869480, Desig: OPERATOR
+    Why it is a mismatch:           CROSS_VENDOR_COLLISION (Hero vendors: [10, 26]; iLync vendors: ['Naveen Chouhan'])
+    Nature of mismatch:             CROSS-VENDOR MAPPING / REASSIGNMENT REQUIRED
+    Historical attendance affected: NO
+
+[10] TEAM_MEMBER (ID: 431)
+    What Hero currently says:       User ID 431 (6376243735, DEVA RAM), Vendor: Naveen Telecom Network 2 [ID 14], Phone: 6376243735, Role: OPERATOR
+    What iLync currently says:      userId: 36f88f625f06424b63241593, Name: DEVA RAM, Vendor: Naveen Telecom Network 2 [ext_id 6a9d22c43fe4e1b061d189a9], Mobile: 6376243735, Desig: OPERATOR
+    Why it is a mismatch:           CROSS_VENDOR_COLLISION (Hero vendors: [13, 14]; iLync vendors: ['Naveen Telecom Network 2'])
+    Nature of mismatch:             CROSS-VENDOR MAPPING / REASSIGNMENT REQUIRED
+    Historical attendance affected: NO
+
+[11] TEAM_MEMBER (ID: 430)
+    What Hero currently says:       User ID 430 (9461476036, MUKESH), Vendor: Naveen Telecom Network 2 [ID 14], Phone: 9461476036, Role: TRACKER
+    What iLync currently says:      userId: 09669ca0f00d92a3f06a626f, Name: MUKESH, Vendor: Naveen Telecom Network 2 [ext_id 6a9d22c43fe4e1b061d189a9], Mobile: 9461476036, Desig: TRACKER
+    Why it is a mismatch:           CROSS_VENDOR_COLLISION (Hero vendors: [13, 14]; iLync vendors: ['Naveen Telecom Network 2'])
+    Nature of mismatch:             CROSS-VENDOR MAPPING / REASSIGNMENT REQUIRED
+    Historical attendance affected: NO
+
+[12] TEAM_MEMBER (ID: 487)
+    What Hero currently says:       User ID 487 (9549898157, Banvari), Vendor: Rekha ram [ID 30], Phone: 9549898157, Role: TRACKER
+    What iLync currently says:      userId: f63b8e2c904a17d5c6f0a329, Name: Banvari Lal, Vendor: Pranjal Enterprises-1 [ext_id 6aaab77412381cfcdf6a1ed9], Mobile: 9549898157, Desig: TRACKER
+    Why it is a mismatch:           VENDOR_ID_MISMATCH (Hero: 'Rekha ram' vs iLync: 'Pranjal Enterprises-1'); NAME_MISMATCH (Hero: 'Banvari' vs iLync: 'Banvari Lal')
+    Nature of mismatch:             CROSS-VENDOR MAPPING / REASSIGNMENT REQUIRED
+    Historical attendance affected: NO
+
+[13] TEAM_MEMBER (ID: 553)
+    What Hero currently says:       User ID 553 (6b0e4c93a7d512f8e1c6295a, 6b0e4c93a7d512f8e1c6295a), Vendor: Raj Enterprises [ID 16], Phone: , Role: VIEWER
+    What iLync currently says:      userId: 6b0e4c93a7d512f8e1c6295a, Name: nibaram, Vendor: Pranjal Enterprises-1 [ext_id 6aaab77412381cfcdf6a1ed9], Mobile: 9001753061, Desig: HELPER
+    Why it is a mismatch:           VENDOR_ID_MISMATCH (Hero: 'Raj Enterprises' vs iLync: 'Pranjal Enterprises-1'); PHONE_MISMATCH (Hero: '' vs iLync: '9001753061'); NAME_MISMATCH (Hero: '6b0e4c93a7d512f8e1c6295a' vs iLync: 'nibaram'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'HELPER')
+    Nature of mismatch:             CROSS-VENDOR MAPPING / REASSIGNMENT REQUIRED
+    Historical attendance affected: NO
+
+[14] TEAM_MEMBER (ID: 446)
+    What Hero currently says:       User ID 446 (9116485564, Rakesh kumar), Vendor: SHYAM ENTERPRISES [ID 31], Phone: 9116485564, Role: OPERATOR
+    What iLync currently says:      userId: a4f7c921d83b5e60f1a294c7, Name: Rakesh kumar, Vendor: SHYAM ENTERPRISES [ext_id 6aa9377b12381cfcdf6a1ed7], Mobile: 9664099036, Desig: OPERATOR
+    Why it is a mismatch:           CROSS_VENDOR_COLLISION (Hero vendors: [28, 21, 31]; iLync vendors: ['SHYAM ENTERPRISES']); PHONE_MISMATCH (Hero: '9116485564' vs iLync: '9664099036')
+    Nature of mismatch:             CROSS-VENDOR MAPPING / REASSIGNMENT REQUIRED
+    Historical attendance affected: NO
+
+[15] TEAM_MEMBER (ID: 541)
+    What Hero currently says:       User ID 541 (6a95114cf475d920736bd827, 6a95114cf475d920736bd827), Vendor: Vikas kumar [ID 21], Phone: , Role: VIEWER
+    What iLync currently says:      userId: 6a95114cf475d920736bd827, Name: Rakesh, Vendor: Vikas kumar [ext_id 6a95092f544bdedf53d4ec0a], Mobile: 9116485564, Desig: OPERATOR
+    Why it is a mismatch:           CROSS_VENDOR_COLLISION (Hero vendors: [21]; iLync vendors: ['Premium infra solutions', 'Vikas kumar']); PHONE_MISMATCH (Hero: '' vs iLync: '9116485564'); NAME_MISMATCH (Hero: '6a95114cf475d920736bd827' vs iLync: 'Rakesh'); ROLE_MISMATCH (Hero: 'VIEWER' vs iLync: 'OPERATOR')
+    Nature of mismatch:             CROSS-VENDOR MAPPING / REASSIGNMENT REQUIRED
+    Historical attendance affected: NO
+
+[16] TEAM_MEMBER (ID: 447)
+    What Hero currently says:       User ID 447 (8955011301, Balaram), Vendor: Premium infra solutions [ID 28], Phone: 8955011301, Role: TRACKER
+    What iLync currently says:      userId: 6a95116a9b9a3a047ebccb9d, Name: Tracker Balaram, Vendor: Vikas kumar [ext_id 6a95092f544bdedf53d4ec0a], Mobile: 8955011301, Desig: OPERATOR
+    Why it is a mismatch:           VENDOR_ID_MISMATCH (Hero: 'Premium infra solutions' vs iLync: 'Vikas kumar'); CROSS_VENDOR_COLLISION (Hero vendors: [28, 21]; iLync vendors: ['Premium infra solutions', 'Vikas kumar']); NAME_MISMATCH (Hero: 'Balaram' vs iLync: 'Tracker Balaram'); ROLE_MISMATCH (Hero: 'TRACKER' vs iLync: 'OPERATOR')
+    Nature of mismatch:             CROSS-VENDOR MAPPING / REASSIGNMENT REQUIRED
+    Historical attendance affected: NO
+
+[17] HISTORICAL_HERO_USER (ID: 1)
+    What Hero currently says:       Hero User ID 1 (admin, ADMIN Sharma), Vendor:  [ID None], ext_uid: ''
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 2 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[18] HISTORICAL_HERO_USER (ID: 4)
+    What Hero currently says:       Hero User ID 4 (6350491603, Mukesh Panday), Vendor: Telecrats [ID 17], ext_uid: '6a97c8abf475d920736bd975'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[19] HISTORICAL_HERO_USER (ID: 79)
+    What Hero currently says:       Hero User ID 79 (1000231, Vinod Kumar), Vendor: SHYAM ENTERPRISES [ID 31], ext_uid: '6a17fad6eaa324be682e01f5'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[20] HISTORICAL_HERO_USER (ID: 229)
+    What Hero currently says:       Hero User ID 229 (1000017, BAJRANG HUDDA), Vendor: Shri Balaji Infra Project [ID 19], ext_uid: '69ef970c5983e6e230cd3627'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[21] HISTORICAL_HERO_USER (ID: 253)
+    What Hero currently says:       Hero User ID 253 (gk_admin, Gurukripa Admin), Vendor: Gurukripa Enterprises [ID 7], ext_uid: ''
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 2 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[22] HISTORICAL_HERO_USER (ID: 254)
+    What Hero currently says:       Hero User ID 254 (VND-9799272429, Papu Ram 2), Vendor: Naveen Telecom Network 2 [ID 14], ext_uid: '6a9d1fd43fe4e1b061d189a7'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 5 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[23] HISTORICAL_HERO_USER (ID: 320)
+    What Hero currently says:       Hero User ID 320 (1000153, RAJENDRA SINGH), Vendor: Naveen Telecom Network 1 [ID 13], ext_uid: '69ef970c5983e6e230cd35d8'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 3 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[24] HISTORICAL_HERO_USER (ID: 450)
+    What Hero currently says:       Hero User ID 450 (papu_ram_2, Papu Ram 2), Vendor: Naveen Telecom Network 2 [ID 14], ext_uid: ''
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[25] HISTORICAL_HERO_USER (ID: 463)
+    What Hero currently says:       Hero User ID 463 (emp_a1, EmpA1), Vendor: Vendor Alpha [ID 24], ext_uid: ''
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[26] HISTORICAL_HERO_USER (ID: 491)
+    What Hero currently says:       Hero User ID 491 (8421615137, Raghu Gurjar), Vendor: Gurukripa Enterprises [ID 7], ext_uid: ''
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 2 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[27] HISTORICAL_HERO_USER (ID: 509)
+    What Hero currently says:       Hero User ID 509 (6791697375513247, 6791697375513247), Vendor: TEST PARTNER [ID 20], ext_uid: ''
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 2 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[28] HISTORICAL_HERO_USER (ID: 510)
+    What Hero currently says:       Hero User ID 510 (678077375513243, 678077375513243), Vendor: TEST PARTNER [ID 20], ext_uid: ''
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[29] HISTORICAL_HERO_USER (ID: 511)
+    What Hero currently says:       Hero User ID 511 (679417375513508, 679417375513508), Vendor: Shri Balaji Infra Project [ID 19], ext_uid: '679417375513508'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[30] HISTORICAL_HERO_USER (ID: 512)
+    What Hero currently says:       Hero User ID 512 (67247375513203, 67247375513203), Vendor: Gurukripa Enterprises [ID 7], ext_uid: '67247375513203'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[31] HISTORICAL_HERO_USER (ID: 513)
+    What Hero currently says:       Hero User ID 513 (626063714945, 626063714945), Vendor: Rekha ram [ID 30], ext_uid: '626063714945'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[32] HISTORICAL_HERO_USER (ID: 514)
+    What Hero currently says:       Hero User ID 514 (68262737551360, 68262737551360), Vendor: Pranjal Enterprises [ID 15], ext_uid: '68262737551360'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[33] HISTORICAL_HERO_USER (ID: 515)
+    What Hero currently says:       Hero User ID 515 (6853341955194, 6853341955194), Vendor: Pranjal Enterprises [ID 15], ext_uid: '6853341955194'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[34] HISTORICAL_HERO_USER (ID: 516)
+    What Hero currently says:       Hero User ID 516 (68536041955193, 68536041955193), Vendor: Pranjal Enterprises [ID 15], ext_uid: '68536041955193'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[35] HISTORICAL_HERO_USER (ID: 517)
+    What Hero currently says:       Hero User ID 517 (685341955188, 685341955188), Vendor: Shri Balaji Infra Project [ID 19], ext_uid: '685341955188'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[36] HISTORICAL_HERO_USER (ID: 518)
+    What Hero currently says:       Hero User ID 518 (67467375513539, 67467375513539), Vendor: Shri Balaji Infra Project [ID 19], ext_uid: '67467375513539'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[37] HISTORICAL_HERO_USER (ID: 521)
+    What Hero currently says:       Hero User ID 521 (67267375513208, 67267375513208), Vendor: Gurukripa Enterprises [ID 7], ext_uid: '67267375513208'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[38] HISTORICAL_HERO_USER (ID: 522)
+    What Hero currently says:       Hero User ID 522 (68539941955184, 68539941955184), Vendor: Gurukripa Enterprises [ID 7], ext_uid: '68539941955184'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[39] HISTORICAL_HERO_USER (ID: 523)
+    What Hero currently says:       Hero User ID 523 (ILYNC-Kishan_Lal_Jat_9460172117, ILYNC-Kishan_Lal_Jat_9460172117), Vendor: Raza Enterprises [ID 32], ext_uid: 'ILYNC-Kishan_Lal_Jat_9460172117'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[40] HISTORICAL_HERO_USER (ID: 524)
+    What Hero currently says:       Hero User ID 524 (ILYNC-Ramputra_9691678073, ILYNC-Ramputra_9691678073), Vendor: Raza Enterprises [ID 32], ext_uid: 'ILYNC-Ramputra_9691678073'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+[41] HISTORICAL_HERO_USER (ID: 532)
+    What Hero currently says:       Hero User ID 532 (65405714951, 65405714951), Vendor: Premium infra solutions [ID 28], ext_uid: '65405714951'
+    What iLync currently says:      ABSENT FROM CURRENT iLYNC ROSTER
+    Why it is a mismatch:           MISSING_IN_ILYNC: User is not in active iLync roster but has 1 historical Attendance records in Hero
+    Nature of mismatch:             FORMER TEAM MEMBER / HISTORICAL RETENTION REQUIRED
+    Historical attendance affected: YES (Historical attendance exists and is at risk)
+
+====================================================================================================
+AUDIT COMPLETE — NO DATA MODIFICATIONS PERFORMED
+====================================================================================================

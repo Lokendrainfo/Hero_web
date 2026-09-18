@@ -224,33 +224,45 @@ def extract_geo(data_dict, keys):
     return ''
 
 
-def resolve_target_user(user_id_param, request_user=None):
-    if not user_id_param:
+def resolve_target_user(user_id_param, request_user=None, external_user_id=None):
+    """
+    Resolves target Hero User for attendance operations.
+    PRIMARY IDENTITY RULE:
+    external_user_id is the primary identity.
+    If external_user_id exists:
+      1. Resolve the Hero User using external_user_id.
+      2. Do not fall back to another user based on phone/name/employee ID.
+    """
+    if not user_id_param and not external_user_id:
         return None
     if isinstance(user_id_param, User):
         return user_id_param
 
-    param_str = str(user_id_param).strip()
+    # 1. Primary: Search by explicit external_user_id
+    ext_id = str(external_user_id).strip() if external_user_id else None
+    if ext_id and ext_id.lower() not in ('none', 'null', 'undefined', ''):
+        u = User.objects.filter(external_user_id=ext_id).first()
+        if u:
+            return u
+
+    param_str = str(user_id_param).strip() if user_id_param else ''
     if not param_str or param_str.lower() in ('none', 'null', 'undefined'):
         return None
+
+    # 1b. Search if param_str itself is an external_user_id
+    u = User.objects.filter(external_user_id=param_str).first()
+    if u:
+        return u
+
+    # 1c. Search if param_str is digit matching local User ID primary key
+    if param_str.isdigit():
+        u = User.objects.filter(id=int(param_str)).first()
+        if u:
+            return u
 
     target_vendor = None
     if request_user:
         target_vendor = getattr(request_user, 'vendor', None) or get_user_vendor(request_user)
-
-    # 1. Search FIRST by external_user_id (exact match for iLync ID)
-    u = User.objects.filter(external_user_id=param_str).first()
-    if u:
-        if target_vendor and u.vendor_id and u.vendor_id != target_vendor.id:
-            # Rule 8: Treat as mapping conflict. Do not use cross-vendor user.
-            print(
-                f"[iLyncMapping] vendor_external_id={getattr(target_vendor, 'external_vendor_id', None)} | "
-                f"vendor_hero_id={target_vendor.id} | iLync_userId={param_str} | iLync_empId=None | "
-                f"Hero_user_id={u.id} | Hero_external_user_id={u.external_user_id} | "
-                f"Hero_vendor_id={u.vendor_id} | mapping_status=CROSS_VENDOR_CONFLICT"
-            )
-            return None
-        return u
 
     # 2. Search by employee_id, username, phone_number, email (scoped to target_vendor if known)
     cand_qs = User.objects.filter(vendor=target_vendor) if target_vendor else User.objects.all()
@@ -280,14 +292,6 @@ def resolve_target_user(user_id_param, request_user=None):
                         return None
                     return u
 
-    # 3. If not found by external ID / username / email / phone, check if param_str is digit matching local User ID primary key
-    if param_str.isdigit():
-        u = User.objects.filter(id=int(param_str)).first()
-        if u:
-            if target_vendor and u.vendor_id and u.vendor_id != target_vendor.id:
-                return None
-            return u
-
     # 3b. If still not found and request_user has a vendor with external_vendor_id, sync live vendor users to resolve
     if target_vendor and getattr(target_vendor, 'external_vendor_id', None):
         try:
@@ -306,22 +310,25 @@ def resolve_target_user(user_id_param, request_user=None):
         except Exception:
             pass
 
-    # 4. If still not found, create lightweight shell user with external_user_id = param_str
-    base_name = param_str.split('@')[0] if '@' in param_str else param_str
-    clean_u = clean_username(base_name)
-    if User.objects.filter(username=clean_u).exists():
-        clean_u = f"{clean_u}_{int(timezone.now().timestamp())}"
+    # 4. If still not found and param looks like an external id token (not pure numeric), create lightweight shell user
+    if len(param_str) > 10 and not param_str.isdigit():
+        base_name = param_str.split('@')[0] if '@' in param_str else param_str
+        clean_u = clean_username(base_name)
+        if User.objects.filter(username=clean_u).exists():
+            clean_u = f"{clean_u}_{int(timezone.now().timestamp())}"
 
-    u, _ = User.objects.get_or_create(
-        username=clean_u,
-        defaults={
-            'external_user_id': param_str,
-            'first_name': base_name,
-            'vendor': target_vendor,
-            'is_active': True
-        }
-    )
-    return u
+        u, _ = User.objects.get_or_create(
+            username=clean_u,
+            defaults={
+                'external_user_id': param_str,
+                'first_name': base_name,
+                'vendor': target_vendor,
+                'is_active': True
+            }
+        )
+        return u
+
+    return None
 
 def clean_username(val):
     clean = "".join(c for c in val if c.isalnum() or c in ('_', '-'))
@@ -730,13 +737,43 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     # 4.2 Employee Check-In (Self or Marked for Team Member)
     @action(detail=False, methods=['post'], url_path='check-in')
     def check_in(self, request):
-        user = request.user
+        ext_user_id = request.data.get('external_user_id')
         target_user_id = request.data.get('user_id') or request.data.get('marked_for_user_id') or request.data.get('user')
-        if target_user_id:
-            target_user = resolve_target_user(target_user_id, request.user)
-            if target_user:
-                validate_employee_attendance_access(request.user, target_user)
-                user = target_user
+        req_vendor_id = request.data.get('vendor_id') or request.data.get('vendor')
+
+        user = request.user
+        target_requested = bool(ext_user_id or target_user_id)
+
+        if target_requested:
+            target_user = resolve_target_user(target_user_id, request_user=request.user, external_user_id=ext_user_id)
+            if not target_user:
+                print(
+                    f"[AttendanceCheckIn] target_not_found: ext_user_id={ext_user_id} | "
+                    f"target_user_id={target_user_id} | marked_by={request.user.id}"
+                )
+                return error_response(
+                    message=f"Target employee not found for identifier '{ext_user_id or target_user_id}'.",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+
+            # Validate user's current valid Hero vendor mapping (do not reassign or allow cross-vendor conflict)
+            resolved_vendor = target_user.vendor or get_user_vendor(target_user)
+            if req_vendor_id and resolved_vendor:
+                req_v_str = str(req_vendor_id).strip()
+                if req_v_str.isdigit() and int(req_v_str) != resolved_vendor.id:
+                    print(
+                        f"[AttendanceCheckIn] CROSS_VENDOR_CONFLICT: Hero_user_id={target_user.id} | "
+                        f"current_vendor={resolved_vendor.id} ({resolved_vendor.name}) | "
+                        f"requested_vendor={req_vendor_id} | marked_by={request.user.id}"
+                    )
+                    return error_response(
+                        message=f"Employee {target_user.get_full_name() or target_user.username} is registered under vendor '{resolved_vendor.name}'. Cross-vendor check-in is not permitted.",
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+
+            # Validate logged-in user's authorization for that vendor/team member
+            validate_employee_attendance_access(request.user, target_user)
+            user = target_user
 
         today = timezone.localdate()
         lat = request.data.get('latitude') or request.data.get('check_in_latitude')
@@ -748,6 +785,18 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             att_type = 'TEAM'
 
         processed_photo = process_attendance_photo(request, 'checkin', user.id)
+
+        target_vendor = user.vendor or get_user_vendor(user) or get_user_vendor(request.user)
+        reporting_mgr = resolve_reporting_manager(user, marked_by_user=request.user, vendor=target_vendor)
+
+        # Snapshot data
+        ext_uid_snap = getattr(user, 'external_user_id', None) or (str(ext_user_id).strip() if ext_user_id else None)
+        emp_id_snap = getattr(user, 'employee_id', None) or (request.data.get('employee_id') if request.data.get('employee_id') else None) or f"EMP-{user.id}"
+        u_name_snap = user.get_full_name() or user.username
+        phone_snap = getattr(user, 'phone_number', None) or user.username
+        role_snap = getattr(user, 'designation', None) or (user.get_role_list()[0] if hasattr(user, 'get_role_list') and user.get_role_list() else getattr(user, 'role', 'OPERATOR'))
+        v_ext_id_snap = getattr(target_vendor, 'external_vendor_id', None) if target_vendor else None
+        v_name_snap = getattr(target_vendor, 'name', '') if target_vendor else ''
 
         # 1. Check if record already exists for today to prevent duplicates
         existing = AttendanceRecord.objects.filter(user=user, date=today).exclude(attendance_type='MACHINE').first()
@@ -762,13 +811,22 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if acc is not None and str(acc).strip() != '': existing.check_in_accuracy = float(acc)
             if loc_source: existing.location_source = loc_source
             existing.updated_by = request.user
+
+            # Populate snapshot fields
+            if not existing.external_user_id_snapshot: existing.external_user_id_snapshot = ext_uid_snap
+            if not existing.employee_id_snapshot: existing.employee_id_snapshot = emp_id_snap
+            if not existing.user_name_snapshot: existing.user_name_snapshot = u_name_snap
+            if not existing.phone_number_snapshot: existing.phone_number_snapshot = phone_snap
+            if not existing.role_snapshot: existing.role_snapshot = role_snap
+            if not existing.vendor_name_snapshot: existing.vendor_name_snapshot = v_name_snap
+            if not existing.vendor_external_id_snapshot: existing.vendor_external_id_snapshot = v_ext_id_snap
             existing.save()
 
-            # Temporary diagnostic logging (no sensitive credentials)
             print(
-                f"[AttendanceMapping] iLync_user_id={getattr(user, 'external_user_id', None)} | "
-                f"Hero_user_id={user.id} | vendor_id={existing.vendor_id} | "
-                f"attendance record id={existing.id} | check-in result=SUCCESS"
+                f"[AttendanceCheckIn] Hero_user_id={user.id} | external_user_id={ext_uid_snap} | "
+                f"resolved_Hero_vendor={getattr(target_vendor, 'id', None)} ({v_name_snap}) | "
+                f"resolved_iLync_vendor={v_ext_id_snap} | auth_result=AUTHORIZED | "
+                f"attendance_record_id={existing.id} | date={today} | status={existing.status} | creation_result=SUCCESS_UPDATED"
             )
 
             serializer = AttendanceRecordSerializer(existing, context={'request': request})
@@ -777,9 +835,6 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 "message": "Check-in successful",
                 "data": serializer.data
             }, status=status.HTTP_200_OK)
-
-        target_vendor = user.vendor or get_user_vendor(user) or get_user_vendor(request.user)
-        reporting_mgr = resolve_reporting_manager(user, marked_by_user=request.user, vendor=target_vendor)
 
         record = AttendanceRecord.objects.create(
             user=user,
@@ -796,21 +851,31 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             check_in_photo=processed_photo,
             location_source=loc_source,
             marked_by=request.user,
-            updated_by=request.user
+            updated_by=request.user,
+            external_user_id_snapshot=ext_uid_snap,
+            employee_id_snapshot=emp_id_snap,
+            user_name_snapshot=u_name_snap,
+            phone_number_snapshot=phone_snap,
+            role_snapshot=role_snap,
+            vendor_external_id_snapshot=v_ext_id_snap,
+            vendor_name_snapshot=v_name_snap
         )
 
         if reporting_mgr:
-            notify_user(
-                reporting_mgr,
-                "Pending Attendance Approval",
-                f"Attendance check-in submitted by {user.get_full_name() or user.username} for {today} requires your approval."
-            )
+            try:
+                notify_user(
+                    reporting_mgr,
+                    "Pending Attendance Approval",
+                    f"Attendance check-in submitted by {user.get_full_name() or user.username} for {today} requires your approval."
+                )
+            except Exception as notif_err:
+                print(f"[AttendanceCheckIn] Non-fatal notification error: {notif_err}")
 
-        # Temporary diagnostic logging (no sensitive credentials)
         print(
-            f"[AttendanceMapping] iLync_user_id={getattr(user, 'external_user_id', None)} | "
-            f"Hero_user_id={user.id} | vendor_id={record.vendor_id} | "
-            f"attendance record id={record.id} | check-in result=SUCCESS"
+            f"[AttendanceCheckIn] Hero_user_id={user.id} | external_user_id={ext_uid_snap} | "
+            f"resolved_Hero_vendor={getattr(target_vendor, 'id', None)} ({v_name_snap}) | "
+            f"resolved_iLync_vendor={v_ext_id_snap} | auth_result=AUTHORIZED | "
+            f"attendance_record_id={record.id} | date={today} | status={record.status} | creation_result=SUCCESS_CREATED"
         )
 
         serializer = AttendanceRecordSerializer(record, context={'request': request})
@@ -823,13 +888,20 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     # 4.3 Employee Self Check-Out
     @action(detail=False, methods=['post'], url_path='check-out')
     def check_out(self, request):
-        user = request.user
+        ext_user_id = request.data.get('external_user_id')
         target_user_id = request.data.get('user_id') or request.data.get('marked_for_user_id') or request.data.get('user')
-        if target_user_id:
-            target_user = resolve_target_user(target_user_id, request.user)
-            if target_user:
-                validate_employee_attendance_access(request.user, target_user)
-                user = target_user
+        user = request.user
+        target_requested = bool(ext_user_id or target_user_id)
+
+        if target_requested:
+            target_user = resolve_target_user(target_user_id, request_user=request.user, external_user_id=ext_user_id)
+            if not target_user:
+                return error_response(
+                    message=f"Target employee not found for identifier '{ext_user_id or target_user_id}'.",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+            validate_employee_attendance_access(request.user, target_user)
+            user = target_user
 
         today = timezone.localdate()
         att_id = request.data.get('attendance_id') or request.data.get('id')
@@ -877,11 +949,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     # 4.4 Team Member Check-In (Supervisor Marking Team)
     @action(detail=False, methods=['post'], url_path='team-check-in')
     def team_check_in(self, request):
+        ext_user_id = request.data.get('external_user_id')
         target_user_id = request.data.get('marked_for_user_id') or request.data.get('user_id')
-        if not target_user_id:
-            return error_response(message="marked_for_user_id is required.", status_code=status.HTTP_400_BAD_REQUEST)
+        if not target_user_id and not ext_user_id:
+            return error_response(message="marked_for_user_id or external_user_id is required.", status_code=status.HTTP_400_BAD_REQUEST)
 
-        target_user = resolve_target_user(target_user_id)
+        target_user = resolve_target_user(target_user_id, request_user=request.user, external_user_id=ext_user_id)
         if not target_user:
             return error_response(message="Target team member not found.", status_code=status.HTTP_404_NOT_FOUND)
 
@@ -895,6 +968,15 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
         reporting_mgr = resolve_reporting_manager(target_user, marked_by_user=request.user, vendor=target_vendor)
 
+        # Snapshot data
+        ext_uid_snap = getattr(target_user, 'external_user_id', None) or (str(ext_user_id).strip() if ext_user_id else None)
+        emp_id_snap = getattr(target_user, 'employee_id', None) or f"EMP-{target_user.id}"
+        u_name_snap = target_user.get_full_name() or target_user.username
+        phone_snap = getattr(target_user, 'phone_number', None) or target_user.username
+        role_snap = getattr(target_user, 'designation', None) or (target_user.get_role_list()[0] if hasattr(target_user, 'get_role_list') and target_user.get_role_list() else getattr(target_user, 'role', 'OPERATOR'))
+        v_ext_id_snap = getattr(target_vendor, 'external_vendor_id', None) if target_vendor else None
+        v_name_snap = getattr(target_vendor, 'name', '') if target_vendor else ''
+
         existing = AttendanceRecord.objects.filter(user=target_user, date=today).exclude(attendance_type='MACHINE').first()
         if existing:
             existing.status = 'CHECKED_IN'
@@ -905,7 +987,17 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if lng is not None and str(lng).strip() != '': existing.check_in_longitude = float(lng)
             if acc is not None and str(acc).strip() != '': existing.check_in_accuracy = float(acc)
             existing.updated_by = request.user
+
+            # Populate snapshot fields
+            if not existing.external_user_id_snapshot: existing.external_user_id_snapshot = ext_uid_snap
+            if not existing.employee_id_snapshot: existing.employee_id_snapshot = emp_id_snap
+            if not existing.user_name_snapshot: existing.user_name_snapshot = u_name_snap
+            if not existing.phone_number_snapshot: existing.phone_number_snapshot = phone_snap
+            if not existing.role_snapshot: existing.role_snapshot = role_snap
+            if not existing.vendor_name_snapshot: existing.vendor_name_snapshot = v_name_snap
+            if not existing.vendor_external_id_snapshot: existing.vendor_external_id_snapshot = v_ext_id_snap
             existing.save()
+
             serializer = AttendanceRecordSerializer(existing, context={'request': request})
             return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -924,15 +1016,25 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             check_in_latitude=lat if lat else None,
             check_in_longitude=lng if lng else None,
             check_in_accuracy=float(acc) if acc else None,
-            check_in_photo=photo if photo else None
+            check_in_photo=photo if photo else None,
+            external_user_id_snapshot=ext_uid_snap,
+            employee_id_snapshot=emp_id_snap,
+            user_name_snapshot=u_name_snap,
+            phone_number_snapshot=phone_snap,
+            role_snapshot=role_snap,
+            vendor_external_id_snapshot=v_ext_id_snap,
+            vendor_name_snapshot=v_name_snap
         )
 
         if reporting_mgr:
-            notify_user(
-                reporting_mgr,
-                "Pending Attendance Approval",
-                f"Team attendance check-in for {target_user.get_full_name() or target_user.username} submitted by {request.user.get_full_name() or request.user.username} requires your approval."
-            )
+            try:
+                notify_user(
+                    reporting_mgr,
+                    "Pending Attendance Approval",
+                    f"Team attendance check-in for {target_user.get_full_name() or target_user.username} submitted by {request.user.get_full_name() or request.user.username} requires your approval."
+                )
+            except Exception as notif_err:
+                print(f"[TeamCheckIn] Non-fatal notification error: {notif_err}")
 
         serializer = AttendanceRecordSerializer(record, context={'request': request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -1346,6 +1448,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
                 v_name = rec.vendor_name_snapshot or (rec.vendor.name if rec.vendor else (u.vendor.name if u and u.vendor else ''))
                 v_id = rec.vendor_id or (u.vendor_id if u else None)
+                v_ext_id = rec.vendor_external_id_snapshot or (rec.vendor.external_vendor_id if rec.vendor and rec.vendor.external_vendor_id else (u.vendor.external_vendor_id if u and u.vendor else ''))
 
                 st = (rec.status or 'NOT_MARKED').upper()
                 counts['total'] += 1
@@ -1408,6 +1511,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'machine': final_machine,
                     'vendor_name': v_name,
                     'vendor_id': v_id,
+                    'vendor_external_id': v_ext_id,
                     'is_active': True,
                     'reporting_manager_name': rec.reporting_manager.get_full_name() if rec.reporting_manager else '',
                     'attendance_id': rec.id,
@@ -1690,7 +1794,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 check_out_dt = rec.check_out if (rec and rec.check_out) else None
 
                 result_list.append({
-                    'user_id': effective_user_id,
+                    'user_id': matched_user.id if matched_user else effective_user_id,
                     'external_user_id': ext_u_id,
                     'employee_id': emp_display,
                     'user_name': name,
@@ -1704,6 +1808,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'machine': final_machine,
                     'vendor_name': v_obj.name,
                     'vendor_id': v_obj.id,
+                    'vendor_external_id': getattr(v_obj, 'external_vendor_id', None),
                     'is_active': True,
                     'reporting_manager_name': rec.reporting_manager.get_full_name() if (rec and rec.reporting_manager) else '',
                     'attendance_id': rec.id if rec else None,
@@ -1993,6 +2098,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             phone_val = str(item.get('phone_number') or item.get('mobile') or getattr(target_user, 'phone_number', '') or '').strip() or None
             role_val = str(item.get('role') or item.get('designation') or (target_user.get_role_list()[0] if (target_user and target_user.get_role_list()) else 'OPERATOR')).strip()
             v_name_val = str(item.get('vendor_name') or (target_vendor.name if target_vendor else (target_user.vendor.name if target_user and target_user.vendor else ''))).strip() or None
+            v_ext_id_val = str(item.get('vendor_external_id') or getattr(target_vendor, 'external_vendor_id', '') or getattr(getattr(target_user, 'vendor', None), 'external_vendor_id', '') or '').strip() or None
 
             record = (
                 AttendanceRecord.objects.filter(user=target_user, date=req_date)
@@ -2024,6 +2130,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     phone_number_snapshot=phone_val,
                     role_snapshot=role_val,
                     vendor_name_snapshot=v_name_val,
+                    vendor_external_id_snapshot=v_ext_id_val,
                 )
                 created = True
             else:

@@ -31,11 +31,13 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
     employee_id = serializers.SerializerMethodField()
     phone_number = serializers.SerializerMethodField()
     role = serializers.SerializerMethodField()
+    external_user_id = serializers.SerializerMethodField()
     reporting_manager_id = serializers.SerializerMethodField()
     reporting_manager_name = serializers.SerializerMethodField()
     
     vendor_id = serializers.SerializerMethodField()
     vendor_name = serializers.SerializerMethodField()
+    vendor_external_id = serializers.SerializerMethodField()
     
     marked_for_user_id = serializers.SerializerMethodField()
     marked_for_user_name = serializers.SerializerMethodField()
@@ -54,8 +56,8 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
         model = AttendanceRecord
         fields = [
             'id', 'user', 'user_id', 'user_name', 'employee_id', 'phone_number', 'role',
-            'external_user_id_snapshot', 'employee_id_snapshot', 'user_name_snapshot',
-            'phone_number_snapshot', 'role_snapshot', 'vendor_name_snapshot',
+            'external_user_id', 'external_user_id_snapshot', 'employee_id_snapshot', 'user_name_snapshot',
+            'phone_number_snapshot', 'role_snapshot', 'vendor_external_id', 'vendor_external_id_snapshot', 'vendor_name_snapshot',
             'reporting_manager_id', 'reporting_manager_name',
             'attendance_type', 'machine_id', 'machine_chassis_no', 'machine_assignment_id',
             'vendor', 'vendor_id', 'vendor_name', 'site_id',
@@ -102,6 +104,13 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
             return roles[0] if roles else obj.user.role or 'OPERATOR'
         return 'OPERATOR'
 
+    def get_external_user_id(self, obj):
+        if getattr(obj, 'external_user_id_snapshot', None):
+            return obj.external_user_id_snapshot
+        if obj.user:
+            return obj.user.external_user_id or ''
+        return ''
+
     def get_reporting_manager_id(self, obj):
         if obj.reporting_manager_id:
             return obj.reporting_manager_id
@@ -129,6 +138,15 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
             return obj.vendor.name
         elif obj.user and obj.user.vendor:
             return obj.user.vendor.name
+        return ''
+
+    def get_vendor_external_id(self, obj):
+        if getattr(obj, 'vendor_external_id_snapshot', None):
+            return obj.vendor_external_id_snapshot
+        if obj.vendor and obj.vendor.external_vendor_id:
+            return obj.vendor.external_vendor_id
+        elif obj.user and obj.user.vendor and obj.user.vendor.external_vendor_id:
+            return obj.user.vendor.external_vendor_id
         return ''
 
     def get_marked_for_user_id(self, obj):

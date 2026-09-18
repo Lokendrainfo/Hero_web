@@ -559,7 +559,7 @@ export const Attendance = () => {
   };
 
   // Single Row Check-In / Check-Out
-  const handleCheckInEmployee = async (userId) => {
+  const handleCheckInEmployee = async (userId, externalUserId = null, vendorId = null) => {
     let lat = null;
     let lng = null;
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
@@ -579,6 +579,8 @@ export const Attendance = () => {
     try {
       await attendanceService.checkIn({
         user_id: userId,
+        external_user_id: externalUserId,
+        vendor_id: vendorId,
         latitude: lat,
         longitude: lng,
         check_in_latitude: lat,
@@ -588,12 +590,13 @@ export const Attendance = () => {
       fetchTeamAttendance();
     } catch (err) {
       console.error("Check-in error:", err);
-      const errMsg = err.response?.data?.detail || err.response?.data?.message || "Failed to record check-in.";
+      const resData = err.response?.data;
+      const errMsg = resData?.detail || resData?.message || resData?.error || (resData?.errors && (typeof resData.errors === 'string' ? resData.errors : (resData.errors.detail || JSON.stringify(resData.errors)))) || "Failed to record check-in.";
       showToast(`⚠️ ${errMsg}`, "error");
     }
   };
 
-  const handleCheckOutEmployee = async (userId) => {
+  const handleCheckOutEmployee = async (userId, externalUserId = null, vendorId = null) => {
     let lat = null;
     let lng = null;
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
@@ -613,6 +616,8 @@ export const Attendance = () => {
     try {
       await attendanceService.checkOut({
         user_id: userId,
+        external_user_id: externalUserId,
+        vendor_id: vendorId,
         latitude: lat,
         longitude: lng,
         check_out_latitude: lat,
@@ -622,7 +627,8 @@ export const Attendance = () => {
       fetchTeamAttendance();
     } catch (err) {
       console.error("Check-out error:", err);
-      const errMsg = err.response?.data?.detail || err.response?.data?.message || "Failed to record check-out.";
+      const resData = err.response?.data;
+      const errMsg = resData?.detail || resData?.message || resData?.error || (resData?.errors && (typeof resData.errors === 'string' ? resData.errors : (resData.errors.detail || JSON.stringify(resData.errors)))) || "Failed to record check-out.";
       showToast(`⚠️ ${errMsg}`, "error");
     }
   };
@@ -1152,7 +1158,7 @@ export const Attendance = () => {
                                           </span>
                                           {!m.check_in && (
                                             <button
-                                              onClick={() => handleCheckInEmployee(m.user_id)}
+                                              onClick={() => handleCheckInEmployee(m.user_id, m.external_user_id, m.vendor_id)}
                                               style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
                                             >
                                               Check In
@@ -1166,7 +1172,7 @@ export const Attendance = () => {
                                           </span>
                                           {m.check_in && !m.check_out && (
                                             <button
-                                              onClick={() => handleCheckOutEmployee(m.user_id)}
+                                              onClick={() => handleCheckOutEmployee(m.user_id, m.external_user_id, m.vendor_id)}
                                               style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
                                             >
                                               Check Out
