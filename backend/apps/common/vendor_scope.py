@@ -45,10 +45,10 @@ def get_user_vendor_ids(user, resolve_fallback=True):
 
     return vendor_ids
 
-def get_user_vendor(user, resolve_fallback=True):
+def get_user_vendor(user, resolve_fallback=True, allow_network=False):
     """
-    Resolves authenticated user's vendor record by checking direct assignment, calling iLync API (/api/vendor/user/{userId}),
-    or resolving direct vendor assignment / HeroVendorAssignment.
+    Resolves authenticated user's vendor record by checking direct assignment,
+    local database matching, or (optionally if allow_network=True) calling iLync API.
     Returns Vendor DB object or None.
     """
     if not user or not user.is_authenticated:
@@ -69,45 +69,8 @@ def get_user_vendor(user, resolve_fallback=True):
             pass
         return assignment.vendor
 
-    ext_ids = []
-    if getattr(user, 'external_user_id', None):
-        ext_ids.append(user.external_user_id)
-    if getattr(user, 'id', None):
-        ext_ids.append(str(user.id))
-    if getattr(user, 'username', None):
-        ext_ids.append(user.username)
-    if getattr(user, 'email', None):
-        ext_ids.append(user.email)
-    if getattr(user, 'phone_number', None):
-        ext_ids.append(user.phone_number)
-
-    for uid in ext_ids:
-        try:
-            from apps.integrations.ilync_client import IlyncClient
-            res = IlyncClient().get_vendor_by_user_id(uid)
-            if res and res.get('success') and res.get('data'):
-                v_data = res.get('data', {})
-                ext_v_id = v_data.get('id')
-                v_name = v_data.get('partnerName') or v_data.get('name')
-                if ext_v_id:
-                    v_obj = Vendor.objects.filter(external_vendor_id=ext_v_id).first()
-                    if not v_obj and v_name:
-                        v_obj = Vendor.objects.filter(name=v_name).first()
-                    if not v_obj and v_name:
-                        v_obj, _ = Vendor.objects.get_or_create(
-                            name=v_name,
-                            defaults={'external_vendor_id': ext_v_id}
-                        )
-                    if v_obj:
-                        user.vendor = v_obj
-                        user.save(update_fields=['vendor'])
-                        HeroVendorAssignment.objects.get_or_create(user=user, vendor=v_obj, defaults={'is_active': True})
-                        return v_obj
-        except Exception:
-            pass
-
     if resolve_fallback:
-        # 2. Check if username / email / first_name matches any Vendor name/code in DB
+        # 2. Fast local DB check: if username / email / first_name matches any Vendor name/code in DB
         u_name = str(getattr(user, 'username', '') or '').strip()
         u_first = str(getattr(user, 'first_name', '') or '').strip()
         u_email = str(getattr(user, 'email', '') or '').strip()
@@ -117,45 +80,87 @@ def get_user_vendor(user, resolve_fallback=True):
                 v_db = Vendor.objects.filter(name__icontains=search_term).first()
                 if v_db:
                     user.vendor = v_db
-                    user.save(update_fields=['vendor'])
+                    try:
+                        user.save(update_fields=['vendor'])
+                    except Exception:
+                        pass
                     HeroVendorAssignment.objects.get_or_create(user=user, vendor=v_db, defaults={'is_active': True})
                     return v_db
 
-        # 3. Live vendor users list matching fallback
-        try:
-            from apps.integrations.ilync_client import IlyncClient
-            client = IlyncClient()
-            active_vendors = Vendor.objects.filter(is_active=True, external_vendor_id__isnull=False).exclude(external_vendor_id='')
-            for v_cand in active_vendors:
-                try:
-                    res = client.get_vendor_by_id(v_cand.external_vendor_id)
-                    if res and res.get('success') and isinstance(res.get('data'), dict):
-                        users_list = res.get('data', {}).get('users', []) or []
-                        for u_entry in users_list:
-                            if not isinstance(u_entry, dict):
-                                continue
-                            u_ext = str(u_entry.get('userId') or u_entry.get('id') or '').strip()
-                            u_em = str(u_entry.get('email') or '').strip().lower()
-                            u_ph = str(u_entry.get('mobile') or u_entry.get('phone') or '').strip()
-                            
-                            user_ext = str(getattr(user, 'external_user_id', '') or '').strip()
-                            user_em = str(getattr(user, 'email', '') or '').strip().lower()
-                            user_ph = str(getattr(user, 'phone_number', '') or getattr(user, 'username', '') or '').strip()
+    # 3. Slow external network calls: ONLY if explicitly allowed (never during latency-critical check-in)
+    if allow_network:
+        ext_ids = []
+        if getattr(user, 'external_user_id', None):
+            ext_ids.append(user.external_user_id)
+        if getattr(user, 'id', None):
+            ext_ids.append(str(user.id))
+        if getattr(user, 'username', None):
+            ext_ids.append(user.username)
+        if getattr(user, 'email', None):
+            ext_ids.append(user.email)
+        if getattr(user, 'phone_number', None):
+            ext_ids.append(user.phone_number)
 
-                            match = False
-                            if user_ext and u_ext and user_ext == u_ext: match = True
-                            elif user_em and u_em and user_em == u_em: match = True
-                            elif user_ph and u_ph and user_ph == u_ph: match = True
+        for uid in ext_ids:
+            try:
+                from apps.integrations.ilync_client import IlyncClient
+                res = IlyncClient().get_vendor_by_user_id(uid)
+                if res and res.get('success') and res.get('data'):
+                    v_data = res.get('data', {})
+                    ext_v_id = v_data.get('id')
+                    v_name = v_data.get('partnerName') or v_data.get('name')
+                    if ext_v_id:
+                        v_obj = Vendor.objects.filter(external_vendor_id=ext_v_id).first()
+                        if not v_obj and v_name:
+                            v_obj = Vendor.objects.filter(name=v_name).first()
+                        if not v_obj and v_name:
+                            v_obj, _ = Vendor.objects.get_or_create(
+                                name=v_name,
+                                defaults={'external_vendor_id': ext_v_id}
+                            )
+                        if v_obj:
+                            user.vendor = v_obj
+                            user.save(update_fields=['vendor'])
+                            HeroVendorAssignment.objects.get_or_create(user=user, vendor=v_obj, defaults={'is_active': True})
+                            return v_obj
+            except Exception:
+                pass
 
-                            if match:
-                                user.vendor = v_cand
-                                user.save(update_fields=['vendor'])
-                                HeroVendorAssignment.objects.get_or_create(user=user, vendor=v_cand, defaults={'is_active': True})
-                                return v_cand
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        if resolve_fallback:
+            try:
+                from apps.integrations.ilync_client import IlyncClient
+                client = IlyncClient()
+                active_vendors = Vendor.objects.filter(is_active=True, external_vendor_id__isnull=False).exclude(external_vendor_id='')
+                for v_cand in active_vendors:
+                    try:
+                        res = client.get_vendor_by_id(v_cand.external_vendor_id)
+                        if res and res.get('success') and isinstance(res.get('data'), dict):
+                            users_list = res.get('data', {}).get('users', []) or []
+                            for u_entry in users_list:
+                                if not isinstance(u_entry, dict):
+                                    continue
+                                u_ext = str(u_entry.get('userId') or u_entry.get('id') or '').strip()
+                                u_em = str(u_entry.get('email') or '').strip().lower()
+                                u_ph = str(u_entry.get('mobile') or u_entry.get('phone') or '').strip()
+                                
+                                user_ext = str(getattr(user, 'external_user_id', '') or '').strip()
+                                user_em = str(getattr(user, 'email', '') or '').strip().lower()
+                                user_ph = str(getattr(user, 'phone_number', '') or getattr(user, 'username', '') or '').strip()
+
+                                match = False
+                                if user_ext and u_ext and user_ext == u_ext: match = True
+                                elif user_em and u_em and user_em == u_em: match = True
+                                elif user_ph and u_ph and user_ph == u_ph: match = True
+
+                                if match:
+                                    user.vendor = v_cand
+                                    user.save(update_fields=['vendor'])
+                                    HeroVendorAssignment.objects.get_or_create(user=user, vendor=v_cand, defaults={'is_active': True})
+                                    return v_cand
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
     return None
 

@@ -38,6 +38,7 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
     vendor_id = serializers.SerializerMethodField()
     vendor_name = serializers.SerializerMethodField()
     vendor_external_id = serializers.SerializerMethodField()
+    vendor_external_id_snapshot = serializers.SerializerMethodField()
     
     marked_for_user_id = serializers.SerializerMethodField()
     marked_for_user_name = serializers.SerializerMethodField()
@@ -141,12 +142,28 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
         return ''
 
     def get_vendor_external_id(self, obj):
-        if getattr(obj, 'vendor_external_id_snapshot', None):
-            return obj.vendor_external_id_snapshot
-        if obj.vendor and obj.vendor.external_vendor_id:
-            return obj.vendor.external_vendor_id
-        elif obj.user and obj.user.vendor and obj.user.vendor.external_vendor_id:
-            return obj.user.vendor.external_vendor_id
+        try:
+            if getattr(obj, 'vendor_external_id_snapshot', None):
+                return obj.vendor_external_id_snapshot
+            if obj.vendor and obj.vendor.external_vendor_id:
+                return obj.vendor.external_vendor_id
+            elif obj.user and obj.user.vendor and obj.user.vendor.external_vendor_id:
+                return obj.user.vendor.external_vendor_id
+        except Exception:
+            pass
+        return ''
+
+    def get_vendor_external_id_snapshot(self, obj):
+        try:
+            val = getattr(obj, 'vendor_external_id_snapshot', None)
+            if val:
+                return val
+            if obj.vendor and getattr(obj.vendor, 'external_vendor_id', None):
+                return obj.vendor.external_vendor_id
+            if obj.user and getattr(obj.user, 'vendor', None) and getattr(obj.user.vendor, 'external_vendor_id', None):
+                return obj.user.vendor.external_vendor_id
+        except Exception:
+            pass
         return ''
 
     def get_marked_for_user_id(self, obj):

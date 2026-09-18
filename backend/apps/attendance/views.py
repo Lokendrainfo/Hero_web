@@ -109,6 +109,19 @@ def notify_user(target_user, title, body):
         except Exception as e:
             print(f"[Notification] Error creating notification: {e}")
 
+def async_notify_user(target_user, title, body):
+    """
+    Fire-and-forget notification executed in a background daemon thread
+    to guarantee zero latency impact on interactive HTTP endpoints.
+    """
+    import threading
+    def _run():
+        try:
+            notify_user(target_user, title, body)
+        except Exception as err:
+            print(f"[AsyncNotification] Error: {err}")
+    threading.Thread(target=_run, daemon=True).start()
+
 def resolve_reporting_manager(target_user, marked_by_user=None, vendor=None):
     """
     Resolves the appropriate reporting manager for attendance submission & approvals.
@@ -137,7 +150,7 @@ def resolve_reporting_manager(target_user, marked_by_user=None, vendor=None):
             return marked_by_user
 
     # 3. Check vendor primary admin/manager user
-    target_vendor = vendor or getattr(target_user, 'vendor', None) or get_user_vendor(target_user, resolve_fallback=False)
+    target_vendor = vendor or getattr(target_user, 'vendor', None) or get_user_vendor(target_user, resolve_fallback=False, allow_network=False)
     if target_vendor:
         vendor_mgr = User.objects.filter(
             Q(vendor=target_vendor) | Q(hero_vendor_assignments__vendor=target_vendor)
@@ -224,7 +237,7 @@ def extract_geo(data_dict, keys):
     return ''
 
 
-def resolve_target_user(user_id_param, request_user=None, external_user_id=None):
+def resolve_target_user(user_id_param, request_user=None, external_user_id=None, sync_live=False):
     """
     Resolves target Hero User for attendance operations.
     PRIMARY IDENTITY RULE:
@@ -262,7 +275,7 @@ def resolve_target_user(user_id_param, request_user=None, external_user_id=None)
 
     target_vendor = None
     if request_user:
-        target_vendor = getattr(request_user, 'vendor', None) or get_user_vendor(request_user)
+        target_vendor = getattr(request_user, 'vendor', None) or get_user_vendor(request_user, allow_network=False)
 
     # 2. Search by employee_id, username, phone_number, email (scoped to target_vendor if known)
     cand_qs = User.objects.filter(vendor=target_vendor) if target_vendor else User.objects.all()
@@ -292,8 +305,8 @@ def resolve_target_user(user_id_param, request_user=None, external_user_id=None)
                         return None
                     return u
 
-    # 3b. If still not found and request_user has a vendor with external_vendor_id, sync live vendor users to resolve
-    if target_vendor and getattr(target_vendor, 'external_vendor_id', None):
+    # 3b. If still not found and request_user has a vendor with external_vendor_id, sync live vendor users to resolve (only if sync_live=True)
+    if sync_live and target_vendor and getattr(target_vendor, 'external_vendor_id', None):
         try:
             from apps.vendors.services import sync_vendor_detail_links
             sync_vendor_detail_links(target_vendor, target_vendor.external_vendor_id)
@@ -737,6 +750,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     # 4.2 Employee Check-In (Self or Marked for Team Member)
     @action(detail=False, methods=['post'], url_path='check-in')
     def check_in(self, request):
+        import time
+        t_global_start = time.perf_counter()
+        print(f"[AttendanceCheckInTiming] START | request_user_id={getattr(request.user, 'id', None)}")
+
         ext_user_id = request.data.get('external_user_id')
         target_user_id = request.data.get('user_id') or request.data.get('marked_for_user_id') or request.data.get('user')
         req_vendor_id = request.data.get('vendor_id') or request.data.get('vendor')
@@ -744,36 +761,58 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         user = request.user
         target_requested = bool(ext_user_id or target_user_id)
 
+        # 1. USER_RESOLUTION
+        t_user_start = time.perf_counter()
         if target_requested:
-            target_user = resolve_target_user(target_user_id, request_user=request.user, external_user_id=ext_user_id)
+            target_user = resolve_target_user(target_user_id, request_user=request.user, external_user_id=ext_user_id, sync_live=False)
             if not target_user:
-                print(
-                    f"[AttendanceCheckIn] target_not_found: ext_user_id={ext_user_id} | "
-                    f"target_user_id={target_user_id} | marked_by={request.user.id}"
-                )
+                t_user_elapsed = (time.perf_counter() - t_user_start) * 1000
+                print(f"[AttendanceCheckInTiming] USER_RESOLUTION | elapsed_ms={t_user_elapsed:.2f}ms | target_not_found=True")
                 return error_response(
                     message=f"Target employee not found for identifier '{ext_user_id or target_user_id}'.",
                     status_code=status.HTTP_404_NOT_FOUND
                 )
+            user = target_user
+        t_user_elapsed = (time.perf_counter() - t_user_start) * 1000
+        print(f"[AttendanceCheckInTiming] USER_RESOLUTION | elapsed_ms={t_user_elapsed:.2f}ms | user_id={getattr(user, 'id', None)} | external_user_id={getattr(user, 'external_user_id', None)}")
 
+        # 2. AUTHORIZATION
+        t_auth_start = time.perf_counter()
+        if target_requested:
             # Validate user's current valid Hero vendor mapping (do not reassign or allow cross-vendor conflict)
-            resolved_vendor = target_user.vendor or get_user_vendor(target_user)
+            resolved_vendor = user.vendor or get_user_vendor(user, allow_network=False)
             if req_vendor_id and resolved_vendor:
                 req_v_str = str(req_vendor_id).strip()
                 if req_v_str.isdigit() and int(req_v_str) != resolved_vendor.id:
-                    print(
-                        f"[AttendanceCheckIn] CROSS_VENDOR_CONFLICT: Hero_user_id={target_user.id} | "
-                        f"current_vendor={resolved_vendor.id} ({resolved_vendor.name}) | "
-                        f"requested_vendor={req_vendor_id} | marked_by={request.user.id}"
-                    )
+                    t_auth_elapsed = (time.perf_counter() - t_auth_start) * 1000
+                    print(f"[AttendanceCheckInTiming] AUTHORIZATION | elapsed_ms={t_auth_elapsed:.2f}ms | cross_vendor_conflict=True")
                     return error_response(
-                        message=f"Employee {target_user.get_full_name() or target_user.username} is registered under vendor '{resolved_vendor.name}'. Cross-vendor check-in is not permitted.",
+                        message=f"Employee {user.get_full_name() or user.username} is registered under vendor '{resolved_vendor.name}'. Cross-vendor check-in is not permitted.",
                         status_code=status.HTTP_400_BAD_REQUEST
                     )
 
             # Validate logged-in user's authorization for that vendor/team member
-            validate_employee_attendance_access(request.user, target_user)
-            user = target_user
+            validate_employee_attendance_access(request.user, user)
+        t_auth_elapsed = (time.perf_counter() - t_auth_start) * 1000
+        print(f"[AttendanceCheckInTiming] AUTHORIZATION | elapsed_ms={t_auth_elapsed:.2f}ms | auth_result=AUTHORIZED")
+
+        # 3. VENDOR_RESOLUTION
+        t_vend_start = time.perf_counter()
+        target_vendor = user.vendor or get_user_vendor(user, allow_network=False) or get_user_vendor(request.user, allow_network=False)
+        if not target_vendor and req_vendor_id:
+            from apps.vendors.models import Vendor
+            req_v_clean = str(req_vendor_id).strip()
+            if req_v_clean.isdigit():
+                target_vendor = Vendor.objects.filter(id=int(req_v_clean)).first()
+        reporting_mgr = resolve_reporting_manager(user, marked_by_user=request.user, vendor=target_vendor)
+        t_vend_elapsed = (time.perf_counter() - t_vend_start) * 1000
+        print(f"[AttendanceCheckInTiming] VENDOR_RESOLUTION | elapsed_ms={t_vend_elapsed:.2f}ms | vendor_id={getattr(target_vendor, 'id', None)} | vendor_name={getattr(target_vendor, 'name', None)}")
+
+        # 4. PHOTO_PROCESSING
+        t_photo_start = time.perf_counter()
+        processed_photo = process_attendance_photo(request, 'checkin', user.id)
+        t_photo_elapsed = (time.perf_counter() - t_photo_start) * 1000
+        print(f"[AttendanceCheckInTiming] PHOTO_PROCESSING | elapsed_ms={t_photo_elapsed:.2f}ms | has_photo={bool(processed_photo)}")
 
         today = timezone.localdate()
         lat = request.data.get('latitude') or request.data.get('check_in_latitude')
@@ -784,11 +823,6 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if att_type == 'MACHINE':
             att_type = 'TEAM'
 
-        processed_photo = process_attendance_photo(request, 'checkin', user.id)
-
-        target_vendor = user.vendor or get_user_vendor(user) or get_user_vendor(request.user)
-        reporting_mgr = resolve_reporting_manager(user, marked_by_user=request.user, vendor=target_vendor)
-
         # Snapshot data
         ext_uid_snap = getattr(user, 'external_user_id', None) or (str(ext_user_id).strip() if ext_user_id else None)
         emp_id_snap = getattr(user, 'employee_id', None) or (request.data.get('employee_id') if request.data.get('employee_id') else None) or f"EMP-{user.id}"
@@ -798,7 +832,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         v_ext_id_snap = getattr(target_vendor, 'external_vendor_id', None) if target_vendor else None
         v_name_snap = getattr(target_vendor, 'name', '') if target_vendor else ''
 
-        # 1. Check if record already exists for today to prevent duplicates
+        # 5. ATTENDANCE_CREATE
+        t_create_start = time.perf_counter()
         existing = AttendanceRecord.objects.filter(user=user, date=today).exclude(attendance_type='MACHINE').first()
         if existing:
             existing.status = 'CHECKED_IN'
@@ -821,46 +856,50 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if not existing.vendor_name_snapshot: existing.vendor_name_snapshot = v_name_snap
             if not existing.vendor_external_id_snapshot: existing.vendor_external_id_snapshot = v_ext_id_snap
             existing.save()
-
-            print(
-                f"[AttendanceCheckIn] Hero_user_id={user.id} | external_user_id={ext_uid_snap} | "
-                f"resolved_Hero_vendor={getattr(target_vendor, 'id', None)} ({v_name_snap}) | "
-                f"resolved_iLync_vendor={v_ext_id_snap} | auth_result=AUTHORIZED | "
-                f"attendance_record_id={existing.id} | date={today} | status={existing.status} | creation_result=SUCCESS_UPDATED"
+            target_record = existing
+            is_created = False
+        else:
+            record = AttendanceRecord.objects.create(
+                user=user,
+                vendor=target_vendor,
+                reporting_manager=reporting_mgr,
+                date=today,
+                check_in=timezone.now(),
+                status='CHECKED_IN',
+                approval_status='PENDING',
+                attendance_type=att_type,
+                check_in_latitude=float(lat) if (lat is not None and str(lat).strip() != '') else None,
+                check_in_longitude=float(lng) if (lng is not None and str(lng).strip() != '') else None,
+                check_in_accuracy=float(acc) if (acc is not None and str(acc).strip() != '') else None,
+                check_in_photo=processed_photo,
+                location_source=loc_source,
+                marked_by=request.user,
+                updated_by=request.user,
+                external_user_id_snapshot=ext_uid_snap,
+                employee_id_snapshot=emp_id_snap,
+                user_name_snapshot=u_name_snap,
+                phone_number_snapshot=phone_snap,
+                role_snapshot=role_snap,
+                vendor_external_id_snapshot=v_ext_id_snap,
+                vendor_name_snapshot=v_name_snap
             )
+            target_record = record
+            is_created = True
 
-            serializer = AttendanceRecordSerializer(existing, context={'request': request})
-            return Response({
-                "success": True,
-                "message": "Check-in successful",
-                "data": serializer.data
-            }, status=status.HTTP_200_OK)
-
-        record = AttendanceRecord.objects.create(
-            user=user,
-            vendor=target_vendor,
-            reporting_manager=reporting_mgr,
-            date=today,
-            check_in=timezone.now(),
-            status='CHECKED_IN',
-            approval_status='PENDING',
-            attendance_type=att_type,
-            check_in_latitude=float(lat) if (lat is not None and str(lat).strip() != '') else None,
-            check_in_longitude=float(lng) if (lng is not None and str(lng).strip() != '') else None,
-            check_in_accuracy=float(acc) if (acc is not None and str(acc).strip() != '') else None,
-            check_in_photo=processed_photo,
-            location_source=loc_source,
-            marked_by=request.user,
-            updated_by=request.user,
-            external_user_id_snapshot=ext_uid_snap,
-            employee_id_snapshot=emp_id_snap,
-            user_name_snapshot=u_name_snap,
-            phone_number_snapshot=phone_snap,
-            role_snapshot=role_snap,
-            vendor_external_id_snapshot=v_ext_id_snap,
-            vendor_name_snapshot=v_name_snap
+        t_create_elapsed = (time.perf_counter() - t_create_start) * 1000
+        result_tag = "SUCCESS_CREATED" if is_created else "SUCCESS_UPDATED"
+        print(f"[AttendanceCheckInTiming] ATTENDANCE_CREATE | elapsed_ms={t_create_elapsed:.2f}ms | record_id={target_record.id} | is_new={is_created} | status={target_record.status}")
+        print(
+            f"[AttendanceCheckIn] Hero_user_id={user.id} | external_user_id={ext_uid_snap} | "
+            f"resolved_Hero_vendor={getattr(target_vendor, 'id', None)} ({v_name_snap}) | "
+            f"resolved_iLync_vendor={v_ext_id_snap} | auth_result=AUTHORIZED | "
+            f"attendance_record_id={target_record.id} | date={today} | status={target_record.status} | creation_result={result_tag}"
         )
+        print(f"[AttendanceCheckIn] STEP=AFTER_CREATE | attendance_record_id={target_record.id}")
 
+        # 6. NOTIFICATION (Safe execution - notification failures never break check-in)
+        t_notif_start = time.perf_counter()
+        print(f"[AttendanceCheckIn] STEP=NOTIFY_START")
         if reporting_mgr:
             try:
                 notify_user(
@@ -868,22 +907,56 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     "Pending Attendance Approval",
                     f"Attendance check-in submitted by {user.get_full_name() or user.username} for {today} requires your approval."
                 )
+                print(f"[AttendanceCheckIn] STEP=NOTIFY_SUCCESS")
             except Exception as notif_err:
-                print(f"[AttendanceCheckIn] Non-fatal notification error: {notif_err}")
+                import traceback
+                print(f"[AttendanceCheckIn] Notification exception: {type(notif_err).__name__}: {notif_err}")
+                traceback.print_exc()
+        else:
+            print(f"[AttendanceCheckIn] STEP=NOTIFY_SUCCESS | no_reporting_mgr=True")
+        t_notif_elapsed = (time.perf_counter() - t_notif_start) * 1000
+        print(f"[AttendanceCheckInTiming] NOTIFICATION | elapsed_ms={t_notif_elapsed:.2f}ms | reporting_mgr_id={getattr(reporting_mgr, 'id', None)}")
 
-        print(
-            f"[AttendanceCheckIn] Hero_user_id={user.id} | external_user_id={ext_uid_snap} | "
-            f"resolved_Hero_vendor={getattr(target_vendor, 'id', None)} ({v_name_snap}) | "
-            f"resolved_iLync_vendor={v_ext_id_snap} | auth_result=AUTHORIZED | "
-            f"attendance_record_id={record.id} | date={today} | status={record.status} | creation_result=SUCCESS_CREATED"
-        )
+        # 7. SERIALIZATION
+        t_ser_start = time.perf_counter()
+        print(f"[AttendanceCheckIn] STEP=RESPONSE_SERIALIZER_START")
+        try:
+            serializer = AttendanceRecordSerializer(target_record, context={'request': request})
+            data = serializer.data
+            print(f"[AttendanceCheckIn] STEP=RESPONSE_SERIALIZER_SUCCESS")
+        except Exception as ser_err:
+            import traceback
+            print(f"[AttendanceCheckIn] Serializer exception: {type(ser_err).__name__}: {ser_err}")
+            traceback.print_exc()
+            data = {
+                "id": target_record.id,
+                "user_id": user.id,
+                "user_name": u_name_snap,
+                "employee_id": emp_id_snap,
+                "external_user_id": ext_uid_snap,
+                "vendor_name": v_name_snap,
+                "vendor_external_id": v_ext_id_snap,
+                "status": target_record.status,
+                "approval_status": target_record.approval_status,
+                "date": str(today),
+                "check_in": target_record.check_in.isoformat() if target_record.check_in else None
+            }
+            print(f"[AttendanceCheckIn] STEP=RESPONSE_SERIALIZER_SUCCESS (fallback data used)")
 
-        serializer = AttendanceRecordSerializer(record, context={'request': request})
+        t_ser_elapsed = (time.perf_counter() - t_ser_start) * 1000
+        print(f"[AttendanceCheckInTiming] SERIALIZATION | elapsed_ms={t_ser_elapsed:.2f}ms | fields_count={len(data)}")
+
+        # 8. RESPONSE
+        t_total_elapsed = (time.perf_counter() - t_global_start) * 1000
+        resp_status = status.HTTP_201_CREATED if is_created else status.HTTP_200_OK
+        print(f"[AttendanceCheckInTiming] RESPONSE | total_elapsed_ms={t_total_elapsed:.2f}ms | status_code={resp_status}")
+        print(f"[AttendanceCheckIn] STEP=CHECKIN_SUCCESS | total_elapsed_ms={t_total_elapsed:.2f}ms")
+
         return Response({
             "success": True,
             "message": "Check-in successful",
-            "data": serializer.data
-        }, status=status.HTTP_201_CREATED)
+            "data": data
+        }, status=resp_status)
 
     # 4.3 Employee Self Check-Out
     @action(detail=False, methods=['post'], url_path='check-out')
