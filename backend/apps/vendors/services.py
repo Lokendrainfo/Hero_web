@@ -41,33 +41,42 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
         for u_info in users_data:
             if not isinstance(u_info, dict):
                 continue
-            ext_u_id = str(u_info.get('userId') or '').strip()
+            ext_u_id = str(u_info.get('userId') or u_info.get('id') or '').strip()
             if ext_u_id.lower() in ('none', 'null', ''):
                 ext_u_id = ''
-            mobile = str(u_info.get('mobile') or u_info.get('phone') or '').strip()
+            emp_id = u_info.get('empId')
+            emp_id_str = str(emp_id).strip() if emp_id and str(emp_id).lower() not in ('none', 'null') else ''
+            mobile = str(u_info.get('mobile') or u_info.get('phone') or u_info.get('phoneNumber') or '').strip()
             email = str(u_info.get('email') or '').strip()
-            name = str(u_info.get('name') or '').strip()
+            name = str(u_info.get('name') or u_info.get('contactName') or '').strip()
             designation = str(u_info.get('designation') or 'OPERATOR').strip()
 
             matched_user = None
+            # 1. Primary canonical: iLync userId -> Hero User.external_user_id
             if ext_u_id:
                 matched_user = User.objects.filter(external_user_id=ext_u_id).first()
+            # 2. Secondary fallback matches for pre-existing local records
+            if not matched_user and emp_id_str:
+                matched_user = User.objects.filter(Q(employee_id=emp_id_str) | Q(username=emp_id_str)).first()
+            if not matched_user and mobile:
+                matched_user = User.objects.filter(Q(phone_number=mobile) | Q(username=mobile)).first()
             if not matched_user and email and not email.lower().startswith('user@'):
                 matched_user = User.objects.filter(email__iexact=email).first()
             if not matched_user and name:
-                matched_user = User.objects.filter(vendor=vendor_obj, first_name__iexact=name).first()
-            if not matched_user and mobile:
-                matched_user = User.objects.filter(vendor=vendor_obj, phone_number=mobile).filter(
-                    Q(external_user_id__isnull=True) | Q(external_user_id='') | Q(external_user_id=ext_u_id)
-                ).first()
+                clean_name = name.split()[0] if name else ''
+                matched_user = User.objects.filter(vendor=vendor_obj, first_name__iexact=clean_name).first()
 
             u_role = 'VENDOR' if designation.upper() == 'VENDOR' else ('TRACKER' if 'TRACK' in designation.upper() else 'OPERATOR')
             if matched_user:
                 changed = False
-                if name and matched_user.first_name != name:
-                    matched_user.first_name = name
-                    matched_user.last_name = ''
-                    changed = True
+                if name:
+                    parts = name.split(None, 1)
+                    first = parts[0]
+                    last = parts[1] if len(parts) > 1 else ''
+                    if matched_user.first_name != first or (last and matched_user.last_name != last):
+                        matched_user.first_name = first
+                        matched_user.last_name = last
+                        changed = True
                 if email and (not matched_user.email or matched_user.email != email):
                     matched_user.email = email
                     changed = True
@@ -77,8 +86,14 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
                 if matched_user.vendor != vendor_obj:
                     matched_user.vendor = vendor_obj
                     changed = True
-                if ext_u_id and not matched_user.external_user_id:
+                if ext_u_id and matched_user.external_user_id != ext_u_id:
                     matched_user.external_user_id = ext_u_id
+                    changed = True
+                if emp_id_str and matched_user.employee_id != emp_id_str:
+                    matched_user.employee_id = emp_id_str
+                    changed = True
+                if mobile and not matched_user.phone_number:
+                    matched_user.phone_number = mobile
                     changed = True
                 if changed:
                     matched_user.save()
@@ -88,21 +103,26 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
                     defaults={'is_active': True}
                 )
                 synced_user_ids.append(matched_user.id)
-            elif name or mobile:
-                u_role = 'VENDOR' if designation.upper() == 'VENDOR' else ('OPERATOR' if 'OPERATOR' in designation.upper() else 'TRACKER' if 'TRACKER' in designation.upper() else 'OPERATOR')
-                base_usr = ext_u_id or mobile or f"VND-{vendor_obj.id}-{name.replace(' ', '')}"
+            elif ext_u_id or mobile or name:
+                base_usr = emp_id_str or mobile or ext_u_id or f"VND-{vendor_obj.id}-{name.replace(' ', '')}"
                 username_val = base_usr
                 idx = 1
                 while User.objects.filter(username=username_val).exists():
                     username_val = f"{base_usr}_{idx}"
                     idx += 1
 
+                parts = name.split(None, 1) if name else [username_val, '']
+                first = parts[0]
+                last = parts[1] if len(parts) > 1 else ''
+
                 new_user = User.objects.create(
                     username=username_val,
                     external_user_id=ext_u_id or None,
+                    employee_id=emp_id_str or None,
                     phone_number=mobile or '',
                     email=email or f"{username_val}@ilync.tech",
-                    first_name=name or username_val,
+                    first_name=first,
+                    last_name=last,
                     role=u_role,
                     vendor=vendor_obj,
                     is_active=True

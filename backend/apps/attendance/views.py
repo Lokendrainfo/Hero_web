@@ -249,6 +249,19 @@ def resolve_target_user(user_id_param, request_user=None):
     if u:
         return u
 
+    # 2b. Search with common vendor/employee prefixes stripped (e.g. VND-9000000010, EMP-9000000010)
+    for prefix in ('VND-', 'EMP-', 'VND_', 'EMP_'):
+        if param_str.upper().startswith(prefix):
+            clean_token = param_str[len(prefix):].split('-')[0].strip()
+            if clean_token:
+                u = User.objects.filter(
+                    Q(username=clean_token) |
+                    Q(phone_number=clean_token) |
+                    Q(employee_id__icontains=clean_token)
+                ).first()
+                if u:
+                    return u
+
     # 3. If not found by external ID / username / email / phone, check if param_str is digit matching local User ID primary key
     if param_str.isdigit():
         u = User.objects.filter(id=int(param_str)).first()
@@ -1283,10 +1296,59 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 ext_u_id = str(u_info.get('userId') or u_info.get('id') or '').strip()
                 if ext_u_id.lower() in ('none', 'null', ''):
                     ext_u_id = None
+                emp_id = u_info.get('empId')
+                emp_id_str = str(emp_id).strip() if emp_id and str(emp_id).lower() not in ('none', 'null') else ''
                 mobile = str(u_info.get('mobile') or u_info.get('phone') or u_info.get('phoneNumber') or '').strip()
                 email = str(u_info.get('email') or '').strip()
                 name = str(u_info.get('name') or u_info.get('contactName') or 'Team Member').strip()
                 designation = str(u_info.get('designation') or u_info.get('role') or 'OPERATOR').strip()
+
+                # Canonical User Mapping:
+                # 1. Primary: iLync userId -> Hero User.external_user_id
+                matched_user = None
+                if ext_u_id:
+                    matched_user = User.objects.filter(external_user_id=ext_u_id).first()
+                if not matched_user and emp_id_str:
+                    matched_user = User.objects.filter(Q(employee_id=emp_id_str) | Q(username=emp_id_str)).first()
+                    if not matched_user:
+                        for pref in ('VND-', 'EMP-', 'VND_', 'EMP_'):
+                            if emp_id_str.upper().startswith(pref):
+                                cln = emp_id_str[len(pref):].split('-')[0].strip()
+                                if cln:
+                                    matched_user = User.objects.filter(Q(username=cln) | Q(phone_number=cln)).first()
+                                    if matched_user:
+                                        break
+                if not matched_user and mobile:
+                    matched_user = User.objects.filter(Q(phone_number=mobile) | Q(username=mobile)).first()
+                if not matched_user and email and not email.lower().startswith('user@'):
+                    matched_user = User.objects.filter(email__iexact=email).first()
+
+                # Temporary diagnostic logging (no sensitive credentials)
+                print(
+                    f"[AttendanceRoster] vendor_ext_id={ext_v_id} | vendor_name={v_obj.name} | "
+                    f"iLync_users_count={len(raw_users)} | iLync_userId={ext_u_id} | empId={emp_id} | "
+                    f"Hero_matched_user_id={matched_user.id if matched_user else None} | "
+                    f"Hero_external_user_id={matched_user.external_user_id if matched_user else None} | "
+                    f"Hero_vendor_id={matched_user.vendor_id if matched_user else None}"
+                )
+
+                # Auto-enrich matched user external_user_id / employee_id / vendor without duplicate creation
+                if matched_user:
+                    up_fields = []
+                    if ext_u_id and matched_user.external_user_id != ext_u_id:
+                        matched_user.external_user_id = ext_u_id
+                        up_fields.append('external_user_id')
+                    if emp_id_str and matched_user.employee_id != emp_id_str:
+                        matched_user.employee_id = emp_id_str
+                        up_fields.append('employee_id')
+                    if not matched_user.vendor_id and v_obj:
+                        matched_user.vendor = v_obj
+                        up_fields.append('vendor')
+                    if up_fields:
+                        try:
+                            matched_user.save(update_fields=up_fields)
+                        except Exception as e:
+                            print(f"[AttendanceRoster] Error enriching user {matched_user.id}: {e}")
 
                 # Role filter check — keep iLync designation scopes (HELPER/TRACKER/etc)
                 u_role = normalize_attendance_role(designation)
@@ -1297,7 +1359,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 # Search filter check
                 if search_filter:
                     sp = search_filter.strip().lower()
-                    if sp not in name.lower() and sp not in mobile and sp not in email.lower():
+                    if sp not in name.lower() and sp not in mobile and sp not in email.lower() and sp not in emp_id_str.lower():
                         continue
 
                 # Find today's AttendanceRecord from Hero DB for this user
@@ -1310,21 +1372,14 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                         Q(user__employee_id=ext_u_id) |
                         (Q(user__id=int(ext_u_id)) if ext_u_id.isdigit() else Q(pk=-1))
                     ).first()
+                if not rec and matched_user:
+                    rec = rec_qs.filter(user=matched_user).first()
+                if not rec and emp_id_str:
+                    rec = rec_qs.filter(Q(user__employee_id=emp_id_str) | Q(user__username=emp_id_str)).first()
                 if not rec and email and not email.lower().startswith('user@'):
                     rec = rec_qs.filter(user__email__iexact=email).first()
                 if not rec and mobile:
                     rec = rec_qs.filter(Q(user__phone_number=mobile) | Q(user__username=mobile)).first()
-
-                # Also lookup matching local User ID if available for action triggers
-                matched_user = None
-                if ext_u_id:
-                    matched_user = User.objects.filter(external_user_id=ext_u_id).first()
-                if not matched_user and name:
-                    matched_user = User.objects.filter(first_name__iexact=name).first()
-                if not matched_user and email and not email.lower().startswith('user@'):
-                    matched_user = User.objects.filter(email__iexact=email).first()
-                if not matched_user and mobile:
-                    matched_user = User.objects.filter(phone_number=mobile, first_name__iexact=name).first()
 
                 st = (rec.status if rec else 'NOT_MARKED').upper()
                 counts['total'] += 1
@@ -1379,14 +1434,15 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 final_block = u_block or (matched_user.selected_block.name if (matched_user and getattr(matched_user, 'selected_block', None)) else '') or v_block
                 final_machine = u_mac_str or v_vendor_machine
 
-                effective_user_id = ext_u_id or (matched_user.id if matched_user else f"ILYNC-{name.replace(' ', '_')}_{mobile}")
+                effective_user_id = ext_u_id or (str(matched_user.id) if matched_user else f"ILYNC-{name.replace(' ', '_')}_{mobile}")
+                emp_display = emp_id_str or (matched_user.employee_id if (matched_user and matched_user.employee_id) else None) or (f"EMP-{matched_user.id}" if matched_user else f"EMP-{effective_user_id}")
 
                 check_in_dt = (rec.check_in or rec.created_at) if (rec and rec.status in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT', 'HALF_DAY']) else None
                 check_out_dt = rec.check_out if (rec and rec.check_out) else None
 
                 result_list.append({
                     'user_id': effective_user_id,
-                    'employee_id': ext_u_id or (matched_user.employee_id if (matched_user and matched_user.employee_id) else f"EMP-{effective_user_id}"),
+                    'employee_id': emp_display,
                     'user_name': name,
                     'phone_number': mobile,
                     'email': email,
