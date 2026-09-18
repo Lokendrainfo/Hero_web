@@ -54,6 +54,8 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
         model = AttendanceRecord
         fields = [
             'id', 'user', 'user_id', 'user_name', 'employee_id', 'phone_number', 'role',
+            'external_user_id_snapshot', 'employee_id_snapshot', 'user_name_snapshot',
+            'phone_number_snapshot', 'role_snapshot', 'vendor_name_snapshot',
             'reporting_manager_id', 'reporting_manager_name',
             'attendance_type', 'machine_id', 'machine_chassis_no', 'machine_assignment_id',
             'vendor', 'vendor_id', 'vendor_name', 'site_id',
@@ -72,21 +74,29 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
         return obj.user_id if obj.user else None
 
     def get_user_name(self, obj):
+        if getattr(obj, 'user_name_snapshot', None):
+            return obj.user_name_snapshot
         if obj.user:
             return obj.user.get_full_name() or obj.user.username
         return ''
 
     def get_employee_id(self, obj):
+        if getattr(obj, 'employee_id_snapshot', None):
+            return obj.employee_id_snapshot
         if obj.user:
             return obj.user.employee_id or obj.user.external_user_id or f"EMP-{obj.user.id}"
         return ''
 
     def get_phone_number(self, obj):
+        if getattr(obj, 'phone_number_snapshot', None):
+            return obj.phone_number_snapshot
         if obj.user:
             return obj.user.phone_number or ''
         return ''
 
     def get_role(self, obj):
+        if getattr(obj, 'role_snapshot', None):
+            return obj.role_snapshot
         if obj.user:
             roles = obj.user.get_role_list()
             return roles[0] if roles else obj.user.role or 'OPERATOR'
@@ -113,6 +123,8 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
         return None
 
     def get_vendor_name(self, obj):
+        if getattr(obj, 'vendor_name_snapshot', None):
+            return obj.vendor_name_snapshot
         if obj.vendor:
             return obj.vendor.name
         elif obj.user and obj.user.vendor:

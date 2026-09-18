@@ -82,8 +82,44 @@ class AttendanceRecord(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
 
+    # Historical Identity Snapshots (Immature Historical Business Data)
+    external_user_id_snapshot = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    employee_id_snapshot = models.CharField(max_length=100, null=True, blank=True)
+    user_name_snapshot = models.CharField(max_length=255, null=True, blank=True)
+    phone_number_snapshot = models.CharField(max_length=50, null=True, blank=True)
+    role_snapshot = models.CharField(max_length=100, null=True, blank=True)
+    vendor_name_snapshot = models.CharField(max_length=255, null=True, blank=True)
+
     class Meta:
         ordering = ['-date', '-created_at', 'user_id']
+
+    def populate_identity_snapshot(self, force=False):
+        """
+        Populate historical snapshot fields from associated user and vendor
+        if not already set. Preserves existing snapshot values once written.
+        """
+        if self.user:
+            if force or not self.external_user_id_snapshot:
+                self.external_user_id_snapshot = self.user.external_user_id or None
+            if force or not self.employee_id_snapshot:
+                self.employee_id_snapshot = self.user.employee_id or self.user.external_user_id or f"EMP-{self.user.id}"
+            if force or not self.user_name_snapshot:
+                self.user_name_snapshot = self.user.get_full_name() or self.user.username
+            if force or not self.phone_number_snapshot:
+                self.phone_number_snapshot = self.user.phone_number or None
+            if force or not self.role_snapshot:
+                roles = self.user.get_role_list() if hasattr(self.user, 'get_role_list') else []
+                self.role_snapshot = roles[0] if roles else (self.user.role or self.user.designation or 'OPERATOR')
+        if force or not self.vendor_name_snapshot:
+            if self.vendor:
+                self.vendor_name_snapshot = self.vendor.name
+            elif self.user and self.user.vendor:
+                self.vendor_name_snapshot = self.user.vendor.name
+
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            self.populate_identity_snapshot()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.user} - {self.date} ({self.status} / {self.approval_status})"

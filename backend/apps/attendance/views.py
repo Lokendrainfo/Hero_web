@@ -1259,13 +1259,15 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='team-attendance')
     def get_team_attendance(self, request):
         """
-        Returns dynamic team member roster directly from LIVE iLync Vendor API (https://ilync.tech/api/vendor/{vendor_id}),
-        merged with today's saved attendance records from Hero DB.
-        NO database caching for vendor users/machines.
+        Returns dynamic team member roster:
+        - TODAY (or future): directly from LIVE iLync Vendor API, merged with today's saved records.
+        - PAST DATES: directly from historical AttendanceRecord snapshots in Hero DB (never rewritten by live iLync).
         """
         auto_checkout_overnight_records()
         user = request.user
-        req_date = request.query_params.get('date') or str(timezone.localdate())
+        today_date_str = str(timezone.localdate())
+        req_date = request.query_params.get('date') or today_date_str
+        is_today = (req_date >= today_date_str)
         role_filter = request.query_params.get('role')
         search_filter = request.query_params.get('search')
         status_filter = request.query_params.get('status')
@@ -1289,6 +1291,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             )
 
         target_vendors = list(v_qs)
+        target_vendor_ids = [v.id for v in target_vendors]
 
         result_list = []
         assigned_machines_list = []
@@ -1307,6 +1310,182 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         }
 
         oem_by_chassis, ops_by_chassis = _index_open_machine_issues()
+
+        if not is_today:
+            # ------------------------------------------------------------------
+            # HISTORICAL ROSTER (PAST DATES)
+            # Source of truth: AttendanceRecord snapshot stored in Hero DB.
+            # Do NOT depend on the live iLync roster to identify employees on past dates.
+            # ------------------------------------------------------------------
+            past_records_qs = AttendanceRecord.objects.filter(date=req_date).select_related(
+                'user', 'vendor', 'reporting_manager', 'marked_by',
+                'user__selected_circle', 'user__selected_district', 'user__selected_block'
+            )
+            if allowed_vendor_ids is not None:
+                past_records_qs = past_records_qs.filter(
+                    Q(vendor_id__in=target_vendor_ids) | Q(user__vendor_id__in=target_vendor_ids)
+                )
+            elif req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+                past_records_qs = past_records_qs.filter(
+                    Q(vendor_id__in=target_vendor_ids) | Q(user__vendor_id__in=target_vendor_ids)
+                )
+
+            team_records = list(past_records_qs.exclude(attendance_type='MACHINE').order_by('id'))
+            machine_records = list(past_records_qs.filter(attendance_type='MACHINE').order_by('id'))
+
+            for rec in team_records:
+                u = rec.user
+                ext_u_id = rec.external_user_id_snapshot or (u.external_user_id if u else None)
+                emp_display = rec.employee_id_snapshot or (u.employee_id if u else None) or (f"EMP-{u.id}" if u else f"EMP-{rec.id}")
+                name = rec.user_name_snapshot or (u.get_full_name() or u.username if u else 'Team Member')
+                mobile = rec.phone_number_snapshot or (u.phone_number if u else '')
+                email = (u.email if u and u.email and not str(u.email).lower().startswith('user@') else '')
+
+                designation = rec.role_snapshot or (u.designation or u.role if u else 'OPERATOR')
+                u_role = normalize_attendance_role(designation)
+
+                v_name = rec.vendor_name_snapshot or (rec.vendor.name if rec.vendor else (u.vendor.name if u and u.vendor else ''))
+                v_id = rec.vendor_id or (u.vendor_id if u else None)
+
+                st = (rec.status or 'NOT_MARKED').upper()
+                counts['total'] += 1
+                if st in ('PRESENT', 'CHECKED_IN', 'CHECKED_OUT'):
+                    counts['present'] += 1
+                elif st == 'ABSENT':
+                    counts['absent'] += 1
+                elif st in ['HALF_DAY', 'HALF DAY']:
+                    counts['half_day'] += 1
+                    st = 'HALF_DAY'
+                elif st == 'LEAVE':
+                    counts['leave'] += 1
+                elif st in ['WEEK_OFF', 'WEEK OFF']:
+                    counts['week_off'] += 1
+                    st = 'WEEK_OFF'
+                else:
+                    counts['not_marked'] += 1
+                    st = 'NOT_MARKED'
+
+                bump_scope_matrix(scope_matrix_map, u_role, st)
+
+                if role_filter and role_filter.upper() != 'ALL' and role_filter.upper() != u_role.upper():
+                    continue
+
+                if search_filter:
+                    sp = search_filter.strip().lower()
+                    if sp not in name.lower() and sp not in mobile and sp not in email.lower() and sp not in emp_display.lower():
+                        continue
+
+                if status_filter and status_filter.upper() != 'ALL':
+                    sf = status_filter.upper().replace(' ', '_')
+                    if sf != st:
+                        continue
+
+                check_in_photo_url = build_secure_media_url(request, rec.check_in_photo)
+                check_out_photo_url = build_secure_media_url(request, rec.check_out_photo)
+
+                check_in_dt = (rec.check_in or rec.created_at) if rec.status in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT', 'HALF_DAY'] else None
+                check_out_dt = rec.check_out if rec.check_out else None
+
+                final_circle = u.selected_circle.name if (u and getattr(u, 'selected_circle', None)) else ''
+                final_district = u.selected_district.name if (u and getattr(u, 'selected_district', None)) else ''
+                final_block = u.selected_block.name if (u and getattr(u, 'selected_block', None)) else ''
+                final_machine = rec.machine_chassis_no or rec.machine_id or ''
+
+                effective_user_id = ext_u_id or (str(u.id) if u else f"HIST-{rec.id}")
+
+                result_list.append({
+                    'user_id': effective_user_id,
+                    'external_user_id': ext_u_id,
+                    'employee_id': emp_display,
+                    'user_name': name,
+                    'phone_number': mobile,
+                    'email': email,
+                    'role': u_role,
+                    'designation': designation,
+                    'circle': final_circle,
+                    'district': final_district,
+                    'block': final_block,
+                    'machine': final_machine,
+                    'vendor_name': v_name,
+                    'vendor_id': v_id,
+                    'is_active': True,
+                    'reporting_manager_name': rec.reporting_manager.get_full_name() if rec.reporting_manager else '',
+                    'attendance_id': rec.id,
+                    'date': req_date,
+                    'status': st,
+                    'approval_status': rec.approval_status,
+                    'rejection_reason': rec.rejection_reason,
+                    'attendance_type': rec.attendance_type,
+                    'machine_chassis_no': rec.machine_chassis_no or None,
+                    'check_in': timezone.localtime(check_in_dt).strftime('%H:%M') if check_in_dt else None,
+                    'check_out': timezone.localtime(check_out_dt).strftime('%H:%M') if check_out_dt else None,
+                    'check_in_time': timezone.localtime(check_in_dt).isoformat() if check_in_dt else None,
+                    'check_out_time': timezone.localtime(check_out_dt).isoformat() if check_out_dt else None,
+                    'check_in_latitude': float(rec.check_in_latitude) if rec.check_in_latitude else None,
+                    'check_in_longitude': float(rec.check_in_longitude) if rec.check_in_longitude else None,
+                    'check_in_accuracy': rec.check_in_accuracy if rec.check_in_accuracy else None,
+                    'check_in_photo': check_in_photo_url,
+                    'check_out_photo': check_out_photo_url,
+                    'total_working_hours': rec.total_working_hours,
+                    'notes': rec.notes or '',
+                    'marked_by_name': rec.marked_by.get_full_name() if rec.marked_by else ''
+                })
+
+            for m_rec in machine_records:
+                chassis_val = m_rec.machine_chassis_no or m_rec.machine_id or ''
+                m_status = (m_rec.status or 'NOT_MARKED').upper()
+                working_meta = _machine_working_payload(
+                    m_status, chassis_val, oem_by_chassis, ops_by_chassis
+                )
+                display_status = m_status
+                if working_meta['working_state'] == 'NOT_WORKING':
+                    display_status = 'NOT_WORKING'
+                elif working_meta['working_state'] == 'WORKING' and m_status == 'NOT_MARKED':
+                    display_status = 'WORKING'
+
+                v_name = m_rec.vendor_name_snapshot or (m_rec.vendor.name if m_rec.vendor else '')
+                assigned_machines_list.append({
+                    'machine_id': m_rec.machine_id or m_rec.id,
+                    'name': f"Machine {chassis_val}",
+                    'code': chassis_val,
+                    'machine_no': chassis_val,
+                    'chassis_no': chassis_val,
+                    'vendor_name': v_name,
+                    'vendor_id': m_rec.vendor_id,
+                    'operator_name': m_rec.user.get_full_name() if m_rec.user else '',
+                    'status': display_status,
+                    'attendance_status': m_status,
+                    'attendance_type': 'MACHINE',
+                    'check_in': timezone.localtime(m_rec.check_in).strftime('%H:%M') if m_rec.check_in else None,
+                    'check_out': timezone.localtime(m_rec.check_out).strftime('%H:%M') if m_rec.check_out else None,
+                    'check_in_photo': build_secure_media_url(request, m_rec.check_in_photo),
+                    'check_out_photo': build_secure_media_url(request, m_rec.check_out_photo),
+                    'notes': m_rec.notes or '',
+                    'check_in_latitude': float(m_rec.check_in_latitude) if m_rec.check_in_latitude else None,
+                    'check_in_longitude': float(m_rec.check_in_longitude) if m_rec.check_in_longitude else None,
+                    'check_in_accuracy': m_rec.check_in_accuracy if m_rec.check_in_accuracy else None,
+                    'total_working_hours': m_rec.total_working_hours,
+                    'attendance_id': m_rec.id,
+                    'approval_status': m_rec.approval_status,
+                    **working_meta,
+                })
+
+            return success_response(
+                data={
+                    'date': req_date,
+                    'summary': counts,
+                    'scope_matrix': [scope_matrix_map[s] for s in ATTENDANCE_SCOPE_ROLES],
+                    'team_members': result_list,
+                    'assigned_machines': assigned_machines_list
+                },
+                message=f"Fetched historical vendor team and machine attendance for {req_date}"
+            )
+
+        # ------------------------------------------------------------------
+        # TODAY'S ROSTER
+        # Source of truth: LIVE iLync Vendor API + today's Hero attendance records.
+        # ------------------------------------------------------------------
+        seen_record_ids = set()
 
         for v_obj in target_vendors:
             ext_v_id = str(v_obj.external_vendor_id or v_obj.id).strip()
@@ -1361,30 +1540,16 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     ext_matches = list(User.objects.filter(external_user_id=ext_u_id))
                     if len(ext_matches) > 1:
                         mapping_status = 'DUPLICATE_EXTERNAL_ID'
-                        print(
-                            f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={v_obj.id} | "
-                            f"iLync_userId={ext_u_id} | iLync_empId={emp_id_str} | "
-                            f"Hero_user_id=None | Hero_external_user_id={ext_u_id} | "
-                            f"Hero_vendor_id=None | mapping_status=DUPLICATE_EXTERNAL_ID"
-                        )
                     elif len(ext_matches) == 1:
                         cand = ext_matches[0]
                         if cand.vendor_id and cand.vendor_id != v_obj.id:
-                            # Rule 8: If external_user_id exists but belongs to another vendor:
-                            # DO NOT silently reassign it. Treat it as a mapping conflict. Log the conflict. Do not use that Hero user for attendance.
                             mapping_status = 'CROSS_VENDOR_CONFLICT'
-                            print(
-                                f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={v_obj.id} | "
-                                f"iLync_userId={ext_u_id} | iLync_empId={emp_id_str} | "
-                                f"Hero_user_id={cand.id} | Hero_external_user_id={cand.external_user_id} | "
-                                f"Hero_vendor_id={cand.vendor_id} | mapping_status=CROSS_VENDOR_CONFLICT"
-                            )
                             matched_user = None
                         else:
                             matched_user = cand
                             mapping_status = 'CORRECT'
 
-                # 2. Secondary fallback matches ONLY within this vendor, and ONLY if user has no external_user_id
+                # 2. Secondary fallback matches ONLY within this vendor, and ONLY if user has no conflicting external_user_id
                 if not matched_user and mapping_status != 'CROSS_VENDOR_CONFLICT':
                     cand_qs = User.objects.filter(vendor=v_obj)
                     cand_user = None
@@ -1406,25 +1571,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     if cand_user:
                         if cand_user.external_user_id and cand_user.external_user_id != ext_u_id:
                             mapping_status = 'CROSS_VENDOR_CONFLICT'
-                            print(
-                                f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={v_obj.id} | "
-                                f"iLync_userId={ext_u_id} | iLync_empId={emp_id_str} | "
-                                f"Hero_user_id={cand_user.id} | Hero_external_user_id={cand_user.external_user_id} | "
-                                f"Hero_vendor_id={cand_user.vendor_id} | mapping_status=CROSS_VENDOR_CONFLICT"
-                            )
                             cand_user = None
                         else:
                             matched_user = cand_user
                             mapping_status = 'CORRECT'
-
-                print(
-                    f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={v_obj.id} | "
-                    f"iLync_userId={ext_u_id} | iLync_empId={emp_id_str} | "
-                    f"Hero_user_id={matched_user.id if matched_user else None} | "
-                    f"Hero_external_user_id={matched_user.external_user_id if matched_user else None} | "
-                    f"Hero_vendor_id={matched_user.vendor_id if matched_user else None} | "
-                    f"mapping_status={mapping_status}"
-                )
 
                 # Auto-enrich matched user external_user_id / employee_id / vendor without duplicate creation
                 if matched_user:
@@ -1444,7 +1594,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                         except Exception as e:
                             print(f"[AttendanceRoster] Error enriching user {matched_user.id}: {e}")
 
-                # Role filter check — keep iLync designation scopes (HELPER/TRACKER/etc)
+                # Role filter check
                 u_role = normalize_attendance_role(designation)
                 if role_filter and role_filter.upper() != 'ALL':
                     if role_filter.upper() != u_role.upper():
@@ -1461,6 +1611,24 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 rec = None
                 if matched_user:
                     rec = rec_qs.filter(user=matched_user).first()
+                if rec:
+                    seen_record_ids.add(rec.id)
+                    # Enrich record snapshot if empty
+                    if not rec.user_name_snapshot:
+                        rec.external_user_id_snapshot = ext_u_id or getattr(matched_user, 'external_user_id', None)
+                        rec.employee_id_snapshot = emp_id_str or getattr(matched_user, 'employee_id', None) or f"EMP-{matched_user.id}"
+                        rec.user_name_snapshot = name or matched_user.get_full_name() or matched_user.username
+                        rec.phone_number_snapshot = mobile or getattr(matched_user, 'phone_number', None)
+                        rec.role_snapshot = designation
+                        rec.vendor_name_snapshot = v_obj.name
+                        try:
+                            rec.save(update_fields=[
+                                'external_user_id_snapshot', 'employee_id_snapshot',
+                                'user_name_snapshot', 'phone_number_snapshot',
+                                'role_snapshot', 'vendor_name_snapshot'
+                            ])
+                        except Exception:
+                            pass
 
                 st = (rec.status if rec else 'NOT_MARKED').upper()
                 counts['total'] += 1
@@ -1559,6 +1727,91 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'marked_by_name': rec.marked_by.get_full_name() if (rec and rec.marked_by) else ''
                 })
 
+            # Check for any extra Hero attendance records for this vendor today not in live roster
+            extra_records = AttendanceRecord.objects.filter(date=req_date, vendor=v_obj).exclude(attendance_type='MACHINE').exclude(id__in=seen_record_ids)
+            for ex_rec in extra_records:
+                seen_record_ids.add(ex_rec.id)
+                u = ex_rec.user
+                ext_u_id = ex_rec.external_user_id_snapshot or (u.external_user_id if u else None)
+                emp_display = ex_rec.employee_id_snapshot or (u.employee_id if u else None) or (f"EMP-{u.id}" if u else f"EMP-{ex_rec.id}")
+                name = ex_rec.user_name_snapshot or (u.get_full_name() or u.username if u else 'Team Member')
+                mobile = ex_rec.phone_number_snapshot or (u.phone_number if u else '')
+                email = (u.email if u and u.email and not str(u.email).lower().startswith('user@') else '')
+                designation = ex_rec.role_snapshot or (u.designation or u.role if u else 'OPERATOR')
+                u_role = normalize_attendance_role(designation)
+
+                st = (ex_rec.status or 'NOT_MARKED').upper()
+                counts['total'] += 1
+                if st in ('PRESENT', 'CHECKED_IN', 'CHECKED_OUT'):
+                    counts['present'] += 1
+                elif st == 'ABSENT':
+                    counts['absent'] += 1
+                elif st in ['HALF_DAY', 'HALF DAY']:
+                    counts['half_day'] += 1
+                    st = 'HALF_DAY'
+                elif st == 'LEAVE':
+                    counts['leave'] += 1
+                elif st in ['WEEK_OFF', 'WEEK OFF']:
+                    counts['week_off'] += 1
+                    st = 'WEEK_OFF'
+                else:
+                    counts['not_marked'] += 1
+                    st = 'NOT_MARKED'
+
+                bump_scope_matrix(scope_matrix_map, u_role, st)
+
+                if role_filter and role_filter.upper() != 'ALL' and role_filter.upper() != u_role.upper():
+                    continue
+                if search_filter:
+                    sp = search_filter.strip().lower()
+                    if sp not in name.lower() and sp not in mobile and sp not in email.lower() and sp not in emp_display.lower():
+                        continue
+                if status_filter and status_filter.upper() != 'ALL' and status_filter.upper().replace(' ', '_') != st:
+                    continue
+
+                check_in_photo_url = build_secure_media_url(request, ex_rec.check_in_photo)
+                check_out_photo_url = build_secure_media_url(request, ex_rec.check_out_photo)
+                check_in_dt = (ex_rec.check_in or ex_rec.created_at) if ex_rec.status in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT', 'HALF_DAY'] else None
+                check_out_dt = ex_rec.check_out if ex_rec.check_out else None
+
+                result_list.append({
+                    'user_id': ext_u_id or (str(u.id) if u else f"HIST-{ex_rec.id}"),
+                    'external_user_id': ext_u_id,
+                    'employee_id': emp_display,
+                    'user_name': name,
+                    'phone_number': mobile,
+                    'email': email,
+                    'role': u_role,
+                    'designation': designation,
+                    'circle': u.selected_circle.name if (u and getattr(u, 'selected_circle', None)) else v_circle,
+                    'district': u.selected_district.name if (u and getattr(u, 'selected_district', None)) else v_district,
+                    'block': u.selected_block.name if (u and getattr(u, 'selected_block', None)) else v_block,
+                    'machine': ex_rec.machine_chassis_no or ex_rec.machine_id or v_vendor_machine,
+                    'vendor_name': v_obj.name,
+                    'vendor_id': v_obj.id,
+                    'is_active': True,
+                    'reporting_manager_name': ex_rec.reporting_manager.get_full_name() if ex_rec.reporting_manager else '',
+                    'attendance_id': ex_rec.id,
+                    'date': req_date,
+                    'status': st,
+                    'approval_status': ex_rec.approval_status,
+                    'rejection_reason': ex_rec.rejection_reason,
+                    'attendance_type': ex_rec.attendance_type,
+                    'machine_chassis_no': ex_rec.machine_chassis_no or None,
+                    'check_in': timezone.localtime(check_in_dt).strftime('%H:%M') if check_in_dt else None,
+                    'check_out': timezone.localtime(check_out_dt).strftime('%H:%M') if check_out_dt else None,
+                    'check_in_time': timezone.localtime(check_in_dt).isoformat() if check_in_dt else None,
+                    'check_out_time': timezone.localtime(check_out_dt).isoformat() if check_out_dt else None,
+                    'check_in_latitude': float(ex_rec.check_in_latitude) if ex_rec.check_in_latitude else None,
+                    'check_in_longitude': float(ex_rec.check_in_longitude) if ex_rec.check_in_longitude else None,
+                    'check_in_accuracy': ex_rec.check_in_accuracy if ex_rec.check_in_accuracy else None,
+                    'check_in_photo': check_in_photo_url,
+                    'check_out_photo': check_out_photo_url,
+                    'total_working_hours': ex_rec.total_working_hours,
+                    'notes': ex_rec.notes or '',
+                    'marked_by_name': ex_rec.marked_by.get_full_name() if ex_rec.marked_by else ''
+                })
+
             # 2. LIVE MACHINES directly from iLync response (v_payload.get('machines'))
             raw_machines = v_payload.get('machines') or v_payload.get('assigned_machines') or []
             if not isinstance(raw_machines, list):
@@ -1581,7 +1834,6 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 working_meta = _machine_working_payload(
                     m_status, chassis_val, oem_by_chassis, ops_by_chassis
                 )
-                # Surface not-working clearly in status for existing UI consumers
                 display_status = m_status
                 if working_meta['working_state'] == 'NOT_WORKING':
                     display_status = 'NOT_WORKING'
@@ -1735,6 +1987,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if st_val in ['PRESENT', 'CHECKED_IN', 'HALF_DAY'] and not check_in_val:
                 check_in_val = timezone.now()
 
+            ext_u_id_val = str(item.get('external_user_id') or item.get('userId') or getattr(target_user, 'external_user_id', '') or '').strip() or None
+            emp_id_val = str(item.get('employee_id') or item.get('empId') or getattr(target_user, 'employee_id', '') or '').strip() or (f"EMP-{target_user.id}" if target_user else None)
+            name_val = str(item.get('user_name') or item.get('name') or (target_user.get_full_name() if target_user else '') or target_user.username).strip()
+            phone_val = str(item.get('phone_number') or item.get('mobile') or getattr(target_user, 'phone_number', '') or '').strip() or None
+            role_val = str(item.get('role') or item.get('designation') or (target_user.get_role_list()[0] if (target_user and target_user.get_role_list()) else 'OPERATOR')).strip()
+            v_name_val = str(item.get('vendor_name') or (target_vendor.name if target_vendor else (target_user.vendor.name if target_user and target_user.vendor else ''))).strip() or None
+
             record = (
                 AttendanceRecord.objects.filter(user=target_user, date=req_date)
                 .exclude(attendance_type='MACHINE')
@@ -1759,6 +2018,12 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     marked_by=request.user,
                     updated_by=request.user,
                     marked_for_user=target_user,
+                    external_user_id_snapshot=ext_u_id_val,
+                    employee_id_snapshot=emp_id_val,
+                    user_name_snapshot=name_val,
+                    phone_number_snapshot=phone_val,
+                    role_snapshot=role_val,
+                    vendor_name_snapshot=v_name_val,
                 )
                 created = True
             else:
@@ -1781,6 +2046,19 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     record.vendor = target_vendor
                 if reporting_mgr and not record.reporting_manager:
                     record.reporting_manager = reporting_mgr
+                # Only enrich empty snapshot fields (never overwrite existing historical identity)
+                if not record.user_name_snapshot and name_val:
+                    record.user_name_snapshot = name_val
+                if not record.external_user_id_snapshot and ext_u_id_val:
+                    record.external_user_id_snapshot = ext_u_id_val
+                if not record.employee_id_snapshot and emp_id_val:
+                    record.employee_id_snapshot = emp_id_val
+                if not record.phone_number_snapshot and phone_val:
+                    record.phone_number_snapshot = phone_val
+                if not record.role_snapshot and role_val:
+                    record.role_snapshot = role_val
+                if not record.vendor_name_snapshot and v_name_val:
+                    record.vendor_name_snapshot = v_name_val
                 record.save()
 
             if created and reporting_mgr:
@@ -1928,9 +2206,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 u = rec.user
                 if not u:
                     continue
-                emp_id = clean_val(u.employee_id or u.external_user_id or f"EMP-{u.id}")
+                emp_id = clean_val(rec.employee_id_snapshot or (u.employee_id if u else None) or (u.external_user_id if u else None) or (f"EMP-{u.id}" if u else f"EMP-{rec.id}"))
                 if not emp_id or emp_id.lower() in ('none', 'null', 'undefined'):
-                    emp_id = u.username or f"EMP-{u.id}"
+                    emp_id = (u.username if u else None) or f"EMP-{rec.id}"
 
                 v_obj = rec.vendor or getattr(u, 'vendor', None) or get_user_vendor(u, resolve_fallback=False)
                 v_circle, v_district, v_block, v_vendor_machine = '', '', '', ''
@@ -1960,9 +2238,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     v_circle, v_district, v_block, v_vendor_machine = vendor_payload_cache[ext_v_id]
 
                 mac_val = clean_val(rec.machine_chassis_no or rec.machine_id or v_vendor_machine)
-                name = clean_val(u.get_full_name() or u.username)
-                role = clean_val(u.get_role_list()[0] if u.get_role_list() else (u.role or 'OPERATOR'))
-                contact = clean_val(u.phone_number)
+                name = clean_val(rec.user_name_snapshot or (u.get_full_name() or u.username if u else ''))
+                role = clean_val(rec.role_snapshot or (u.get_role_list()[0] if (u and u.get_role_list()) else (u.role if u else 'OPERATOR')))
+                contact = clean_val(rec.phone_number_snapshot or (u.phone_number if u else ''))
                 date_val = format_date_str(rec.date)
 
                 circle = clean_val((u.selected_circle.name if (u and getattr(u, 'selected_circle', None)) else '') or v_circle)
