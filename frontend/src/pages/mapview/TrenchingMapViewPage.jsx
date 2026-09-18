@@ -42,6 +42,9 @@ export const TrenchingMapViewPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [normalizedExecutions, setNormalizedExecutions] = useState([]);
+  const [rawTasksList, setRawTasksList] = useState([]);
+  const [fetchedChildrenTaskIds, setFetchedChildrenTaskIds] = useState(new Set());
+  const [isBackgroundLoading, setIsBackgroundLoading] = useState(false);
 
   // Filters State
   const [selectedState, setSelectedState] = useState('ALL');
@@ -63,8 +66,6 @@ export const TrenchingMapViewPage = () => {
   // Expansion State - Default ALL COLLAPSED as requested
   const [expandedDistricts, setExpandedDistricts] = useState({});
   const [expandedBlocks, setExpandedBlocks] = useState({});
-
-  const [isBackgroundLoading, setIsBackgroundLoading] = useState(false);
 
   const processAndSetExecutions = useCallback((tasksList) => {
     const normalized = tasksList.map(t => mapHddExecutionResponse(t)).filter(Boolean);
@@ -100,19 +101,21 @@ export const TrenchingMapViewPage = () => {
       const params = {
         task_type: 'FIBER_TRENCHING_DUCTING_TASK',
         page: 0,
-        size: 50
+        size: 50,
+        // Live iLync roots only — children load on district/block expand (no DB)
+        expand_children: 0,
       };
       if (selectedVendorId && selectedVendorId !== 'all') {
         params.vendor_id = selectedVendorId;
       }
 
-      // Step 1: Immediately fetch root tasks
+      taskService.clearCache();
       const res = await taskService.getMyTasks(params);
       const resData = res?.data || res;
       const rawTasks = resData?.results || resData?.content || (Array.isArray(resData) ? resData : []);
 
-      // Step 2: Instantly process and display root tasks without firing hundreds of automatic background calls
       setRawTasksList(rawTasks);
+      setFetchedChildrenTaskIds(new Set());
       processAndSetExecutions(rawTasks);
       setLoading(false);
       setIsBackgroundLoading(false);
@@ -199,31 +202,37 @@ export const TrenchingMapViewPage = () => {
     };
   }, [filteredExecutions]);
 
-  // Raw Tasks & On-Demand Children Fetching State
-  const [rawTasksList, setRawTasksList] = useState([]);
-  const [fetchedChildrenTaskIds, setFetchedChildrenTaskIds] = useState(new Set());
-
   const fetchChildrenForTasks = async (targetTasks) => {
     if (!targetTasks || targetTasks.length === 0) return;
     const tasksToFetch = targetTasks.filter(t => t && t.id && !fetchedChildrenTaskIds.has(t.id));
     if (tasksToFetch.length === 0) return;
 
     setIsBackgroundLoading(true);
-    const newChildTasks = [];
     const nextFetchedIds = new Set(fetchedChildrenTaskIds);
+    tasksToFetch.forEach((t) => nextFetchedIds.add(t.id));
 
-    for (const rootTask of tasksToFetch) {
-      nextFetchedIds.add(rootTask.id);
-      try {
-        const childRes = await taskService.getTaskChildren(rootTask.id);
-        const childData = childRes?.data || childRes;
-        const children = Array.isArray(childData) ? childData : (childData?.results || childData?.content || []);
-        if (children.length > 0) {
-          newChildTasks.push(...children);
-        }
-      } catch (e) {
-        // Ignore individual errors
-      }
+    // Parallel batches — live iLync children only (cached in taskService)
+    const BATCH = 8;
+    const newChildTasks = [];
+    for (let i = 0; i < tasksToFetch.length; i += BATCH) {
+      const batch = tasksToFetch.slice(i, i + BATCH);
+      const results = await Promise.all(
+        batch.map(async (rootTask) => {
+          try {
+            const childRes = await taskService.getTaskChildren(rootTask.id);
+            const childData = childRes?.data || childRes;
+            const children = Array.isArray(childData)
+              ? childData
+              : (childData?.results || childData?.content || []);
+            return Array.isArray(children) ? children : [];
+          } catch (_) {
+            return [];
+          }
+        })
+      );
+      results.forEach((children) => {
+        if (children.length > 0) newChildTasks.push(...children);
+      });
     }
 
     setFetchedChildrenTaskIds(nextFetchedIds);

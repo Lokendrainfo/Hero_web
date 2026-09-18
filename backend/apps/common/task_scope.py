@@ -605,8 +605,15 @@ def is_task_authorized_for_user(user, task_id, request=None):
     except Exception:
         pass
 
-    # 2. Fallback: check against full authorized live task list
-    scoped_res = get_user_authorized_tasks(user=user, request=request, task_type='ALL', page=0, size=100)
+    # 2. Fallback: check against full authorized live task list (lite — no child fan-out)
+    scoped_res = get_user_authorized_tasks(
+        user=user,
+        request=request,
+        task_type='ALL',
+        page=0,
+        size=100,
+        extra_params={'expand_children': '0'},
+    )
     task_list = scoped_res.get('results', []) if isinstance(scoped_res, dict) else []
 
     for t in task_list:
