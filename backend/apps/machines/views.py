@@ -9,9 +9,30 @@ from .services import fetch_live_fiberforce_machines, get_live_machine_detail
 
 
 class MachineViewSet(viewsets.ModelViewSet):
-    queryset = Machine.objects.all().order_by('id')
+    queryset = Machine.objects.none()
     serializer_class = MachineSerializer
     permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        return Machine.objects.none()
+
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {"success": False, "message": "Machines are live from FiberForce (proxy-only)."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {"success": False, "message": "Machines are live from FiberForce (proxy-only)."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {"success": False, "message": "Machines are live from FiberForce (proxy-only)."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     def list(self, request, *args, **kwargs):
         """
@@ -40,12 +61,25 @@ class MachineViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post', 'get'], url_path='sync-fiberforce')
     def sync_fiberforce(self, request):
         """
-        Manual CLI/Admin sync action if explicitly invoked.
-        Never called automatically during page loading.
+        Proxy-only: machine master must not be persisted into HERO DB.
+        Returns live fetch summary instead of writing rows.
         """
-        from .services import sync_fiberforce_machines
-        result = sync_fiberforce_machines()
-        return Response(result)
+        from .services import fetch_live_fiberforce_machines
+        res = fetch_live_fiberforce_machines(request.user, request.query_params)
+        count = 0
+        if isinstance(res, dict):
+            data = res.get('data') or {}
+            if isinstance(data, dict):
+                count = data.get('count') or len(data.get('results') or [])
+            elif isinstance(data, list):
+                count = len(data)
+        return Response({
+            "success": True,
+            "persisted": False,
+            "synced_count": 0,
+            "live_count": count,
+            "message": "FiberForce machines are live-proxied only; nothing written to HERO DB.",
+        })
 
     @action(detail=True, methods=['get'])
     def status(self, request, pk=None):

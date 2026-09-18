@@ -1,4 +1,3 @@
-from .models import Machine
-
 def get_active_machines_for_vendor(vendor):
-    return Machine.objects.filter(vendor=vendor, status__in=['WORKING', 'IDLE'])
+    """Proxy-only: Machine table is not used. Return empty list."""
+    return []

@@ -1,10 +1,6 @@
 from rest_framework import serializers
-from decimal import Decimal
 from .models import Expense, ExpenseCategory, ExpenseSubCategory
-from apps.vendors.models import Vendor
-from apps.machines.models import Machine
-from apps.tasks.models import Task
-from apps.authentication.models import User
+
 
 class ExpenseSubCategorySerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source='category.name', read_only=True)
@@ -36,15 +32,16 @@ class ExpenseCategorySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Default rate cannot be negative.")
         return value
 
+
 class ExpenseSerializer(serializers.ModelSerializer):
     category_name = serializers.SerializerMethodField()
     subcategory_name = serializers.SerializerMethodField()
     payment_type_display = serializers.CharField(source='get_payment_type_display', read_only=True)
-    vendor_name = serializers.CharField(source='vendor.name', read_only=True, allow_null=True)
-    vendor_code = serializers.CharField(source='vendor.code', read_only=True, allow_null=True)
-    machine_name = serializers.CharField(source='machine.name', read_only=True, allow_null=True)
-    machine_code = serializers.CharField(source='machine.code', read_only=True, allow_null=True)
-    task_title = serializers.CharField(source='task.title', read_only=True, allow_null=True)
+    vendor_name = serializers.SerializerMethodField()
+    vendor_code = serializers.SerializerMethodField()
+    machine_name = serializers.SerializerMethodField()
+    machine_code = serializers.SerializerMethodField()
+    task_title = serializers.SerializerMethodField()
     operator_name = serializers.SerializerMethodField()
     created_by_name = serializers.SerializerMethodField()
     approved_by_name = serializers.SerializerMethodField()
@@ -53,6 +50,8 @@ class ExpenseSerializer(serializers.ModelSerializer):
     attachment_url = serializers.SerializerMethodField()
 
     vendor_id = serializers.CharField(required=False, allow_null=True, write_only=True)
+    machine_id = serializers.CharField(required=False, allow_null=True, write_only=True)
+    task_id = serializers.CharField(required=False, allow_null=True, write_only=True)
 
     class Meta:
         model = Expense
@@ -73,6 +72,33 @@ class ExpenseSerializer(serializers.ModelSerializer):
         if obj.subcategory_ref:
             return obj.subcategory_ref.name
         return obj.subcategory or ''
+
+    def get_vendor_name(self, obj):
+        if not obj.external_vendor_id:
+            return None
+        try:
+            from apps.common.vendor_scope import _hydrate_vendor
+            return _hydrate_vendor(obj.external_vendor_id).name
+        except Exception:
+            return obj.external_vendor_id
+
+    def get_vendor_code(self, obj):
+        if not obj.external_vendor_id:
+            return None
+        try:
+            from apps.common.vendor_scope import _hydrate_vendor
+            return _hydrate_vendor(obj.external_vendor_id).code or None
+        except Exception:
+            return None
+
+    def get_machine_name(self, obj):
+        return obj.machine_chassis_no
+
+    def get_machine_code(self, obj):
+        return obj.machine_chassis_no
+
+    def get_task_title(self, obj):
+        return obj.external_task_id
 
     def get_operator_name(self, obj):
         if obj.operator:
@@ -132,54 +158,53 @@ class ExpenseSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         vendor_id = attrs.pop('vendor_id', None)
-        if vendor_id is not None:
-            from django.db.models import Q
-            v_str = str(vendor_id).strip()
-            if v_str in ('', '0', 'null', 'none'):
-                attrs['vendor'] = None
-            else:
-                v_obj = Vendor.objects.filter(
-                    Q(id=int(v_str) if v_str.isdigit() else None) |
-                    Q(external_vendor_id=v_str) |
-                    Q(code__iexact=v_str)
-                ).first()
-                if v_obj:
-                    attrs['vendor'] = v_obj
+        machine_id = attrs.pop('machine_id', None)
+        task_id = attrs.pop('task_id', None)
 
-        # Vendor scoping validation
+        if vendor_id is not None:
+            v_str = str(vendor_id).strip()
+            attrs['external_vendor_id'] = None if v_str in ('', '0', 'null', 'none') else v_str
+
+        if machine_id is not None:
+            m_str = str(machine_id).strip()
+            attrs['machine_chassis_no'] = None if m_str in ('', '0', 'null', 'none') else m_str
+
+        if task_id is not None:
+            t_str = str(task_id).strip()
+            attrs['external_task_id'] = None if t_str in ('', '0', 'null', 'none') else t_str
+
         request = self.context.get('request')
         user = request.user if request else None
-        if user and user.is_authenticated and not (user.is_superuser or 'ADMIN' in [r.upper() for r in user.get_role_list()]):
+        if user and user.is_authenticated and not (
+            user.is_superuser or 'ADMIN' in [r.upper() for r in user.get_role_list()]
+        ):
             from apps.common.vendor_scope import get_user_vendor_ids
             user_v_ids = get_user_vendor_ids(user)
             if user_v_ids is not None:
-                provided_vendor = attrs.get('vendor')
-                if not provided_vendor or provided_vendor.id not in user_v_ids:
-                    from apps.vendors.models import Vendor
-                    attrs['vendor'] = Vendor.objects.filter(id=user_v_ids[0]).first() if len(user_v_ids) > 0 else None
+                provided = attrs.get('external_vendor_id')
+                if self.instance and provided is None:
+                    provided = self.instance.external_vendor_id
+                if not provided or str(provided) not in [str(v) for v in user_v_ids]:
+                    attrs['external_vendor_id'] = user_v_ids[0] if user_v_ids else None
 
-        vendor = attrs.get('vendor') or (self.instance.vendor if self.instance else None)
-        machine = attrs.get('machine') or (self.instance.machine if self.instance else None)
-        task = attrs.get('task') or (self.instance.task if self.instance else None)
-
-        if machine and vendor and machine.vendor_id and machine.vendor_id != vendor.id:
-            raise serializers.ValidationError({"machine": f"Machine '{machine.name}' does not belong to the selected vendor."})
-
-        if task and vendor and task.vendor_id and task.vendor_id != vendor.id:
-            raise serializers.ValidationError({"task": f"Task '{task.title}' does not belong to the selected vendor."})
-
-        # Proof requirement validation
         cat_ref = attrs.get('category_ref') or (self.instance.category_ref if self.instance else None)
         if cat_ref and isinstance(cat_ref, int):
             cat_ref = ExpenseCategory.objects.filter(id=cat_ref).first()
 
-        payment_type = attrs.get('payment_type') or (cat_ref.payment_type if cat_ref and hasattr(cat_ref, 'payment_type') else None)
-        requires_proof = attrs.get('requires_proof', cat_ref.requires_proof if cat_ref and hasattr(cat_ref, 'requires_proof') else False)
+        payment_type = attrs.get('payment_type') or (
+            cat_ref.payment_type if cat_ref and hasattr(cat_ref, 'payment_type') else None
+        )
+        requires_proof = attrs.get(
+            'requires_proof',
+            cat_ref.requires_proof if cat_ref and hasattr(cat_ref, 'requires_proof') else False,
+        )
 
         attachment = attrs.get('attachment') or (self.instance.attachment if self.instance else None)
         receipt_url = attrs.get('receipt_url') or (self.instance.receipt_url if self.instance else None)
 
         if (payment_type == 'ACTUAL_WITH_PROOF' or requires_proof) and not attachment and not receipt_url:
-            raise serializers.ValidationError({"attachment": "Proof/bill/receipt attachment is required for this expense type."})
+            raise serializers.ValidationError({
+                "attachment": "Proof/bill/receipt attachment is required for this expense type."
+            })
 
         return attrs

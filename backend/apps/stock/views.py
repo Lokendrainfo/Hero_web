@@ -9,13 +9,21 @@ from apps.integrations.ilync.client import IlyncClient
 from apps.common.vendor_scope import filter_queryset_by_vendor
 
 class StockViewSet(viewsets.ModelViewSet):
-    queryset = StockItem.objects.all()
+    queryset = StockItem.objects.none()
     serializer_class = StockItemSerializer
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        user = self.request.user
-        return filter_queryset_by_vendor(StockItem.objects.all(), user, 'vendor_id', request=self.request)
+        return StockItem.objects.none()
+
+    def list(self, request, *args, **kwargs):
+        return Response({"success": True, "count": 0, "next": None, "previous": None, "results": []})
+
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {"success": False, "message": "Stock is live via iLync search endpoints (proxy-only)."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     @action(detail=False, methods=['get', 'post'], url_path='item/search')
     def search_items(self, request):

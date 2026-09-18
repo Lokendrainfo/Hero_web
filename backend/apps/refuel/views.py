@@ -1,15 +1,13 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.db.models import Q
 
 from .models import RefuelEntry
 from .serializers import RefuelEntrySerializer
 from apps.common.permissions import IsVendorAuthorized
 from apps.common.responses import success_response, error_response
-from apps.common.vendor_scope import filter_queryset_by_vendor
 from apps.integrations.fiberforce.client import FiberForceClient
-from apps.machines.models import Machine
+from apps.machines.services import fetch_live_fiberforce_machines
 
 
 def _safe_float(val, default=0.0):
@@ -86,51 +84,43 @@ class RefuelViewSet(viewsets.ModelViewSet):
     serializer_class = RefuelEntrySerializer
     permission_classes = [permissions.IsAuthenticated, IsVendorAuthorized]
 
-    def get_queryset(self):
-        user = self.request.user
-        qs = filter_queryset_by_vendor(RefuelEntry.objects.all(), user, 'machine__vendor_id', request=self.request)
-        machine_id = self.request.query_params.get('machine_id') or self.request.query_params.get('machine')
-        if machine_id and str(machine_id).strip() and str(machine_id).lower() != 'all':
-            m_str = str(machine_id).strip()
-            if m_str.isdigit():
-                qs = qs.filter(Q(machine_id=int(m_str)) | Q(machine__code__iexact=m_str))
-            else:
-                qs = qs.filter(
-                    Q(machine__code__iexact=m_str) |
-                    Q(machine__name__icontains=m_str) |
-                    Q(machine__serial_number__icontains=m_str) |
-                    Q(machine__machine_chassis_no__icontains=m_str)
-                )
-        return qs.order_by('-refuel_date', '-id')
-
     def perform_create(self, serializer):
-        if self.request.user and self.request.user.is_authenticated:
-            serializer.save(performed_by=self.request.user)
-        else:
-            serializer.save()
+        from rest_framework.exceptions import MethodNotAllowed
+        raise MethodNotAllowed('POST', detail='Local RefuelEntry create disabled; use FiberForce sensor-logs.')
+
+    def perform_update(self, serializer):
+        from rest_framework.exceptions import MethodNotAllowed
+        raise MethodNotAllowed('PUT', detail='Local RefuelEntry update disabled.')
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import MethodNotAllowed
+        raise MethodNotAllowed('DELETE', detail='Local RefuelEntry delete disabled.')
+
+    def get_queryset(self):
+        # Local RefuelEntry table is deprecated — empty queryset; sensor-logs serves live data
+        return RefuelEntry.objects.none()
 
     def _scoped_machines(self, request):
-        qs = filter_queryset_by_vendor(
-            Machine.objects.all(),
-            request.user,
-            'vendor_id',
-            request=request,
-        )
-        return qs
+        """Live FiberForce machines only — no local Machine table."""
+        res = fetch_live_fiberforce_machines(request.user, getattr(request, 'query_params', {}))
+        data = (res or {}).get('data') or {}
+        results = data.get('results') if isinstance(data, dict) else data
+        return results if isinstance(results, list) else []
 
-    def _chassis_map(self, machines_qs):
+    def _chassis_map(self, machines):
         mapping = {}
-        for m in machines_qs:
-            chassis = str(m.machine_chassis_no or '').strip()
+        for m in machines or []:
+            if not isinstance(m, dict):
+                continue
+            chassis = str(m.get('machine_chassis_no') or m.get('serial_number') or '').strip()
             if not chassis:
                 continue
             mapping[chassis] = {
-                'id': m.id,
-                'code': m.code,
-                'name': m.name,
-                'model_name': m.model_name,
-                'model_code': m.model_code,
-                'serial_number': m.serial_number,
+                'id': m.get('id') or chassis,
+                'code': m.get('code') or chassis,
+                'name': m.get('name') or chassis,
+                'model_name': m.get('model_name') or m.get('model_code') or '',
+                'model_code': m.get('model_code') or '',
             }
         return mapping
 
@@ -145,8 +135,8 @@ class RefuelViewSet(viewsets.ModelViewSet):
             data.update(request.data)
         data.update({k: v for k, v in request.query_params.items()})
 
-        machines_qs = self._scoped_machines(request)
-        chassis_map = self._chassis_map(machines_qs)
+        machines = self._scoped_machines(request)
+        chassis_map = self._chassis_map(machines)
         allowed_chassis = set(chassis_map.keys())
 
         from apps.common.vendor_scope import get_user_vendor_ids
@@ -156,22 +146,31 @@ class RefuelViewSet(viewsets.ModelViewSet):
         chassis = (data.get('machine_chassis_no') or data.get('chassis') or '').strip()
 
         if machine_id and str(machine_id).strip() and str(machine_id).lower() != 'all':
-            m_str = str(machine_id).strip()
+            m_str = str(machine_id).strip().upper()
             m_obj = None
-            if m_str.isdigit():
-                m_obj = machines_qs.filter(id=int(m_str)).first()
+            for m in machines:
+                if not isinstance(m, dict):
+                    continue
+                candidates = [
+                    str(m.get('id') or ''),
+                    str(m.get('machine_chassis_no') or ''),
+                    str(m.get('serial_number') or ''),
+                    str(m.get('code') or ''),
+                ]
+                if any(c.upper() == m_str for c in candidates if c):
+                    m_obj = m
+                    break
             if not m_obj:
-                m_obj = machines_qs.filter(
-                    Q(machine_chassis_no__iexact=m_str) |
-                    Q(code__iexact=m_str) |
-                    Q(serial_number__iexact=m_str)
-                ).first()
-            if not m_obj or not m_obj.machine_chassis_no:
                 return error_response(
                     message='Machine not found in your vendor scope or missing chassis number.',
                     status_code=status.HTTP_404_NOT_FOUND,
                 )
-            chassis = str(m_obj.machine_chassis_no).strip()
+            chassis = str(m_obj.get('machine_chassis_no') or m_obj.get('serial_number') or '').strip()
+            if not chassis:
+                return error_response(
+                    message='Machine not found in your vendor scope or missing chassis number.',
+                    status_code=status.HTTP_404_NOT_FOUND,
+                )
 
         if chassis and restricted and allowed_chassis and chassis not in allowed_chassis:
             return error_response(

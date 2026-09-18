@@ -7,6 +7,7 @@ class Circle(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        managed = False
         ordering = ['name']
 
     def __str__(self):
@@ -20,6 +21,7 @@ class District(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        managed = False
         unique_together = ('circle', 'name')
         ordering = ['name']
 
@@ -34,6 +36,7 @@ class Block(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        managed = False
         unique_together = ('district', 'name')
         ordering = ['name']
 

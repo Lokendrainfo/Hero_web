@@ -10,30 +10,22 @@ class UserRoleInline(admin.TabularInline):
     autocomplete_fields = ('role',)
 
 
-class VendorAssignmentInline(admin.TabularInline):
-    from apps.vendors.models import HeroVendorAssignment
-    model = HeroVendorAssignment
-    fk_name = 'user'
-    extra = 0
-    autocomplete_fields = ('vendor', 'assigned_by')
-
-
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
     list_display = (
         'username', 'get_full_name', 'email', 'employee_id', 'phone_number',
-        'role', 'vendor', 'reporting_manager', 'is_active', 'is_staff', 'is_superuser',
+        'role', 'external_vendor_id', 'reporting_manager', 'is_active', 'is_staff', 'is_superuser',
     )
-    list_filter = ('is_active', 'is_staff', 'is_superuser', 'role', 'vendor')
+    list_filter = ('is_active', 'is_staff', 'is_superuser', 'role', 'user_type')
     search_fields = (
         'username', 'first_name', 'last_name', 'email',
-        'employee_id', 'phone_number', 'external_user_id',
+        'employee_id', 'phone_number', 'external_user_id', 'external_vendor_id',
     )
     ordering = ('username',)
-    list_select_related = ('vendor', 'reporting_manager')
-    autocomplete_fields = ('vendor', 'reporting_manager')
+    list_select_related = ('reporting_manager',)
+    autocomplete_fields = ('reporting_manager',)
     readonly_fields = ('created_at', 'updated_at', 'last_login', 'date_joined')
-    inlines = (UserRoleInline, VendorAssignmentInline)
+    inlines = (UserRoleInline,)
     list_per_page = 50
 
     fieldsets = (
@@ -45,7 +37,11 @@ class UserAdmin(BaseUserAdmin):
             )
         }),
         ('Organization', {
-            'fields': ('vendor', 'reporting_manager', 'role')
+            'fields': (
+                'external_vendor_id', 'assigned_vendor_ids', 'reporting_manager', 'role',
+                'user_type', 'advance_scope_type',
+                'selected_circle_id', 'selected_district_id', 'selected_block_id',
+            )
         }),
         ('Permissions', {
             'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')
@@ -59,7 +55,7 @@ class UserAdmin(BaseUserAdmin):
             'fields': (
                 'username', 'password1', 'password2',
                 'first_name', 'last_name', 'email',
-                'role', 'vendor', 'is_staff', 'is_superuser',
+                'role', 'external_vendor_id', 'is_staff', 'is_superuser',
             ),
         }),
     )

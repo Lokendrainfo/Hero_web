@@ -101,28 +101,16 @@ class IlyncVendorListView(IlyncBaseView):
         normalized = normalize_pagination(data, page=page, size=size)
 
         if isinstance(normalized.get('results'), list):
-            from apps.machines.models import Machine
-            from apps.machines.serializers import MachineSerializer
-            
-            all_machines = list(Machine.objects.all().select_related('vendor'))
+            # Machines come live on vendor detail; do not join local Machine table
             for v_item in normalized['results']:
                 if not isinstance(v_item, dict):
                     continue
-                v_id = str(v_item.get('id') or '')
-                v_pname = str(v_item.get('partnerName') or v_item.get('name') or '').strip()
-                
-                matched = [
-                    m for m in all_machines
-                    if (v_id and m.vendor and (str(m.vendor.external_vendor_id) == v_id or str(m.vendor.id) == v_id))
-                    or (v_pname and m.vendor and m.vendor.name and v_pname.lower() in m.vendor.name.lower())
-                ]
-                
-                if matched:
-                    matched_serialized = MachineSerializer(matched, many=True).data
-                    v_item['assigned_machines'] = matched_serialized
-                    if not v_item.get('machines'):
-                        v_item['machines'] = matched_serialized
-                    v_item['machines_count'] = len(matched_serialized)
+                machines = v_item.get('machines') or v_item.get('assigned_machines') or []
+                if not isinstance(machines, list):
+                    machines = []
+                v_item['machines'] = machines
+                v_item['assigned_machines'] = machines
+                v_item['machines_count'] = len(machines)
 
         return success_response(data=normalized, message="Vendors fetched successfully from ILYNC API")
 
@@ -187,29 +175,42 @@ class IlyncStockIssueSearchView(IlyncBaseView):
         if isinstance(data, dict) and "data" in data and isinstance(data["data"], dict) and "content" in data["data"]:
             issues = data["data"]["content"]
             if req_vendor and str(req_vendor).strip() and req_vendor != 'all':
-                from apps.vendors.models import Vendor
-                target_v = Vendor.objects.filter(id=int(req_vendor)).first() if str(req_vendor).isdigit() else Vendor.objects.filter(external_vendor_id=str(req_vendor)).first() or Vendor.objects.filter(name__icontains=str(req_vendor)).first()
-                match_ids = [str(req_vendor)]
-                match_names = [str(req_vendor).lower()]
-                if target_v:
-                    if target_v.external_vendor_id: match_ids.append(str(target_v.external_vendor_id))
-                    match_ids.append(str(target_v.id))
-                    match_names.append(target_v.name.lower())
+                match_ids = {str(req_vendor).strip().lower()}
+                match_names = {str(req_vendor).strip().lower()}
+                try:
+                    from apps.common.vendor_scope import _hydrate_vendor
+                    proxy = _hydrate_vendor(str(req_vendor).strip())
+                    if getattr(proxy, 'external_vendor_id', None):
+                        match_ids.add(str(proxy.external_vendor_id).lower())
+                    if getattr(proxy, 'name', None):
+                        match_names.add(str(proxy.name).lower())
+                except Exception:
+                    pass
 
                 issues = [
                     iss for iss in issues
-                    if str(iss.get('issueeId')) in match_ids or any(mn in str(iss.get('issueeName', '')).lower() for mn in match_names)
+                    if str(iss.get('issueeId', '')).lower() in match_ids
+                    or any(mn in str(iss.get('issueeName', '')).lower() for mn in match_names)
                 ]
             elif allowed_vendor_ids is not None:
-                # Non-admin vendor user
-                from apps.vendors.models import Vendor
-                vendor_objs = Vendor.objects.filter(id__in=allowed_vendor_ids)
-                allowed_str_ids = [str(v.id) for v in vendor_objs] + [str(v.external_vendor_id) for v in vendor_objs if v.external_vendor_id]
-                user_vendor_names = [v.name.lower() for v in vendor_objs if v.name]
-                
+                # Non-admin vendor user — allowed ids are external string ids
+                allowed_str_ids = {str(v).lower() for v in (allowed_vendor_ids or []) if v}
+                user_vendor_names = set()
+                for vid in list(allowed_str_ids)[:10]:
+                    try:
+                        from apps.common.vendor_scope import _hydrate_vendor
+                        proxy = _hydrate_vendor(vid)
+                        if getattr(proxy, 'name', None):
+                            user_vendor_names.add(str(proxy.name).lower())
+                        if getattr(proxy, 'external_vendor_id', None):
+                            allowed_str_ids.add(str(proxy.external_vendor_id).lower())
+                    except Exception:
+                        pass
+
                 issues = [
                     iss for iss in issues
-                    if str(iss.get('issueeId')) in allowed_str_ids or (iss.get('issueeName') and any(vn in iss.get('issueeName').lower() for vn in user_vendor_names))
+                    if str(iss.get('issueeId', '')).lower() in allowed_str_ids
+                    or (iss.get('issueeName') and any(vn in iss.get('issueeName').lower() for vn in user_vendor_names))
                 ]
             data["data"]["content"] = issues
             data["data"]["totalElements"] = len(issues)
@@ -250,29 +251,41 @@ class IlyncStockIssueItemSearchView(IlyncBaseView):
         req_vendor = request.query_params.get('vendor_id') or request.query_params.get('vendor')
 
         if req_vendor and str(req_vendor).strip() and req_vendor != 'all':
-            from apps.vendors.models import Vendor
-            target_v = Vendor.objects.filter(id=int(req_vendor)).first() if str(req_vendor).isdigit() else Vendor.objects.filter(external_vendor_id=str(req_vendor)).first() or Vendor.objects.filter(name__icontains=str(req_vendor)).first()
-            match_ids = [str(req_vendor)]
-            match_names = [str(req_vendor).lower()]
-            if target_v:
-                if target_v.external_vendor_id: match_ids.append(str(target_v.external_vendor_id))
-                match_ids.append(str(target_v.id))
-                match_names.append(target_v.name.lower())
+            match_ids = {str(req_vendor).strip().lower()}
+            match_names = {str(req_vendor).strip().lower()}
+            try:
+                from apps.common.vendor_scope import _hydrate_vendor
+                proxy = _hydrate_vendor(str(req_vendor).strip())
+                if getattr(proxy, 'external_vendor_id', None):
+                    match_ids.add(str(proxy.external_vendor_id).lower())
+                if getattr(proxy, 'name', None):
+                    match_names.add(str(proxy.name).lower())
+            except Exception:
+                pass
 
             flat_items = [
                 it for it in flat_items
-                if str(it.get('issueeId')) in match_ids or any(mn in str(it.get('issueeName', '')).lower() for mn in match_names)
+                if str(it.get('issueeId', '')).lower() in match_ids
+                or any(mn in str(it.get('issueeName', '')).lower() for mn in match_names)
             ]
         elif allowed_vendor_ids is not None:
-            # Non-admin vendor user
-            from apps.vendors.models import Vendor
-            vendor_objs = Vendor.objects.filter(id__in=allowed_vendor_ids)
-            allowed_str_ids = [str(v.id) for v in vendor_objs] + [str(v.external_vendor_id) for v in vendor_objs if v.external_vendor_id]
-            user_vendor_names = [v.name.lower() for v in vendor_objs if v.name]
-            
+            allowed_str_ids = {str(v).lower() for v in (allowed_vendor_ids or []) if v}
+            user_vendor_names = set()
+            for vid in list(allowed_str_ids)[:10]:
+                try:
+                    from apps.common.vendor_scope import _hydrate_vendor
+                    proxy = _hydrate_vendor(vid)
+                    if getattr(proxy, 'name', None):
+                        user_vendor_names.add(str(proxy.name).lower())
+                    if getattr(proxy, 'external_vendor_id', None):
+                        allowed_str_ids.add(str(proxy.external_vendor_id).lower())
+                except Exception:
+                    pass
+
             flat_items = [
                 it for it in flat_items
-                if str(it.get('issueeId')) in allowed_str_ids or (it.get('issueeName') and any(vn in it.get('issueeName').lower() for vn in user_vendor_names))
+                if str(it.get('issueeId', '')).lower() in allowed_str_ids
+                or (it.get('issueeName') and any(vn in it.get('issueeName').lower() for vn in user_vendor_names))
             ]
 
         res_data = {
@@ -352,19 +365,32 @@ class IlyncMyTasksListView(IlyncBaseView):
             size = 50
 
         task_type = request.query_params.get('taskType') or request.query_params.get('task_type')
-        extra_params = {k: v for k, v in request.query_params.items() if k not in ['page', 'size', 'taskType', 'task_type']}
+        extra_params = {
+            k: v for k, v in request.query_params.items()
+            if k not in ['page', 'size', 'taskType', 'task_type']
+        }
 
         from apps.common.task_scope import get_user_authorized_tasks
+        from apps.common.live_cache import cache_get_or_set
         user = request.user if request.user and request.user.is_authenticated else None
-        
-        scoped_data = get_user_authorized_tasks(
-            user=user,
-            request=request,
-            task_type=task_type,
-            page=page,
-            size=size,
-            extra_params=extra_params
-        )
+        user_key = getattr(user, 'id', None) or getattr(user, 'external_user_id', None) or 'anon'
+        cache_key = f"ilync:my-tasks:{user_key}:{task_type}:{page}:{size}:{sorted(extra_params.items())}"
+
+        def _load():
+            return get_user_authorized_tasks(
+                user=user,
+                request=request,
+                task_type=task_type,
+                page=page,
+                size=size,
+                extra_params=extra_params,
+            )
+
+        # Short TTL — map/dashboard share this; lite mode is especially cache-friendly
+        ttl = 25.0 if str(extra_params.get('expand_children') or extra_params.get('expand') or '1').lower() in (
+            '0', 'false', 'no', 'lite', 'root'
+        ) else 12.0
+        scoped_data = cache_get_or_set(cache_key, _load, ttl_seconds=ttl)
 
         return success_response(data=scoped_data, message="My tasks fetched successfully from ILYNC API")
 
@@ -570,21 +596,26 @@ class IlyncTaskChildrenView(IlyncBaseView):
     def get(self, request, task_id):
         user = request.user if request.user and request.user.is_authenticated else None
         from apps.common.task_scope import is_task_authorized_for_user
+        from apps.common.live_cache import cache_get_or_set
 
         # Verify user authorization strictly
         if not is_task_authorized_for_user(user, task_id, request=request):
             return Response({"success": False, "message": "Task children not found or unauthorized"}, status=status.HTTP_404_NOT_FOUND)
 
         clean_id = str(task_id).replace('_route_', '').split('_')[0]
-        try:
-            client = IlyncClient(request=request)
-            res = client.get_task_children(clean_id)
-            if res and isinstance(res, dict) and 'data' in res:
-                return success_response(data=res.get('data'), message="Task children fetched successfully")
-        except Exception as e:
-            print(f"[IlyncTaskChildrenView] Error fetching children for {task_id}: {e}")
 
-        return Response({"success": True, "data": [], "message": "Children unavailable"}, status=status.HTTP_200_OK)
+        def _load():
+            try:
+                client = IlyncClient(request=request)
+                res = client.get_task_children(clean_id)
+                if res and isinstance(res, dict) and 'data' in res:
+                    return res.get('data')
+            except Exception as e:
+                print(f"[IlyncTaskChildrenView] Error fetching children for {task_id}: {e}")
+            return []
+
+        children = cache_get_or_set(f"ilync:task_children:{clean_id}", _load, ttl_seconds=30.0)
+        return success_response(data=children, message="Task children fetched successfully")
 
 class IlyncTaskExportView(IlyncBaseView):
     def get(self, request, task_id):
@@ -637,5 +668,134 @@ class IlyncSurveyPhotoUrlsView(IlyncBaseView):
             logger.exception("[IlyncSurveyPhotoUrlsView] Error resolving photo URLs")
 
         return success_response(data={}, message="Photo URLs unavailable")
+
+
+class SystemStatusView(APIView):
+    """Lightweight health checks for HERO API + dependencies (proxy-only ops)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        import time
+        from django.conf import settings
+        from django.db import connection
+        from apps.common.concurrency import run_concurrent
+
+        checks = []
+
+        # Self
+        t0 = time.perf_counter()
+        checks.append({
+            "name": "HERO API",
+            "ok": True,
+            "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+            "message": "ok",
+        })
+
+        # Database (Postgres or local SQLite)
+        t0 = time.perf_counter()
+        db_engine = connection.settings_dict.get("ENGINE", "")
+        db_label = "SQLite" if "sqlite" in db_engine else "Postgres"
+        try:
+            connection.ensure_connection()
+            with connection.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+            checks.append({
+                "name": db_label,
+                "ok": True,
+                "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+                "message": "ok",
+            })
+        except Exception as exc:
+            checks.append({
+                "name": db_label,
+                "ok": False,
+                "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+                "message": str(exc)[:200],
+            })
+
+        # Redis (optional) — cheap, keep inline
+        redis_url = getattr(settings, "REDIS_URL", None) or getattr(settings, "CELERY_BROKER_URL", None)
+        if redis_url and str(redis_url).startswith("redis"):
+            t0 = time.perf_counter()
+            try:
+                import redis
+                client = redis.from_url(str(redis_url), socket_connect_timeout=2, socket_timeout=2)
+                client.ping()
+                checks.append({
+                    "name": "Redis",
+                    "ok": True,
+                    "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+                    "message": "ok",
+                })
+            except Exception as exc:
+                checks.append({
+                    "name": "Redis",
+                    "ok": False,
+                    "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+                    "message": str(exc)[:200],
+                })
+        else:
+            checks.append({
+                "name": "Redis",
+                "ok": True,
+                "latency_ms": 0,
+                "message": "not configured",
+            })
+
+        def _check_fiberforce():
+            t0 = time.perf_counter()
+            try:
+                ff = FiberForceClient()
+                base = getattr(ff, "base_url", None) or getattr(settings, "FIBERFORCE_BASE_URL", "")
+                if not base:
+                    raise RuntimeError("FIBERFORCE_BASE_URL not set")
+                ff.get_machines()
+                return {
+                    "name": "FiberForce",
+                    "ok": True,
+                    "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+                    "message": "ok",
+                }
+            except Exception as exc:
+                return {
+                    "name": "FiberForce",
+                    "ok": False,
+                    "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+                    "message": str(exc)[:200],
+                }
+
+        def _check_ilync():
+            t0 = time.perf_counter()
+            try:
+                il = IlyncClient()
+                base = getattr(il, "base_url", None) or getattr(settings, "ILYNC_BASE_URL", "")
+                if not base:
+                    raise RuntimeError("ILYNC_BASE_URL not set")
+                il.get_vendors(page=0, size=1)
+                return {
+                    "name": "iLync",
+                    "ok": True,
+                    "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+                    "message": "ok",
+                }
+            except Exception as exc:
+                return {
+                    "name": "iLync",
+                    "ok": False,
+                    "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
+                    "message": str(exc)[:200],
+                }
+
+        checks.extend(run_concurrent([_check_fiberforce, _check_ilync], max_workers=2))
+
+        overall_ok = all(c.get("ok") for c in checks)
+        return Response({
+            "success": True,
+            "data": {
+                "ok": overall_ok,
+                "checks": checks,
+            },
+        })
 
 

@@ -17,7 +17,8 @@ from .views import (
     IlyncTaskExecutionView,
     IlyncTaskChildrenView,
     IlyncTaskExportView,
-    IlyncSurveyPhotoUrlsView
+    IlyncSurveyPhotoUrlsView,
+    SystemStatusView,
 )
 
 urlpatterns = [
@@ -45,4 +46,5 @@ urlpatterns = [
     path('fiberforce/live-params/', FiberForceLiveParamCatalogView.as_view(), name='fiberforce_live_params_catalog'),
     path('fiberforce/live/', FiberForceLiveTelemetryView.as_view(), name='fiberforce_live_telemetry'),
     path('fiberforce/machines/live/', FiberForceLiveTelemetryView.as_view(), name='fiberforce_machines_live'),
+    path('system-status/', SystemStatusView.as_view(), name='system_status'),
 ]

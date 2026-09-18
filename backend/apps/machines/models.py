@@ -51,3 +51,6 @@ class Machine(models.Model):
 
     def __str__(self):
         return f"{self.name} [{self.machine_chassis_no or self.serial_number}]"
+
+    class Meta:
+        managed = False

@@ -1,7 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor
 from apps.integrations.ilync_client import IlyncClient
-from apps.common.vendor_scope import get_user_vendor_ids, check_vendor_access
-from apps.vendors.models import Vendor
+from apps.common.vendor_scope import (
+    get_user_vendor_ids,
+    check_vendor_access,
+    get_user_vendor,
+    _hydrate_vendor,
+    _as_ext_id,
+)
 
 def safe_float(val, default=0.0):
     try:
@@ -9,20 +14,49 @@ def safe_float(val, default=0.0):
     except (ValueError, TypeError):
         return default
 
+
+def _vendor_name_token(ext_id):
+    """First word of live vendor name for iLync search — never hits Vendor table."""
+    if not ext_id:
+        return None
+    try:
+        proxy = _hydrate_vendor(str(ext_id))
+        name = (getattr(proxy, 'name', None) or '').strip()
+        if name and name != str(ext_id):
+            return name.split()[0].strip()
+    except Exception:
+        pass
+    text = str(ext_id).strip()
+    return text if text and not text.isdigit() else None
+
+
 def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=50, extra_params=None):
     """
     Single source of truth for authorized task visibility across My Tasks, Dashboard, Maps, and Detail views.
     Strictly enforces role-based vendor scope, Advance User geographical scope, and Reporting Manager scope.
+
+    Pass expand_children=0|false|lite in extra_params / query to skip deep iLync child + execution fan-out
+    (used by map-view/trenching for a fast root list; children load on demand).
     """
     if extra_params is None:
         extra_params = {}
     else:
         extra_params = dict(extra_params)
 
+    expand_flag = str(
+        extra_params.pop('expand_children', None)
+        or extra_params.pop('expand', None)
+        or '1'
+    ).strip().lower()
+    expand_children = expand_flag not in ('0', 'false', 'no', 'lite', 'root')
+
     req_vendor = None
     if request:
         q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
         req_vendor = q_params.get('vendor_id') or q_params.get('vendor')
+        if 'expand_children' in q_params or 'expand' in q_params:
+            expand_flag = str(q_params.get('expand_children') or q_params.get('expand') or expand_flag).strip().lower()
+            expand_children = expand_flag not in ('0', 'false', 'no', 'lite', 'root')
     if not req_vendor:
         req_vendor = extra_params.get('vendor_id') or extra_params.get('vendor')
 
@@ -31,17 +65,11 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         search_term = None
         if req_vendor and str(req_vendor).strip() and str(req_vendor).lower() not in ['all', 'undefined', 'null', 'none']:
             val_str = str(req_vendor).strip()
-            v_obj = Vendor.objects.filter(id=int(val_str)).first() if val_str.isdigit() else Vendor.objects.filter(external_vendor_id=val_str).first() or Vendor.objects.filter(name__icontains=val_str).first()
-            if v_obj and v_obj.name:
-                search_term = v_obj.name.split()[0].strip()
-            elif not val_str.isdigit():
-                search_term = val_str
+            search_term = _vendor_name_token(val_str) or (val_str if not val_str.isdigit() else None)
         elif user and user.is_authenticated:
             allowed_v_ids = get_user_vendor_ids(user)
             if allowed_v_ids:
-                v_obj = Vendor.objects.filter(id__in=allowed_v_ids).first()
-                if v_obj and v_obj.name:
-                    search_term = v_obj.name.split()[0].strip()
+                search_term = _vendor_name_token(allowed_v_ids[0])
 
         if search_term and len(search_term) >= 2:
             extra_params['search'] = search_term
@@ -57,23 +85,10 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
     allowed_v_ids = get_user_vendor_ids(user) if user and user.is_authenticated else None
 
     if allowed_v_ids is not None and len(allowed_v_ids) > 0:
-        for v_db_id in allowed_v_ids:
-            v_obj = Vendor.objects.filter(id=v_db_id).first()
-            if v_obj and v_obj.external_vendor_id:
-                target_ext_vids.append(v_obj.external_vendor_id)
-            elif v_obj:
-                try:
-                    resolved_v = get_user_vendor(user)
-                    if resolved_v and resolved_v.external_vendor_id:
-                        target_ext_vids.append(resolved_v.external_vendor_id)
-                except Exception:
-                    pass
+        target_ext_vids.extend([str(v) for v in allowed_v_ids if v])
     elif req_vendor and str(req_vendor).strip() and str(req_vendor).lower() not in ['all', 'undefined', 'null', 'none']:
-        val_str = str(req_vendor).strip()
-        v_obj = Vendor.objects.filter(id=int(val_str)).first() if val_str.isdigit() else Vendor.objects.filter(external_vendor_id=val_str).first() or Vendor.objects.filter(name__icontains=val_str).first()
-        if v_obj and v_obj.external_vendor_id:
-            target_ext_vids.append(v_obj.external_vendor_id)
-        elif not val_str.isdigit():
+        val_str = _as_ext_id(req_vendor)
+        if val_str:
             target_ext_vids.append(val_str)
 
     base_content = []
@@ -137,7 +152,7 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         if not isinstance(base_content, list):
             base_content = []
 
-    # Parallel fetch child task hierarchy (Levels 1 & 2)
+    # Parallel fetch child task hierarchy (Levels 1 & 2) — skip in lite/root mode for map speed
     def fetch_children_batch(tasks_list):
         def fetch_c(t):
             tid = t.get('id')
@@ -152,28 +167,36 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         with ThreadPoolExecutor(max_workers=10) as executor:
             return list(executor.map(fetch_c, tasks_list))
 
-    level1_children_lists = fetch_children_batch(base_content)
+    if expand_children:
+        level1_children_lists = fetch_children_batch(base_content)
+    else:
+        level1_children_lists = [[] for _ in base_content]
     
     level1_flat = []
     for i, root in enumerate(base_content):
         c_list = level1_children_lists[i] if i < len(level1_children_lists) else []
         level1_flat.extend(c_list)
 
-    level2_children_lists = fetch_children_batch(level1_flat)
+    if expand_children:
+        level2_children_lists = fetch_children_batch(level1_flat)
+    else:
+        level2_children_lists = []
 
     # Parallel fetch execution telemetry for segment tasks to derive accurate covered length
     all_raw_tasks = list(base_content) + list(level1_flat)
     for l2_sub in level2_children_lists:
         all_raw_tasks.extend(l2_sub)
 
-    seg_candidates = [
-        t for t in all_raw_tasks
-        if isinstance(t, dict) and (
-            str((t.get('routeSnapshot') if isinstance(t.get('routeSnapshot'), dict) else {}).get('level') or '').upper() == 'SEGMENT'
-            or t.get('depth') == 2
-            or not t.get('totalSegments')
-        )
-    ]
+    seg_candidates = []
+    if expand_children:
+        seg_candidates = [
+            t for t in all_raw_tasks
+            if isinstance(t, dict) and (
+                str((t.get('routeSnapshot') if isinstance(t.get('routeSnapshot'), dict) else {}).get('level') or '').upper() == 'SEGMENT'
+                or t.get('depth') == 2
+                or not t.get('totalSegments')
+            )
+        ]
 
     def fetch_exec(t):
         tid = t.get('id')
@@ -257,9 +280,13 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         elif eff_vid:
             eff_vname = known_map.get(eff_vid.lower())
             if not eff_vname:
-                v_obj_db = Vendor.objects.filter(external_vendor_id=eff_vid).first()
-                if v_obj_db:
-                    eff_vname = v_obj_db.name
+                try:
+                    proxy = _hydrate_vendor(str(eff_vid))
+                    name = (getattr(proxy, 'name', None) or '').strip()
+                    if name and name != str(eff_vid):
+                        eff_vname = name
+                except Exception:
+                    pass
         else:
             eff_vname = None
 
@@ -319,17 +346,19 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         val_str = str(req_vendor).strip().lower()
         if val_str:
             target_match_ids.add(val_str)
-            target_v = Vendor.objects.filter(id=int(req_vendor)).first() if val_str.isdigit() else Vendor.objects.filter(external_vendor_id=val_str).first() or Vendor.objects.filter(name__icontains=val_str).first()
-            if target_v:
-                if target_v.external_vendor_id:
-                    target_match_ids.add(target_v.external_vendor_id.lower())
-                target_match_ids.add(str(target_v.id).lower())
-                if target_v.code:
-                    target_match_ids.add(target_v.code.lower())
-                target_match_names.add(target_v.name.lower())
+            try:
+                proxy = _hydrate_vendor(str(req_vendor).strip())
+                if getattr(proxy, 'external_vendor_id', None):
+                    target_match_ids.add(str(proxy.external_vendor_id).lower())
+                if getattr(proxy, 'code', None):
+                    target_match_ids.add(str(proxy.code).lower())
+                if getattr(proxy, 'name', None):
+                    target_match_names.add(str(proxy.name).lower())
+            except Exception:
+                pass
 
     elif allowed_vendor_ids is not None:
-        # Non-admin vendor user
+        # Non-admin vendor user — allowed ids are already external string ids
         if not allowed_vendor_ids:
             return {
                 "results": [],
@@ -343,15 +372,18 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
                 "pageSize": page_size
             }
 
-        for v_db_id in allowed_vendor_ids:
-            target_match_ids.add(str(v_db_id).lower())
-            v_obj = Vendor.objects.filter(id=v_db_id).first()
-            if v_obj:
-                if v_obj.external_vendor_id:
-                    target_match_ids.add(v_obj.external_vendor_id.lower())
-                if v_obj.code:
-                    target_match_ids.add(v_obj.code.lower())
-                target_match_names.add(v_obj.name.lower())
+        for vid in allowed_vendor_ids:
+            target_match_ids.add(str(vid).lower())
+            try:
+                proxy = _hydrate_vendor(str(vid))
+                if getattr(proxy, 'external_vendor_id', None):
+                    target_match_ids.add(str(proxy.external_vendor_id).lower())
+                if getattr(proxy, 'code', None):
+                    target_match_ids.add(str(proxy.code).lower())
+                if getattr(proxy, 'name', None):
+                    target_match_names.add(str(proxy.name).lower())
+            except Exception:
+                pass
 
         # If assigned vendor is parent company Telecrats, do not filter out sub-vendor execution tasks
         if any(name in ['telecrats', 'telecrats site project', 'hero web'] for name in target_match_names) or '17' in target_match_ids:
@@ -525,29 +557,27 @@ def is_task_authorized_for_user(user, task_id, request=None):
                 if allowed_vendor_ids is not None:
                     v_id = str(task_obj.get('vendorId') or task_obj.get('assignedVendorId') or '').strip()
                     if v_id and allowed_vendor_ids:
-                        from apps.vendors.models import Vendor
-                        vendor_objs = Vendor.objects.filter(id__in=allowed_vendor_ids)
-                        allowed_str_ids = [str(v.id) for v in vendor_objs] + [str(v.external_vendor_id) for v in vendor_objs if v.external_vendor_id]
-                        if v_id not in allowed_str_ids and not any(v_id == str(vid) for vid in allowed_vendor_ids):
+                        allowed_str_ids = {str(vid) for vid in allowed_vendor_ids if vid}
+                        if v_id not in allowed_str_ids:
                             return False
 
-                # Advance User Geography Check
+                # Advance User Geography Check (string geo ids — no Circle/District/Block tables)
                 if getattr(user, 'user_type', None) == 'ADVANCE':
                     loc = task_obj.get('locationSnapshot') or task_obj.get('location') or {}
                     t_circle = str(loc.get('circle') or loc.get('state') or task_obj.get('circle') or task_obj.get('state') or '').strip().lower()
                     t_district = str(loc.get('district') or task_obj.get('district') or '').strip().lower()
                     t_block = str(loc.get('blockName') or loc.get('block') or task_obj.get('blockName') or task_obj.get('block') or '').strip().lower()
 
-                    if user.advance_scope_type == 'CIRCLE' and user.selected_circle:
-                        target = user.selected_circle.name.strip().lower()
+                    if user.advance_scope_type == 'CIRCLE' and user.selected_circle_id:
+                        target = str(user.selected_circle_id).strip().lower()
                         if target and t_circle and target not in t_circle and t_circle not in target:
                             return False
-                    elif user.advance_scope_type == 'DISTRICT' and user.selected_district:
-                        target_dist = user.selected_district.name.strip().lower()
+                    elif user.advance_scope_type == 'DISTRICT' and getattr(user, 'selected_district_id', None):
+                        target_dist = str(user.selected_district_id).strip().lower()
                         if target_dist and t_district and target_dist not in t_district and t_district not in target_dist:
                             return False
-                    elif user.advance_scope_type == 'BLOCK' and user.selected_block:
-                        target_blk = user.selected_block.name.strip().lower()
+                    elif user.advance_scope_type == 'BLOCK' and getattr(user, 'selected_block_id', None):
+                        target_blk = str(user.selected_block_id).strip().lower()
                         if target_blk and t_block and target_blk not in t_block and t_block not in target_blk:
                             return False
 
@@ -575,26 +605,7 @@ def is_task_authorized_for_user(user, task_id, request=None):
     except Exception:
         pass
 
-    # 2. Check local DB Task queryset if clean_id is numeric
-    if clean_id.isdigit():
-        try:
-            from apps.tasks.models import Task
-            from apps.tasks.views import TaskViewSet
-            dummy_req = request
-            if not dummy_req:
-                from django.test import RequestFactory
-                dummy_req = RequestFactory().get('/')
-                dummy_req.user = user
-            
-            v = TaskViewSet()
-            v.request = dummy_req
-            qs = v.get_queryset()
-            if qs.filter(id=int(clean_id)).exists():
-                return True
-        except Exception:
-            pass
-
-    # 3. Fallback: check against full authorized task list
+    # 2. Fallback: check against full authorized live task list
     scoped_res = get_user_authorized_tasks(user=user, request=request, task_type='ALL', page=0, size=100)
     task_list = scoped_res.get('results', []) if isinstance(scoped_res, dict) else []
 

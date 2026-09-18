@@ -3,6 +3,8 @@ from apps.vendors.models import Vendor
 from apps.machines.models import Machine
 
 class Alert(models.Model):
+    class Meta:
+        managed = False
     vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE, related_name='alerts')
     machine = models.ForeignKey(Machine, on_delete=models.SET_NULL, null=True, blank=True)
     alert_type = models.CharField(max_length=100, default='LOW_FUEL')

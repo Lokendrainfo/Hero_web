@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { LucideMenu, LucideBell, LucideLogOut, LucideSettings, LucideUser } from 'lucide-react';
+import { LucideMenu, LucideBell, LucideLogOut, LucideSettings, LucideUser, LucideActivity } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { VendorSwitcher } from '../common/VendorSwitcher';
 import { ConfirmDialog } from '../common/ConfirmDialog';
+import api from '../../services/api';
 
 const ROUTE_TITLES = {
   '/dashboard': 'Dashboard',
@@ -31,6 +32,11 @@ const ROUTE_TITLES = {
   '/settings': 'Profile'
 };
 
+const statusDot = (ok, message) => {
+  if (message === 'not configured') return '#d97706';
+  return ok ? '#16a34a' : '#dc2626';
+};
+
 export const TopHeader = ({ onToggleSidebar, onOpenDrawer }) => {
   const { user, vendor, roles, vendors, logout } = useAuth();
   const navigate = useNavigate();
@@ -38,16 +44,23 @@ export const TopHeader = ({ onToggleSidebar, onOpenDrawer }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [statusData, setStatusData] = useState(null);
+  const [statusError, setStatusError] = useState(null);
   const menuRef = useRef(null);
+  const statusRef = useRef(null);
   const toggleHandler = onToggleSidebar || onOpenDrawer;
 
   useEffect(() => {
     const onDoc = (e) => {
       if (menuRef.current && !menuRef.current.contains(e.target)) setDropdownOpen(false);
+      if (statusRef.current && !statusRef.current.contains(e.target)) setStatusOpen(false);
     };
     const onKey = (e) => {
       if (e.key === 'Escape') {
         setDropdownOpen(false);
+        setStatusOpen(false);
         if (!signingOut) setLogoutOpen(false);
       }
     };
@@ -58,6 +71,29 @@ export const TopHeader = ({ onToggleSidebar, onOpenDrawer }) => {
       document.removeEventListener('keydown', onKey);
     };
   }, [signingOut]);
+
+  useEffect(() => {
+    if (!statusOpen) return undefined;
+    let cancelled = false;
+    const load = async () => {
+      setStatusLoading(true);
+      setStatusError(null);
+      try {
+        const res = await api.get('/integrations/system-status/');
+        if (!cancelled) setStatusData(res?.data || res);
+      } catch (err) {
+        if (!cancelled) setStatusError(err?.message || 'Failed to load system status');
+      } finally {
+        if (!cancelled) setStatusLoading(false);
+      }
+    };
+    load();
+    const timer = setInterval(load, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [statusOpen]);
 
   const handleLogout = async () => {
     setSigningOut(true);
@@ -91,6 +127,8 @@ export const TopHeader = ({ onToggleSidebar, onOpenDrawer }) => {
     { label: 'Phone', value: user?.phone_number || '—' }
   ];
 
+  const checks = statusData?.checks || [];
+
   return (
     <header className="app-header">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -102,6 +140,59 @@ export const TopHeader = ({ onToggleSidebar, onOpenDrawer }) => {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <VendorSwitcher />
+
+        <div style={{ position: 'relative' }} ref={statusRef}>
+          <button
+            type="button"
+            className="header-icon-btn"
+            onClick={() => setStatusOpen((v) => !v)}
+            aria-label="System status"
+            title="System status"
+          >
+            <LucideActivity size={18} />
+          </button>
+          {statusOpen && (
+            <div
+              className="header-dropdown"
+              role="dialog"
+              aria-label="System status"
+              style={{ right: 0, width: 280, padding: 12 }}
+            >
+              <div style={{ fontWeight: 600, fontSize: '0.8125rem', marginBottom: 8 }}>System Status</div>
+              {statusLoading && !checks.length ? (
+                <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Checking…</div>
+              ) : null}
+              {statusError ? (
+                <div style={{ color: '#dc2626', fontSize: '0.75rem' }}>{statusError}</div>
+              ) : null}
+              <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {checks.map((c) => (
+                  <li key={c.name} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.75rem' }}>
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        background: statusDot(c.ok, c.message),
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span style={{ flex: 1, fontWeight: 500 }}>{c.name}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      {typeof c.latency_ms === 'number' ? `${c.latency_ms} ms` : '—'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {checks.length ? (
+                <div style={{ marginTop: 10, fontSize: '0.6875rem', color: 'var(--text-muted)' }}>
+                  {statusData?.ok ? 'All systems reachable' : 'One or more dependencies failing'}
+                  {statusLoading ? ' · refreshing…' : ''}
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
 
         <button type="button" className="header-icon-btn" onClick={() => navigate('/notifications')} aria-label="Notifications">
           <LucideBell size={18} />

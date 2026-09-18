@@ -28,19 +28,19 @@ class ExpenseSubCategoryAdmin(admin.ModelAdmin):
 @admin.register(Expense)
 class ExpenseAdmin(admin.ModelAdmin):
     list_display = (
-        'expense_id', 'title', 'vendor', 'category_ref', 'expense_date',
+        'expense_id', 'title', 'external_vendor_id', 'category_ref', 'expense_date',
         'total_amount', 'status', 'created_by',
     )
-    list_filter = ('status', 'payment_type', 'payment_mode', 'gst_applicable', 'vendor', 'expense_date')
+    list_filter = ('status', 'payment_type', 'payment_mode', 'gst_applicable', 'expense_date')
     search_fields = (
         'expense_id', 'title', 'description', 'invoice_number',
-        'supplier_name', 'project', 'site',
+        'supplier_name', 'project', 'site', 'external_vendor_id', 'machine_chassis_no',
     )
     autocomplete_fields = (
-        'vendor', 'machine', 'task', 'operator', 'category_ref', 'subcategory_ref',
+        'operator', 'category_ref', 'subcategory_ref',
         'created_by', 'approved_by', 'rejected_by', 'paid_by',
     )
-    list_select_related = ('vendor', 'category_ref', 'created_by')
+    list_select_related = ('category_ref', 'created_by')
     date_hierarchy = 'expense_date'
     readonly_fields = (
         'expense_id', 'basic_amount', 'taxable_amount', 'gst_amount',
@@ -49,8 +49,18 @@ class ExpenseAdmin(admin.ModelAdmin):
     list_per_page = 50
     fieldsets = (
         ('Identity', {'fields': ('expense_id', 'title', 'description', 'expense_date', 'status')}),
-        ('Scope', {'fields': ('vendor', 'machine', 'task', 'operator', 'project', 'site')}),
-        ('Category', {'fields': ('category', 'subcategory', 'category_ref', 'subcategory_ref', 'payment_type', 'requires_proof')}),
+        ('Scope', {
+            'fields': (
+                'external_vendor_id', 'machine_chassis_no', 'external_task_id',
+                'operator', 'project', 'site',
+            )
+        }),
+        ('Category', {
+            'fields': (
+                'category', 'subcategory', 'category_ref', 'subcategory_ref',
+                'payment_type', 'requires_proof',
+            )
+        }),
         ('Amounts', {
             'fields': (
                 'quantity', 'unit', 'rate', 'discount', 'gst_applicable', 'gst_percentage',

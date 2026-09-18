@@ -18,53 +18,9 @@ def safe_float(val, default=0.0):
 
 
 def _ilync_assigned_chassis_for_vendors(vendors):
-    """
-    Collect machine chassis / machineNo values assigned on live iLync vendor records.
-    Dashboard machine KPIs should only count these assigned machines, not the full FiberForce fleet.
-    """
-    assigned = set()
-    if not vendors:
-        return assigned
-    try:
-        from apps.integrations.ilync_client import IlyncClient
-        client = IlyncClient()
-    except Exception:
-        return assigned
-
-    for v_obj in vendors:
-        ext_v_id = getattr(v_obj, 'external_vendor_id', None) or getattr(v_obj, 'id', None)
-        if not ext_v_id:
-            continue
-        try:
-            live_res = client.get_vendor_by_id(ext_v_id)
-        except Exception:
-            continue
-        payload = (
-            live_res.get('data')
-            if (isinstance(live_res, dict) and live_res.get('success'))
-            else (live_res if isinstance(live_res, dict) else {})
-        )
-        macs = (payload or {}).get('machines') or (payload or {}).get('assigned_machines') or []
-        if not isinstance(macs, list):
-            continue
-        for item in macs:
-            if isinstance(item, dict):
-                code = str(
-                    item.get('machineNo')
-                    or item.get('machine_no')
-                    or item.get('machine_chassis_no')
-                    or item.get('serial_number')
-                    or item.get('chassis_no')
-                    or item.get('name')
-                    or item.get('code')
-                    or item.get('id')
-                    or ''
-                ).strip()
-                if code:
-                    assigned.add(code)
-            elif isinstance(item, str) and item.strip():
-                assigned.add(item.strip())
-    return assigned
+    """Delegate to shared concurrent collector."""
+    from apps.machines.services import collect_ilync_assigned_chassis
+    return collect_ilync_assigned_chassis(vendors)
 
 
 def _filter_machines_to_assigned(machines_qs, chassis_set):
@@ -102,31 +58,68 @@ class DashboardSummaryView(APIView):
                     except Exception:
                         pass
 
-        machines_qs = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
-        tasks_qs = filter_queryset_by_vendor(Task.objects.all(), user, 'vendor_id', request=request)
+        machines_qs = None  # unused — live path below
+        tasks_qs = None
 
-        # Restrict machine KPIs/widgets to iLync-assigned machines only (not full fleet dump)
-        from apps.vendors.models import Vendor
+        # Restrict machine KPIs to iLync-assigned chassis via shared live machines path
+        from apps.machines.services import fetch_live_fiberforce_machines
+        from types import SimpleNamespace
+        live_mac_res = fetch_live_fiberforce_machines(user, q_params)
+        live_results = (live_mac_res or {}).get('results') or (live_mac_res or {}).get('all_items') or []
+        if not isinstance(live_results, list):
+            live_results = []
+        assigned_chassis = set((live_mac_res or {}).get('assigned_chassis') or [])
+        chassis_upper = {str(c).strip().upper() for c in assigned_chassis}
+        if chassis_upper:
+            live_results = [
+                m for m in live_results
+                if str(m.get('machine_chassis_no') or m.get('serial_number') or m.get('chassis_no') or '').strip().upper() in chassis_upper
+            ]
+
+        # Lightweight vendor name for project title (first assigned id only)
+        live_vendor_proxies = []
+        req_v = q_params.get('vendor_id') or q_params.get('vendor')
         vendor_ids = get_user_vendor_ids(user)
-        v_qs = Vendor.objects.filter(is_active=True)
-        if vendor_ids is not None:
-            v_qs = v_qs.filter(id__in=vendor_ids)
+        first_vid = None
         if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
-            v_qs = v_qs.filter(
-                Q(external_vendor_id=req_v) | Q(name__iexact=req_v) | Q(id=req_v if str(req_v).isdigit() else None)
+            first_vid = str(req_v).strip()
+        elif vendor_ids:
+            first_vid = str(vendor_ids[0])
+        if first_vid:
+            from apps.common.vendor_scope import _hydrate_vendor
+            try:
+                live_vendor_proxies = [_hydrate_vendor(first_vid)]
+            except Exception:
+                live_vendor_proxies = []
+
+        def _as_mac(m):
+            return SimpleNamespace(
+                id=m.get('id') or m.get('machine_chassis_no'),
+                name=m.get('name') or m.get('machine_chassis_no') or 'Machine',
+                machine_chassis_no=m.get('machine_chassis_no') or m.get('serial_number'),
+                status=m.get('status') or 'IDLE',
+                is_online=bool(m.get('is_online')),
+                current_fuel_level=safe_float(m.get('current_fuel_level') or m.get('fuel_litres')),
+                fuel_capacity=safe_float(m.get('fuel_capacity') or m.get('tank_capacity_l') or 160),
+                fuel_percentage=safe_float(m.get('fuel_percentage') or m.get('fuel_pct')),
+                today_consumption=safe_float(m.get('today_consumption') or m.get('fuel_consumed_today')),
+                today_refueled=safe_float(m.get('today_refueled')),
+                engine_hours_today=safe_float(m.get('engine_hours_today')),
+                runtime_str=m.get('runtime_str') or '00h 00m',
+                site_name=m.get('site_name') or '',
+                last_filled_text=m.get('last_filled_text'),
+                filled_by=m.get('filled_by') or (m.get('operator') or {}).get('name') if isinstance(m.get('operator'), dict) else m.get('filled_by'),
             )
-        assigned_chassis = _ilync_assigned_chassis_for_vendors(list(v_qs))
-        machines_qs = _filter_machines_to_assigned(machines_qs, assigned_chassis)
+
+        machines_list = [_as_mac(m) for m in live_results if isinstance(m, dict)]
 
         # Query first available machine for widgets
-        first_machine = machines_qs.filter(site_name__isnull=False).exclude(site_name='').first() or machines_qs.first()
+        first_machine = next((m for m in machines_list if m.site_name), None) or (machines_list[0] if machines_list else None)
 
-        # Dynamic Project / Site Name from Vendor assignment or Machines DB
+        # Dynamic Project / Site Name
         site_name = None
-        if vendor_ids:
-            assigned_v = Vendor.objects.filter(id__in=vendor_ids).first()
-            if assigned_v:
-                site_name = assigned_v.address or f"{assigned_v.name} Site"
+        if live_vendor_proxies:
+            site_name = f"{live_vendor_proxies[0].name} Site"
 
         if not site_name:
             site_name = first_machine.site_name if (first_machine and first_machine.site_name) else "Sujangarh-SITE"
@@ -147,10 +140,10 @@ class DashboardSummaryView(APIView):
         current_date_str = today.strftime('%d %b %Y')
         due_date_str = (today + timedelta(days=2)).strftime('%d %b %Y')
 
-        # Real DB Machine Stats calculated strictly from accessible vendor data
-        total_machines = machines_qs.count()
-        running_machines = machines_qs.filter(status='RUNNING').count()
-        active_alerts = Alert.objects.filter(is_read=False).count() if total_machines > 0 else 0
+        # Live machine stats
+        total_machines = len(machines_list)
+        running_machines = sum(1 for m in machines_list if str(m.status).upper() == 'RUNNING')
+        active_alerts = 0
         # Live tasks and authoritative task statistics from single source of truth helper
         task_list_items = []
         authorized_tasks = []
@@ -197,10 +190,10 @@ class DashboardSummaryView(APIView):
 
         # Machine and Fuel Status widgets: prefer active/running machine with fuel
         active_m = (
-            machines_qs.filter(status='RUNNING').first() or
-            machines_qs.filter(is_online=True).first() or
-            machines_qs.filter(current_fuel_level__gt=0).first() or
-            machines_qs.first()
+            next((m for m in machines_list if str(m.status).upper() == 'RUNNING'), None) or
+            next((m for m in machines_list if m.is_online), None) or
+            next((m for m in machines_list if m.current_fuel_level > 0), None) or
+            (machines_list[0] if machines_list else None)
         )
 
         live_telemetry = {}
@@ -237,17 +230,14 @@ class DashboardSummaryView(APIView):
         }
 
         from django.db.models import Sum, Avg
-        fuel_agg = machines_qs.aggregate(
-            t_fuel=Sum('current_fuel_level'),
-            t_cap=Sum('fuel_capacity'),
-            avg_pct=Avg('fuel_percentage'),
-            t_refuel=Sum('today_refueled')
-        )
-        total_current_fuel = safe_float(fuel_agg.get('t_fuel'), 0.0)
-        total_capacity = safe_float(fuel_agg.get('t_cap'), 0.0)
-        avg_pct = int(safe_float(fuel_agg.get('avg_pct'), 0.0))
+        total_current_fuel = sum(safe_float(m.current_fuel_level) for m in machines_list)
+        total_capacity = sum(safe_float(m.fuel_capacity) for m in machines_list) or 0.0
+        pct_vals = [safe_float(m.fuel_percentage) for m in machines_list if safe_float(m.fuel_percentage) > 0]
+        avg_pct = int(sum(pct_vals) / len(pct_vals)) if pct_vals else 0
         if total_capacity > 0 and avg_pct == 0:
             avg_pct = int((total_current_fuel / total_capacity) * 100)
+        t_refuel = sum(safe_float(m.today_refueled) for m in machines_list)
+
 
         last_filled = active_m.last_filled_text if (active_m and active_m.last_filled_text) else "15 Sep • 45 L"
         filled_by = active_m.filled_by if (active_m and active_m.filled_by) else "Operator"
@@ -255,7 +245,7 @@ class DashboardSummaryView(APIView):
         fuel_status_widget = {
             "percentage": avg_pct if total_machines > 0 else 0,
             "current_fuel": f"{int(total_current_fuel)} L" if total_current_fuel > 0 else (f"{int(fuel_litres)} L" if active_m else "0 L"),
-            "today_refueled": f"{safe_float(fuel_agg.get('t_refuel'), 0.0):.1f} L",
+            "today_refueled": f"{t_refuel:.1f} L",
             "tank_capacity": f"{int(total_capacity)} L" if total_capacity > 0 else "160 L",
             "filled_quantity": last_filled,
             "filled_by": filled_by
@@ -314,21 +304,14 @@ class DashboardSummaryView(APIView):
             bump_scope_matrix,
             normalize_attendance_role,
         )
-        from apps.vendors.models import Vendor
         from apps.integrations.ilync_client import IlyncClient
 
         client = IlyncClient()
         req_v = q_params.get('vendor_id') or q_params.get('vendor')
 
-        v_qs = Vendor.objects.filter(is_active=True)
-        if vendor_ids is not None:
-            v_qs = v_qs.filter(id__in=vendor_ids)
+        target_vendors = live_vendor_proxies
         if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
-            v_qs = v_qs.filter(
-                Q(external_vendor_id=req_v) | Q(name__iexact=req_v) | Q(id=req_v if str(req_v).isdigit() else None)
-            )
-
-        target_vendors = list(v_qs)
+            target_vendors = [_hydrate_vendor(str(req_v).strip())]
         # Normalize selected date to a Date (not datetime) for AttendanceRecord.date
         att_date = today.date() if hasattr(today, 'date') else today
         today_date_str = att_date.strftime('%Y-%m-%d') if hasattr(att_date, 'strftime') else str(att_date)

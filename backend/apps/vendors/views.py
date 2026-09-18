@@ -1,34 +1,14 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from .models import Vendor
-from .serializers import VendorSerializer
-from apps.common.responses import success_response
-from apps.common.vendor_scope import filter_queryset_by_vendor, check_vendor_access, get_user_vendor_ids
+from apps.common.responses import success_response, error_response
+from apps.common.vendor_scope import check_vendor_access, get_user_vendor_ids
 from apps.integrations.ilync_client import IlyncClient
 from .services import fetch_and_sync_all_ilync_vendors
 
-from django.db.models import Q
-
-class VendorViewSet(viewsets.ModelViewSet):
-    queryset = Vendor.objects.all().order_by('id')
-    serializer_class = VendorSerializer
+class VendorViewSet(viewsets.ViewSet):
+    """Live iLync vendors only — no Vendor table reads/writes."""
     permission_classes = [permissions.AllowAny]
-
-    def get_queryset(self):
-        user = self.request.user
-        qs = filter_queryset_by_vendor(Vendor.objects.all().order_by('id'), user, 'id', request=self.request)
-        search = self.request.query_params.get('search', '').strip()
-        if search:
-            qs = qs.filter(
-                Q(name__icontains=search) |
-                Q(code__icontains=search) |
-                Q(vendor_code__icontains=search) |
-                Q(contact_person__icontains=search) |
-                Q(email__icontains=search) |
-                Q(phone__icontains=search)
-            )
-        return qs
 
     def list(self, request, *args, **kwargs):
         user = request.user
@@ -105,12 +85,23 @@ class VendorViewSet(viewsets.ModelViewSet):
     def my_vendor(self, request):
         user = request.user
         vendor_ids = get_user_vendor_ids(user)
-        if vendor_ids is None or (isinstance(vendor_ids, list) and not vendor_ids):
-            # Admin or user without specific vendor assignment
-            v_first = Vendor.objects.first()
-            target_pk = v_first.external_vendor_id or v_first.id if v_first else '6a7c2b4f8e16e804697f18b0'
-        else:
+        if vendor_ids and len(vendor_ids) > 0:
             target_pk = vendor_ids[0]
+        else:
+            # Fall back to first live iLync vendor for admins
+            try:
+                live = IlyncClient().get_vendors(page=0, size=1)
+                data = (live or {}).get('data') if isinstance(live, dict) else live
+                raw = []
+                if isinstance(data, dict):
+                    raw = data.get('results') or data.get('content') or data.get('vendors') or []
+                elif isinstance(data, list):
+                    raw = data
+                target_pk = str(raw[0].get('id')) if raw and isinstance(raw[0], dict) else None
+            except Exception:
+                target_pk = None
+        if not target_pk:
+            return error_response(message="No vendor available", status_code=status.HTTP_404_NOT_FOUND)
         return self.retrieve(request, pk=target_pk)
 
     def retrieve(self, request, pk=None, *args, **kwargs):
@@ -118,22 +109,10 @@ class VendorViewSet(viewsets.ModelViewSet):
         if str(pk).lower() == 'me':
             return self.my_vendor(request)
 
-        # Direct object access authorization check
         check_vendor_access(user, pk)
 
         client = IlyncClient()
-        instance = None
-        try:
-            if str(pk).isdigit():
-                instance = Vendor.objects.filter(id=int(pk)).first()
-            if not instance:
-                instance = Vendor.objects.filter(external_vendor_id=str(pk)).first()
-            if not instance:
-                instance = Vendor.objects.filter(name=str(pk)).first()
-        except Exception:
-            pass
-
-        ext_id = instance.external_vendor_id if (instance and instance.external_vendor_id) else pk
+        ext_id = pk
 
         # Fetch fresh vendor details from live ILYNC API (GET /api/vendor/<id>)
         external_res = None
@@ -156,17 +135,10 @@ class VendorViewSet(viewsets.ModelViewSet):
             raw_machines = []
 
         res_data = dict(external_vendor) if isinstance(external_vendor, dict) else {}
-
-        if instance:
-            res_data.setdefault('id', instance.external_vendor_id or instance.id)
-            res_data.setdefault('external_vendor_id', instance.external_vendor_id or str(instance.id))
-            res_data.setdefault('name', instance.name)
-            res_data.setdefault('partnerName', instance.name)
-            res_data.setdefault('contact_person', instance.contact_person)
-            res_data.setdefault('contactName', instance.contact_person)
-            res_data.setdefault('phone', instance.phone)
-            res_data.setdefault('phoneNumber', instance.phone)
-            res_data.setdefault('email', instance.email)
+        res_data.setdefault('id', str(ext_id))
+        res_data.setdefault('external_vendor_id', str(ext_id))
+        res_data.setdefault('name', res_data.get('partnerName') or res_data.get('name') or str(ext_id))
+        res_data.setdefault('partnerName', res_data['name'])
 
         res_data['users'] = raw_users
         res_data['machines'] = raw_machines
@@ -177,8 +149,27 @@ class VendorViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='sync')
     def sync_vendors(self, request):
-        synced = fetch_and_sync_all_ilync_vendors()
+        result = fetch_and_sync_all_ilync_vendors()
+        live_count = result.get('live_count', 0) if isinstance(result, dict) else 0
         return success_response(
-            data={"synced_count": len(synced)},
-            message=f"Successfully synced {len(synced)} vendors from ILYNC API."
+            data={"synced_count": 0, "live_count": live_count, "persisted": False},
+            message="Vendors are live-proxied from iLync; nothing written to HERO DB.",
+        )
+
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {"success": False, "message": "Vendors are managed in iLync (proxy-only)."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {"success": False, "message": "Vendors are managed in iLync (proxy-only)."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {"success": False, "message": "Vendors are managed in iLync (proxy-only)."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )

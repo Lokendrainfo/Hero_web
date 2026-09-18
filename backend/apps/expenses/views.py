@@ -91,7 +91,13 @@ class ExpenseViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        qs = filter_queryset_by_reporting_and_vendor(Expense.objects.all(), self.request.user)
+        qs = filter_queryset_by_reporting_and_vendor(
+            Expense.objects.all(),
+            self.request.user,
+            user_field='created_by_id',
+            vendor_field='external_vendor_id',
+            request=self.request,
+        )
 
         search = self.request.query_params.get('search', '').strip()
         category = self.request.query_params.get('category', '').strip()
@@ -114,8 +120,8 @@ class ExpenseViewSet(viewsets.ModelViewSet):
                 Q(invoice_number__icontains=search) |
                 Q(project__icontains=search) |
                 Q(site__icontains=search) |
-                Q(vendor__name__icontains=search) |
-                Q(machine__name__icontains=search)
+                Q(external_vendor_id__icontains=search) |
+                Q(machine_chassis_no__icontains=search)
             )
 
         if category and category.upper() != 'ALL':
@@ -128,20 +134,13 @@ class ExpenseViewSet(viewsets.ModelViewSet):
             qs = qs.filter(Q(payment_type__iexact=payment_type) | Q(category_ref__payment_type__iexact=payment_type))
 
         if vendor_id and vendor_id.upper() != 'ALL':
-            if vendor_id.isdigit():
-                qs = qs.filter(vendor_id=int(vendor_id))
-            else:
-                qs = qs.filter(Q(vendor__external_vendor_id=vendor_id) | Q(vendor__name__icontains=vendor_id))
+            qs = qs.filter(external_vendor_id=vendor_id)
 
         if machine_id and machine_id.upper() != 'ALL':
-            if machine_id.isdigit():
-                qs = qs.filter(machine_id=int(machine_id))
-            else:
-                qs = qs.filter(Q(machine__code__iexact=machine_id) | Q(machine__name__icontains=machine_id))
+            qs = qs.filter(machine_chassis_no=machine_id)
 
         if task_id and task_id.upper() != 'ALL':
-            if task_id.isdigit():
-                qs = qs.filter(task_id=int(task_id))
+            qs = qs.filter(external_task_id=task_id)
 
         if status_param and status_param.upper() != 'ALL':
             qs = qs.filter(status__iexact=status_param)
@@ -273,19 +272,13 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         allowed_vendor_ids = get_user_vendor_ids(user)
         req_vendor = request.data.get('vendor_id') or request.data.get('vendor')
         
-        target_vendor = None
+        target_vendor_id = None
         if req_vendor:
-            from apps.vendors.models import Vendor
-            v_str = str(req_vendor).strip()
-            if v_str.isdigit():
-                target_vendor = Vendor.objects.filter(id=int(v_str)).first()
-            if not target_vendor:
-                target_vendor = Vendor.objects.filter(Q(external_vendor_id=v_str) | Q(name__icontains=v_str)).first()
+            target_vendor_id = str(req_vendor).strip() or None
         elif allowed_vendor_ids and len(allowed_vendor_ids) > 0:
-            from apps.vendors.models import Vendor
-            target_vendor = Vendor.objects.filter(id=allowed_vendor_ids[0]).first()
-        elif hasattr(user, 'vendor') and user.vendor:
-            target_vendor = user.vendor
+            target_vendor_id = str(allowed_vendor_ids[0])
+        elif getattr(user, 'external_vendor_id', None):
+            target_vendor_id = str(user.external_vendor_id)
 
         now = timezone.now().date()
         year = int(request.data.get('year', now.year))
@@ -311,10 +304,10 @@ class ExpenseViewSet(viewsets.ModelViewSet):
                 expense_date__year=year,
                 expense_date__month=month
             )
-            if target_vendor:
-                existing = existing.filter(vendor=target_vendor)
+            if target_vendor_id:
+                existing = existing.filter(external_vendor_id=target_vendor_id)
             else:
-                existing = existing.filter(vendor__isnull=True)
+                existing = existing.filter(Q(external_vendor_id__isnull=True) | Q(external_vendor_id=''))
 
             if existing.exists():
                 skipped += 1
@@ -324,7 +317,7 @@ class ExpenseViewSet(viewsets.ModelViewSet):
                 title=cat.name,
                 category=cat.name,
                 category_ref=cat,
-                vendor=target_vendor,
+                external_vendor_id=target_vendor_id,
                 quantity=cat.default_quantity,
                 unit=cat.uom or 'NOS',
                 rate=cat.default_rate,
@@ -385,11 +378,21 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         by_category_raw = qs.values('category').annotate(amount=Sum('total_amount'), count=Count('id')).order_by('-amount')
         by_category = [{"category": item['category'] or 'Miscellaneous', "amount": float(item['amount'] or 0), "count": item['count']} for item in by_category_raw]
 
-        by_vendor_raw = qs.values('vendor__name').annotate(amount=Sum('total_amount'), count=Count('id')).order_by('-amount')
-        by_vendor = [{"vendor": item['vendor__name'] or 'Direct / General', "amount": float(item['amount'] or 0), "count": item['count']} for item in by_vendor_raw]
+        by_vendor_raw = qs.values('external_vendor_id').annotate(amount=Sum('total_amount'), count=Count('id')).order_by('-amount')
+        by_vendor = []
+        for item in by_vendor_raw:
+            vid = item['external_vendor_id']
+            label = 'Direct / General'
+            if vid:
+                try:
+                    from apps.common.vendor_scope import _hydrate_vendor
+                    label = _hydrate_vendor(vid).name or str(vid)
+                except Exception:
+                    label = str(vid)
+            by_vendor.append({"vendor": label, "amount": float(item['amount'] or 0), "count": item['count']})
 
-        by_machine_raw = qs.filter(machine__isnull=False).values('machine__name', 'machine__code').annotate(amount=Sum('total_amount'), count=Count('id')).order_by('-amount')[:10]
-        by_machine = [{"machine": f"{item['machine__name']} ({item['machine__code']})", "amount": float(item['amount'] or 0), "count": item['count']} for item in by_machine_raw]
+        by_machine_raw = qs.exclude(Q(machine_chassis_no__isnull=True) | Q(machine_chassis_no='')).values('machine_chassis_no').annotate(amount=Sum('total_amount'), count=Count('id')).order_by('-amount')[:10]
+        by_machine = [{"machine": item['machine_chassis_no'], "amount": float(item['amount'] or 0), "count": item['count']} for item in by_machine_raw]
 
         stats_data = {
             "total_count": total_count,

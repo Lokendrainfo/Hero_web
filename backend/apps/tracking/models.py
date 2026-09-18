@@ -13,6 +13,7 @@ class TelemetryData(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        managed = False
         ordering = ['-timestamp']
         verbose_name = 'Telemetry reading'
         verbose_name_plural = 'Telemetry readings'

@@ -3,6 +3,8 @@ from apps.vendors.models import Vendor
 from apps.machines.models import Machine
 
 class FuelCard(models.Model):
+    class Meta:
+        managed = False
     vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE)
     card_number = models.CharField(max_length=100, unique=True)
     card_holder = models.CharField(max_length=255)
@@ -14,6 +16,8 @@ class FuelCard(models.Model):
         return f"{self.card_number} ({self.card_holder})"
 
 class FuelLog(models.Model):
+    class Meta:
+        managed = False
     machine = models.ForeignKey(Machine, on_delete=models.CASCADE, related_name='fuel_logs')
     liters = models.DecimalField(max_digits=10, decimal_places=2)
     cost = models.DecimalField(max_digits=10, decimal_places=2)

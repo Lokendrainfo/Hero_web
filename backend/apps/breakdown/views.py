@@ -101,9 +101,31 @@ def _request_data(request):
 
 
 def _accessible_machines(user, request):
-    qs = Machine.objects.exclude(machine_chassis_no__isnull=True).exclude(machine_chassis_no='')
-    qs = filter_queryset_by_vendor(qs, user, 'vendor_id', request=request)
-    return list(qs.select_related('vendor').order_by('model_name', 'machine_chassis_no'))
+    """Live FiberForce machines in scope — no Machine table."""
+    from apps.machines.services import fetch_live_fiberforce_machines
+    from types import SimpleNamespace
+    live = fetch_live_fiberforce_machines(user, getattr(request, 'query_params', {}))
+    results = (live or {}).get('results') or []
+    out = []
+    for m in results:
+        if not isinstance(m, dict):
+            continue
+        chassis = _clean_text(m.get('machine_chassis_no') or m.get('serial_number'))
+        if not chassis:
+            continue
+        out.append(SimpleNamespace(
+            id=m.get('id') or chassis,
+            machine_chassis_no=chassis,
+            name=m.get('name') or chassis,
+            code=m.get('code') or chassis,
+            model_name=m.get('model_name') or m.get('model_code') or '',
+            model_code=m.get('model_code') or '',
+            serial_number=chassis,
+            site_name=m.get('site_name') or m.get('location_name') or '',
+            vendor_id=m.get('vendor_id') or m.get('vendorId') or '',
+            vendor=None,
+        ))
+    return out
 
 
 def _machine_index(machines):

@@ -1,31 +1,39 @@
 from rest_framework.views import APIView
 from rest_framework import permissions
 from apps.common.responses import success_response
+from apps.machines.services import fetch_live_fiberforce_machines
 
-from apps.common.vendor_scope import filter_queryset_by_vendor
-from apps.machines.models import Machine
-from apps.machines.serializers import MachineSerializer
-from apps.fuel.models import FuelLog
-from apps.fuel.serializers import FuelLogSerializer
 
 class MachineReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        qs = filter_queryset_by_vendor(Machine.objects.all(), request.user, 'vendor_id', request=request)
-        data = MachineSerializer(qs, many=True).data
-        return success_response(data=data, message="Machine report generated")
+        live = fetch_live_fiberforce_machines(request.user, request.query_params)
+        data = live.get('results') or []
+        return success_response(data=data, message="Machine report generated (live FiberForce)")
+
 
 class FuelReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        qs = filter_queryset_by_vendor(FuelLog.objects.all(), request.user, 'machine__vendor_id', request=request)
-        data = FuelLogSerializer(qs, many=True).data
-        return success_response(data=data, message="Fuel report generated")
+        # Fuel logs are FiberForce sensor-logs — empty here; use /refuel/sensor-logs/
+        return success_response(data=[], message="Use /api/v1/refuel/sensor-logs/ for live fuel logs")
+
 
 class ExpenseReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        return success_response(data=[], message="Expense report generated")
+        from apps.expenses.models import Expense
+        from apps.expenses.serializers import ExpenseSerializer
+        from apps.common.reporting_scope import filter_queryset_by_reporting_and_vendor
+        qs = filter_queryset_by_reporting_and_vendor(
+            Expense.objects.all(),
+            request.user,
+            user_field='created_by_id',
+            vendor_field='external_vendor_id',
+            request=request,
+        )
+        data = ExpenseSerializer(qs, many=True, context={'request': request}).data
+        return success_response(data=data, message="Expense report generated")

@@ -12,7 +12,7 @@ from apps.common.permissions import IsVendorAuthorized
 from apps.common.responses import success_response, error_response
 from apps.common.vendor_scope import get_user_vendor_ids, get_user_vendor, check_vendor_access, filter_queryset_by_vendor
 from django.conf import settings
-from apps.notifications.models import Notification
+# Notifications are not persisted (proxy-only).
 from .services import auto_checkout_overnight_records
 from apps.common.reporting_scope import get_reporting_scope
 
@@ -103,11 +103,8 @@ def process_attendance_photo(request_or_data, photo_type='checkin', user_id=None
 
 
 def notify_user(target_user, title, body):
-    if target_user and getattr(target_user, 'is_active', True):
-        try:
-            Notification.objects.create(user=target_user, title=title, body=body)
-        except Exception as e:
-            print(f"[Notification] Error creating notification: {e}")
+    """Notifications are not persisted (proxy-only) — no-op."""
+    return
 
 def resolve_reporting_manager(target_user, marked_by_user=None, vendor=None):
     """
@@ -140,7 +137,7 @@ def resolve_reporting_manager(target_user, marked_by_user=None, vendor=None):
     target_vendor = vendor or getattr(target_user, 'vendor', None) or get_user_vendor(target_user, resolve_fallback=False)
     if target_vendor:
         vendor_mgr = User.objects.filter(
-            Q(vendor=target_vendor) | Q(hero_vendor_assignments__vendor=target_vendor)
+            Q(external_vendor_id=getattr(target_vendor, "external_vendor_id", None) or str(getattr(target_vendor, "id", "")))
         ).filter(
             Q(role__icontains='VENDOR') | Q(roles__name__icontains='VENDOR') |
             Q(role__icontains='MANAGER') | Q(roles__name__icontains='MANAGER') |
@@ -182,7 +179,7 @@ def validate_approval_permission(request_user, attendance_record):
 
         user_vendor_ids = get_user_vendor_ids(request_user)
         is_same_vendor = False
-        if user_vendor_ids and attendance_record.vendor_id in user_vendor_ids:
+        if user_vendor_ids and str(getattr(attendance_record, "external_vendor_id", None) or "") in [str(v) for v in user_vendor_ids]:
             is_same_vendor = True
 
         if not (is_direct_mgr or is_marked_by or (attendance_record.user_id in subordinate_ids) or is_same_vendor):
@@ -241,7 +238,7 @@ def resolve_target_user(user_id_param, request_user=None):
     # 1. Search FIRST by external_user_id (exact match for iLync ID)
     u = User.objects.filter(external_user_id=param_str).first()
     if u:
-        if target_vendor and u.vendor_id and u.vendor_id != target_vendor.id:
+        if target_vendor and getattr(u, "external_vendor_id", None) and str(u.external_vendor_id) != str(getattr(target_vendor, "external_vendor_id", None) or target_vendor.id):
             # Rule 8: Treat as mapping conflict. Do not use cross-vendor user.
             print(
                 f"[iLyncMapping] vendor_external_id={getattr(target_vendor, 'external_vendor_id', None)} | "
@@ -253,7 +250,7 @@ def resolve_target_user(user_id_param, request_user=None):
         return u
 
     # 2. Search by employee_id, username, phone_number, email (scoped to target_vendor if known)
-    cand_qs = User.objects.filter(vendor=target_vendor) if target_vendor else User.objects.all()
+    cand_qs = User.objects.filter(external_vendor_id=str(getattr(target_vendor, "external_vendor_id", None) or getattr(target_vendor, "id", ""))) if target_vendor else User.objects.all()
     u = cand_qs.filter(
         Q(employee_id=param_str) |
         Q(username=param_str) |
@@ -284,19 +281,18 @@ def resolve_target_user(user_id_param, request_user=None):
     if param_str.isdigit():
         u = User.objects.filter(id=int(param_str)).first()
         if u:
-            if target_vendor and u.vendor_id and u.vendor_id != target_vendor.id:
+            if target_vendor and getattr(u, "external_vendor_id", None) and str(u.external_vendor_id) != str(getattr(target_vendor, "external_vendor_id", None) or target_vendor.id):
                 return None
             return u
 
     # 3b. If still not found and request_user has a vendor with external_vendor_id, sync live vendor users to resolve
     if target_vendor and getattr(target_vendor, 'external_vendor_id', None):
         try:
-            from apps.vendors.services import sync_vendor_detail_links
-            sync_vendor_detail_links(target_vendor, target_vendor.external_vendor_id)
-            u = User.objects.filter(external_user_id=param_str, vendor=target_vendor).first()
+            ext = str(target_vendor.external_vendor_id)
+            u = User.objects.filter(external_user_id=param_str, external_vendor_id=ext).first()
             if u:
                 return u
-            u = User.objects.filter(vendor=target_vendor).filter(
+            u = User.objects.filter(external_vendor_id=ext).filter(
                 Q(employee_id=param_str) |
                 Q(username=param_str) |
                 Q(phone_number=param_str)
@@ -317,7 +313,7 @@ def resolve_target_user(user_id_param, request_user=None):
         defaults={
             'external_user_id': param_str,
             'first_name': base_name,
-            'vendor': target_vendor,
+            'external_vendor_id': getattr(target_vendor, 'external_vendor_id', None) or getattr(target_vendor, 'id', None),
             'is_active': True
         }
     )
@@ -528,24 +524,28 @@ def validate_employee_attendance_access(request_user, target_user):
 
     # Determine target user vendor
     target_vendor_ids = []
-    if target_user.vendor_id:
-        target_vendor_ids.append(target_user.vendor_id)
-    target_assignments = list(target_user.hero_vendor_assignments.filter(is_active=True).values_list('vendor_id', flat=True))
-    target_vendor_ids.extend(target_assignments)
+    if getattr(target_user, 'external_vendor_id', None):
+        target_vendor_ids.append(str(target_user.external_vendor_id))
+    for vid in (getattr(target_user, 'assigned_vendor_ids', None) or []):
+        if vid and str(vid) not in target_vendor_ids:
+            target_vendor_ids.append(str(vid))
 
     # If target user belongs to explicit vendors, ensure request_user has access to at least one
     if target_vendor_ids:
-        if not any(v_id in allowed_vendor_ids for v_id in target_vendor_ids):
+        allowed_set = {str(v) for v in allowed_vendor_ids}
+        if not any(str(v_id) in allowed_set for v_id in target_vendor_ids):
             raise PermissionDenied("You do not have permission to manage attendance for this employee.")
     else:
-        # If target user is a new iLync team member shell user without assigned vendor_id, associate primary vendor
+        # Associate primary external vendor id on internal shell user (owned string field only)
         if allowed_vendor_ids and len(allowed_vendor_ids) > 0:
             try:
-                from apps.vendors.models import Vendor
-                v_inst = Vendor.objects.filter(id=allowed_vendor_ids[0]).first()
-                if v_inst:
-                    target_user.vendor = v_inst
-                    target_user.save(update_fields=['vendor'])
+                vid = str(allowed_vendor_ids[0])
+                target_user.external_vendor_id = vid
+                ids = list(target_user.assigned_vendor_ids or [])
+                if vid not in ids:
+                    ids.append(vid)
+                target_user.assigned_vendor_ids = ids
+                target_user.save(update_fields=['external_vendor_id', 'assigned_vendor_ids'])
             except Exception as e:
                 print(f"[AttendanceAccess] Error associating vendor to shell user: {e}")
 
@@ -563,26 +563,21 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if allowed_vendor_ids is None:
             qs = AttendanceRecord.objects.all().exclude(
                 Q(user__is_superuser=True) | Q(user__role__iexact='ADMIN') | Q(user__roles__name__iexact='ADMIN')
-            ).distinct().select_related('user', 'vendor', 'marked_by', 'updated_by', 'approved_by', 'marked_for_user')
+            ).distinct().select_related('user', 'marked_by', 'updated_by', 'approved_by', 'marked_for_user')
         elif not allowed_vendor_ids:
             return AttendanceRecord.objects.none()
         else:
             qs = AttendanceRecord.objects.filter(
-                Q(vendor_id__in=allowed_vendor_ids) |
-                Q(user__vendor_id__in=allowed_vendor_ids) |
-                Q(user__hero_vendor_assignments__vendor_id__in=allowed_vendor_ids)
+                Q(external_vendor_id__in=allowed_vendor_ids) |
+                Q(user__external_vendor_id__in=allowed_vendor_ids)
             ).exclude(
                 Q(user__is_superuser=True) | Q(user__role__iexact='ADMIN') | Q(user__roles__name__iexact='ADMIN')
-            ).distinct().select_related('user', 'vendor', 'marked_by', 'updated_by', 'approved_by', 'marked_for_user')
+            ).distinct().select_related('user', 'marked_by', 'updated_by', 'approved_by', 'marked_for_user')
 
         req_vendor = self.request.query_params.get('vendor_id') or self.request.query_params.get('vendor')
         if req_vendor and str(req_vendor).strip() and req_vendor != 'all':
             check_vendor_access(user, req_vendor)
-            qs = qs.filter(
-                Q(vendor__external_vendor_id=req_vendor) |
-                Q(vendor__name__icontains=req_vendor) |
-                Q(vendor_id=req_vendor if str(req_vendor).isdigit() else None)
-            )
+            qs = qs.filter(external_vendor_id=str(req_vendor).strip())
 
         date_param = self.request.query_params.get('date')
         if date_param:
@@ -659,7 +654,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             user=target_user,
             date=rec_date,
             defaults={
-                'vendor': target_vendor,
+                'external_vendor_id': getattr(target_vendor, 'external_vendor_id', None) or getattr(target_vendor, 'id', None),
                 'reporting_manager': reporting_mgr,
                 'status': status_val,
                 'approval_status': request.data.get('approval_status') or 'PENDING',
@@ -682,8 +677,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if check_out_val:
                 record.check_out = check_out_val
             record.updated_by = request.user
-            if target_vendor and not record.vendor:
-                record.vendor = target_vendor
+            if target_vendor and not record.external_vendor_id:
+                record.external_vendor_id = getattr(target_vendor, "external_vendor_id", None) or getattr(target_vendor, "id", None)
             record.save()
 
         if created and reporting_mgr:
@@ -783,7 +778,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         record = AttendanceRecord.objects.create(
             user=user,
-            vendor=target_vendor,
+            external_vendor_id=getattr(target_vendor, "external_vendor_id", None) or getattr(target_vendor, "id", None),
             reporting_manager=reporting_mgr,
             date=today,
             check_in=timezone.now(),
@@ -911,7 +906,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         record = AttendanceRecord.objects.create(
             user=target_user,
-            vendor=target_vendor,
+            external_vendor_id=getattr(target_vendor, "external_vendor_id", None) or getattr(target_vendor, "id", None),
             reporting_manager=reporting_mgr,
             date=today,
             check_in=timezone.now(),
@@ -981,7 +976,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         record = AttendanceRecord.objects.create(
             user=user,
-            vendor=target_vendor,
+            external_vendor_id=getattr(target_vendor, "external_vendor_id", None) or getattr(target_vendor, "id", None),
             reporting_manager=reporting_mgr,
             date=today,
             check_in=timezone.now(),
@@ -1062,26 +1057,20 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     # 4.6 Fetch Assigned Machines for Logged-In User
     @action(detail=False, methods=['get'], url_path='my-assigned-machines')
     def my_assigned_machines(self, request):
-        from apps.machines.models import Machine
-        user = request.user
-        allowed_vendor_ids = get_user_vendor_ids(user)
-
-        if allowed_vendor_ids is None:
-            machines = Machine.objects.all()[:50]
-        elif not allowed_vendor_ids:
-            machines = Machine.objects.none()
-        else:
-            machines = Machine.objects.filter(vendor_id__in=allowed_vendor_ids)
-
+        from apps.machines.services import fetch_live_fiberforce_machines
+        live = fetch_live_fiberforce_machines(request.user, request.query_params)
+        machines = live.get('results') or []
         results = []
         for m in machines:
+            if not isinstance(m, dict):
+                continue
             results.append({
-                "id": m.id,
-                "machine_chassis_no": getattr(m, 'chassis_number', getattr(m, 'serial_number', f"CH-{m.id}")),
-                "model_code": getattr(m, 'model', getattr(m, 'name', 'JCB-3DX')),
-                "model_name": getattr(m, 'name', 'JCB 3DX EcoXcellence'),
-                "site_name": getattr(m, 'site_name', getattr(m, 'location', 'Main Project Site')),
-                "status": getattr(m, 'status', 'Online')
+                "id": m.get('id') or m.get('machine_chassis_no'),
+                "machine_chassis_no": m.get('machine_chassis_no') or m.get('serial_number'),
+                "model_code": m.get('model_code') or m.get('model'),
+                "model_name": m.get('model_name') or m.get('name'),
+                "site_name": m.get('site_name') or m.get('location_name'),
+                "status": m.get('status') or 'Online',
             })
         return Response({"results": results}, status=status.HTTP_200_OK)
 
@@ -1092,8 +1081,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         allowed_vendor_ids = get_user_vendor_ids(user)
 
         if allowed_vendor_ids is None:
-            team_qs = User.objects.filter(is_active=True).filter(
-                Q(vendor__isnull=False) | Q(hero_vendor_assignments__isnull=False)
+            team_qs = User.objects.filter(is_active=True).exclude(
+                Q(external_vendor_id__isnull=True) | Q(external_vendor_id='')
             ).exclude(
                 Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
             ).distinct().order_by('id')
@@ -1101,8 +1090,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             team_qs = User.objects.none()
         else:
             team_qs = User.objects.filter(
-                Q(vendor_id__in=allowed_vendor_ids) |
-                Q(hero_vendor_assignments__vendor_id__in=allowed_vendor_ids)
+                Q(external_vendor_id__in=allowed_vendor_ids)
             ).filter(is_active=True).exclude(
                 Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
             ).distinct().order_by('id')
@@ -1172,13 +1160,9 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         req_vendor = request.query_params.get('vendor_id') or request.query_params.get('vendor')
         if req_vendor and str(req_vendor).strip() and str(req_vendor).lower() != 'all':
-            qs = qs.filter(
-                Q(vendor__external_vendor_id=req_vendor) |
-                Q(vendor__name__icontains=req_vendor) |
-                Q(vendor_id=req_vendor if str(req_vendor).isdigit() else None)
-            )
+            qs = qs.filter(external_vendor_id=str(req_vendor).strip())
 
-        qs = qs.select_related('user', 'vendor', 'reporting_manager', 'marked_by', 'approved_by').distinct().order_by('-created_at', '-id')
+        qs = qs.select_related('user', 'reporting_manager', 'marked_by', 'approved_by').distinct().order_by('-created_at', '-id')
 
         total = qs.count()
         start = page * size
@@ -1272,23 +1256,62 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
 
         allowed_vendor_ids = get_user_vendor_ids(user)
-        from apps.vendors.models import Vendor
         from apps.integrations.ilync_client import IlyncClient
+        from apps.common.vendor_scope import _hydrate_vendor, _vendor_proxy
 
         client = IlyncClient()
 
-        # Determine target vendors
-        v_qs = Vendor.objects.filter(is_active=True)
-        if allowed_vendor_ids is not None:
-            v_qs = v_qs.filter(id__in=allowed_vendor_ids)
+        # Resolve target vendors live from iLync (no Vendor table)
+        target_ids = []
         if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
-            if allowed_vendor_ids is None:
-                check_vendor_access(user, req_v)
-            v_qs = v_qs.filter(
-                Q(external_vendor_id=req_v) | Q(name__iexact=req_v) | Q(id=req_v if str(req_v).isdigit() else None)
-            )
+            check_vendor_access(user, req_v)
+            target_ids = [str(req_v).strip()]
+        elif allowed_vendor_ids is None:
+            try:
+                live_res = client.get_vendors(page=0, size=200)
+                data = (live_res or {}).get('data') if isinstance(live_res, dict) else live_res
+                raw = []
+                if isinstance(data, dict):
+                    raw = data.get('results') or data.get('content') or data.get('vendors') or []
+                elif isinstance(data, list):
+                    raw = data
+                for item in raw:
+                    if isinstance(item, dict) and item.get('id'):
+                        target_ids.append(str(item['id']).strip())
+            except Exception as e:
+                print(f"[AttendanceRoster] Error listing live vendors: {e}")
+        else:
+            target_ids = [str(v) for v in (allowed_vendor_ids or [])]
 
-        target_vendors = list(v_qs)
+        # Lightweight proxies only — full vendor payloads loaded concurrently below
+        target_vendors = [_vendor_proxy(vid) for vid in target_ids if vid]
+
+        # Prefetch all vendor details concurrently (biggest team-attendance latency win)
+        from apps.common.concurrency import map_concurrent
+        from apps.common.live_cache import cache_get_or_set
+
+        def _load_vendor_payload(v_obj):
+            ext_v_id = str(v_obj.external_vendor_id or v_obj.id).strip()
+
+            def _fetch():
+                try:
+                    live_res = IlyncClient().get_vendor_by_id(ext_v_id)
+                except Exception as e:
+                    print(f"[AttendanceRoster] Error fetching live iLync vendor data for {v_obj.name}: {e}")
+                    return {}
+                return (
+                    live_res.get('data')
+                    if (isinstance(live_res, dict) and live_res.get('success'))
+                    else (live_res if isinstance(live_res, dict) else {})
+                ) or {}
+
+            return cache_get_or_set(f"ilync:vendor_detail:{ext_v_id}", _fetch, ttl_seconds=30.0)
+
+        vendor_payloads = map_concurrent(
+            target_vendors,
+            _load_vendor_payload,
+            max_workers=min(16, max(1, len(target_vendors))),
+        ) if target_vendors else []
 
         result_list = []
         assigned_machines_list = []
@@ -1308,15 +1331,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         oem_by_chassis, ops_by_chassis = _index_open_machine_issues()
 
-        for v_obj in target_vendors:
+        for v_obj, v_payload in zip(target_vendors, vendor_payloads):
             ext_v_id = str(v_obj.external_vendor_id or v_obj.id).strip()
-            live_res = None
-            try:
-                live_res = client.get_vendor_by_id(ext_v_id)
-            except Exception as e:
-                print(f"[AttendanceRoster] Error fetching live iLync vendor data for {v_obj.name}: {e}")
-
-            v_payload = live_res.get('data') if (isinstance(live_res, dict) and live_res.get('success')) else (live_res if isinstance(live_res, dict) else {})
+            if not isinstance(v_payload, dict):
+                v_payload = {}
 
             v_circle = extract_geo(v_payload, ['circles', 'circle', 'circleName', 'state'])
             v_district = extract_geo(v_payload, ['districts', 'district', 'districtName', 'city'])
@@ -1369,7 +1387,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                         )
                     elif len(ext_matches) == 1:
                         cand = ext_matches[0]
-                        if cand.vendor_id and cand.vendor_id != v_obj.id:
+                        if getattr(cand, "external_vendor_id", None) and str(cand.external_vendor_id) != str(getattr(v_obj, "external_vendor_id", None) or v_obj.id):
                             # Rule 8: If external_user_id exists but belongs to another vendor:
                             # DO NOT silently reassign it. Treat it as a mapping conflict. Log the conflict. Do not use that Hero user for attendance.
                             mapping_status = 'CROSS_VENDOR_CONFLICT'
@@ -1386,7 +1404,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
                 # 2. Secondary fallback matches ONLY within this vendor, and ONLY if user has no external_user_id
                 if not matched_user and mapping_status != 'CROSS_VENDOR_CONFLICT':
-                    cand_qs = User.objects.filter(vendor=v_obj)
+                    cand_qs = User.objects.filter(external_vendor_id=str(getattr(v_obj, "external_vendor_id", None) or getattr(v_obj, "id", "")))
                     cand_user = None
                     if emp_id_str:
                         cand_user = cand_qs.filter(Q(employee_id=emp_id_str) | Q(username=emp_id_str)).first()
@@ -1417,14 +1435,14 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                             matched_user = cand_user
                             mapping_status = 'CORRECT'
 
-                print(
-                    f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={v_obj.id} | "
-                    f"iLync_userId={ext_u_id} | iLync_empId={emp_id_str} | "
-                    f"Hero_user_id={matched_user.id if matched_user else None} | "
-                    f"Hero_external_user_id={matched_user.external_user_id if matched_user else None} | "
-                    f"Hero_vendor_id={matched_user.vendor_id if matched_user else None} | "
-                    f"mapping_status={mapping_status}"
-                )
+                # Log conflicts only — MISSING/CORRECT spam slows the roster under concurrent load
+                if mapping_status in ('DUPLICATE_EXTERNAL_ID', 'CROSS_VENDOR_CONFLICT'):
+                    print(
+                        f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={v_obj.id} | "
+                        f"iLync_userId={ext_u_id} | iLync_empId={emp_id_str} | "
+                        f"Hero_user_id={matched_user.id if matched_user else None} | "
+                        f"mapping_status={mapping_status}"
+                    )
 
                 # Auto-enrich matched user external_user_id / employee_id / vendor without duplicate creation
                 if matched_user:
@@ -1435,9 +1453,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     if emp_id_str and not matched_user.employee_id:
                         matched_user.employee_id = emp_id_str
                         up_fields.append('employee_id')
-                    if not matched_user.vendor_id and v_obj:
-                        matched_user.vendor = v_obj
-                        up_fields.append('vendor')
+                    if not matched_user.external_vendor_id and v_obj:
+                        matched_user.external_vendor_id = str(getattr(v_obj, "external_vendor_id", None) or v_obj.id)
+                        ids = list(matched_user.assigned_vendor_ids or [])
+                        if matched_user.external_vendor_id not in ids:
+                            ids.append(matched_user.external_vendor_id)
+                        matched_user.assigned_vendor_ids = ids
+                        up_fields.extend(['external_vendor_id', 'assigned_vendor_ids'])
                     if up_fields:
                         try:
                             matched_user.save(update_fields=up_fields)
@@ -1684,17 +1706,16 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     target_user.last_name = parts[1]
                     updates.append('last_name')
                 updates.append('first_name')
-            vendor_id = item.get('vendor_id')
-            if vendor_id and not target_user.vendor_id:
+            vendor_id = item.get('vendor_id') or item.get('external_vendor_id')
+            if vendor_id and not target_user.external_vendor_id:
                 try:
-                    from apps.vendors.models import Vendor
-                    v_obj = Vendor.objects.filter(
-                        Q(id=vendor_id if str(vendor_id).isdigit() else None) |
-                        Q(external_vendor_id=str(vendor_id))
-                    ).first()
-                    if v_obj:
-                        target_user.vendor = v_obj
-                        updates.append('vendor')
+                    vid = str(vendor_id).strip()
+                    target_user.external_vendor_id = vid
+                    ids = list(target_user.assigned_vendor_ids or [])
+                    if vid not in ids:
+                        ids.append(vid)
+                    target_user.assigned_vendor_ids = ids
+                    updates.extend(['external_vendor_id', 'assigned_vendor_ids'])
                 except Exception:
                     pass
             if updates:
@@ -1746,7 +1767,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     user=target_user,
                     date=req_date,
                     attendance_type='TEAM',
-                    vendor=target_vendor,
+                    external_vendor_id=getattr(target_vendor, "external_vendor_id", None) or getattr(target_vendor, "id", None),
                     reporting_manager=reporting_mgr,
                     status=st_val,
                     notes=notes_val,
@@ -1777,8 +1798,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 if f_acc is not None:
                     record.check_in_accuracy = f_acc
                 record.updated_by = request.user
-                if target_vendor and not record.vendor:
-                    record.vendor = target_vendor
+                if target_vendor and not record.external_vendor_id:
+                    record.external_vendor_id = getattr(target_vendor, "external_vendor_id", None) or getattr(target_vendor, "id", None)
                 if reporting_mgr and not record.reporting_manager:
                     record.reporting_manager = reporting_mgr
                 record.save()
@@ -1893,11 +1914,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if date_to:
                 qs = qs.filter(date__lte=date_to)
             if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
-                qs = qs.filter(
-                    Q(vendor__external_vendor_id=req_v) |
-                    Q(vendor__name__iexact=req_v) |
-                    Q(vendor_id=req_v if str(req_v).isdigit() else None)
-                )
+                qs = qs.filter(external_vendor_id=str(req_v).strip())
             if status_filter and status_filter.upper() != 'ALL':
                 qs = qs.filter(status__iexact=status_filter)
             if role_filter and role_filter.upper() != 'ALL':
@@ -1915,8 +1932,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 )
 
             records = list(qs.select_related(
-                'user', 'vendor', 'reporting_manager',
-                'user__selected_circle', 'user__selected_district', 'user__selected_block',
+                'user', 'reporting_manager',
                 'user__reporting_manager'
             ).order_by('date', 'id'))
 

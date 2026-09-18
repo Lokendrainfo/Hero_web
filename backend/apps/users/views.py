@@ -14,7 +14,10 @@ class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        qs = User.objects.all().order_by('id')
+        # Internal users only in DB (no external_user_id)
+        qs = User.objects.filter(
+            Q(external_user_id__isnull=True) | Q(external_user_id='')
+        ).order_by('id')
         search = self.request.query_params.get('search', '').strip()
         role_filter = self.request.query_params.get('role', '').strip()
         req_vendor = self.request.query_params.get('vendor_id') or self.request.query_params.get('vendor')
@@ -25,22 +28,18 @@ class UserViewSet(viewsets.ModelViewSet):
             if req_vendor and str(req_vendor).strip() and req_vendor != 'all':
                 check_vendor_access(user, req_vendor)
                 qs = qs.filter(
-                    Q(vendor__external_vendor_id=req_vendor) |
-                    Q(vendor__name__icontains=req_vendor) |
-                    Q(vendor_id=req_vendor if str(req_vendor).isdigit() else None) |
-                    Q(hero_vendor_assignments__vendor__external_vendor_id=req_vendor) |
-                    Q(hero_vendor_assignments__vendor__name__icontains=req_vendor) |
-                    Q(hero_vendor_assignments__vendor_id=req_vendor if str(req_vendor).isdigit() else None)
+                    Q(external_vendor_id=req_vendor) |
+                    Q(assigned_vendor_ids__contains=[str(req_vendor)])
                 ).distinct()
             else:
                 allowed_ids = get_user_vendor_ids(user)
                 if allowed_ids is not None:
                     if not allowed_ids:
                         return User.objects.none()
-                    qs = qs.filter(
-                        Q(vendor_id__in=allowed_ids) |
-                        Q(hero_vendor_assignments__vendor_id__in=allowed_ids)
-                    ).distinct()
+                    q = Q(external_vendor_id__in=allowed_ids)
+                    for vid in allowed_ids:
+                        q |= Q(assigned_vendor_ids__contains=[str(vid)])
+                    qs = qs.filter(q).distinct()
 
         if search:
             qs = qs.filter(
@@ -48,10 +47,9 @@ class UserViewSet(viewsets.ModelViewSet):
                 Q(first_name__icontains=search) |
                 Q(last_name__icontains=search) |
                 Q(email__icontains=search) |
-                Q(external_user_id__icontains=search) |
                 Q(employee_id__icontains=search) |
                 Q(phone_number__icontains=search) |
-                Q(vendor__name__icontains=search)
+                Q(external_vendor_id__icontains=search)
             )
 
         if role_filter and role_filter.upper() != 'ALL':
@@ -60,9 +58,8 @@ class UserViewSet(viewsets.ModelViewSet):
                 qs = qs.filter(
                     Q(role__icontains='VENDOR') |
                     Q(roles__name__icontains='VENDOR') |
-                    Q(vendor__isnull=False) |
-                    Q(hero_vendor_assignments__isnull=False)
-                ).distinct()
+                    Q(external_vendor_id__isnull=False)
+                ).exclude(external_vendor_id='').distinct()
             elif rf in ['MANAGER', 'PROJECT_MANAGER']:
                 qs = qs.filter(
                     Q(role__icontains='MANAGER') |
@@ -87,67 +84,87 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @staticmethod
     def _split_by_origin(qs):
-        """Internal = locally created (no external_user_id). External = API/iLync fed."""
-        internal_qs = qs.filter(Q(external_user_id__isnull=True) | Q(external_user_id=''))
-        external_qs = qs.exclude(Q(external_user_id__isnull=True) | Q(external_user_id=''))
-        return internal_qs, external_qs
-
+        """Internal queryset only — external comes from live iLync."""
+        return qs, qs.none()
 
     def list(self, request, *args, **kwargs):
-        qs = self.get_queryset()
-        internal_qs, external_qs = self._split_by_origin(qs)
+        from apps.integrations.ilync_user_sync import (
+            fetch_and_sync_all_ilync_users,
+            map_ilync_user_to_api_dict,
+        )
+
+        origin = (request.query_params.get('origin') or request.query_params.get('source') or 'internal').strip().lower()
+        search = (request.query_params.get('search') or '').strip().lower()
+
+        internal_qs = self.get_queryset()
+        internal_count = internal_qs.count()
+
+        # Live external users (no DB)
+        live_external = []
+        try:
+            raw = fetch_and_sync_all_ilync_users(max_pages=10, size=50)
+            for item in raw:
+                mapped = map_ilync_user_to_api_dict(item)
+                if not mapped:
+                    continue
+                if search:
+                    blob = ' '.join([
+                        str(mapped.get(k) or '') for k in
+                        ('name', 'username', 'email', 'employee_id', 'external_user_id', 'phone_number', 'vendor_name')
+                    ]).lower()
+                    if search not in blob:
+                        continue
+                live_external.append(mapped)
+        except Exception:
+            live_external = []
+
         origin_counts = {
-            'INTERNAL': internal_qs.count(),
-            'EXTERNAL': external_qs.count(),
+            'INTERNAL': internal_count,
+            'EXTERNAL': len(live_external),
         }
-
-        origin = (request.query_params.get('origin') or request.query_params.get('source') or '').strip().lower()
-        if origin in ('external', 'api', 'ilync'):
-            qs = external_qs
-        elif origin in ('internal', 'local', 'hero'):
-            qs = internal_qs
-
-        total_count = qs.count()
 
         page_str = request.query_params.get('page', '0')
         size_str = request.query_params.get('size') or request.query_params.get('page_size') or '20'
-
-        if size_str.lower() == 'all':
-            serializer = self.get_serializer(qs, many=True)
-            return success_response(data={
-                "count": total_count,
-                "total": total_count,
-                "page": 0,
-                "size": total_count,
-                "total_pages": 1,
-                "origin_counts": origin_counts,
-                "results": serializer.data
-            })
-
         try:
             page_num = max(0, int(page_str))
         except ValueError:
             page_num = 0
-
         try:
-            size_num = max(1, min(1000, int(size_str)))
+            size_num = 10**9 if str(size_str).lower() == 'all' else max(1, min(1000, int(size_str)))
         except ValueError:
             size_num = 20
 
-        total_pages = (total_count + size_num - 1) // size_num if total_count > 0 else 1
+        if origin in ('external', 'api', 'ilync'):
+            total_count = len(live_external)
+            start_idx = page_num * size_num
+            end_idx = start_idx + size_num
+            page_rows = live_external[start_idx:end_idx]
+            total_pages = (total_count + size_num - 1) // size_num if total_count > 0 and size_num < 10**9 else 1
+            return success_response(data={
+                "count": total_count,
+                "total": total_count,
+                "page": page_num,
+                "size": size_num if size_num < 10**9 else total_count,
+                "total_pages": total_pages,
+                "origin_counts": origin_counts,
+                "results": page_rows,
+            })
+
+        # Default / internal
+        total_count = internal_count
+        total_pages = (total_count + size_num - 1) // size_num if total_count > 0 and size_num < 10**9 else 1
         start_idx = page_num * size_num
         end_idx = start_idx + size_num
-        page_qs = qs[start_idx:end_idx]
-
+        page_qs = internal_qs[start_idx:end_idx]
         serializer = self.get_serializer(page_qs, many=True)
         return success_response(data={
             "count": total_count,
             "total": total_count,
             "page": page_num,
-            "size": size_num,
+            "size": size_num if size_num < 10**9 else total_count,
             "total_pages": total_pages,
             "origin_counts": origin_counts,
-            "results": serializer.data
+            "results": serializer.data,
         })
 
     def create(self, request, *args, **kwargs):
@@ -229,76 +246,55 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get', 'post', 'delete'], url_path='vendors')
     def manage_vendors(self, request, pk=None):
-        from apps.vendors.models import Vendor, HeroVendorAssignment
         user = self.get_object()
 
         if request.method == 'GET':
             return success_response(
-                data=user.get_assigned_vendors_data(),
+                data=user.get_assigned_vendors_data() or [],
                 message=f"Fetched assigned vendors for {user.username}"
             )
 
         elif request.method == 'POST':
             vendor_ids = request.data.get('vendor_ids') or [request.data.get('vendor_id')]
-            vendor_ids = [v for v in vendor_ids if v]
-
+            vendor_ids = [str(v).strip() for v in vendor_ids if v]
             if not vendor_ids:
                 return error_response(message="vendor_id or vendor_ids required.")
 
-            assigned_by = request.user if request.user.is_authenticated else None
-            added = []
-            for v_identifier in vendor_ids:
-                v_obj = None
-                if str(v_identifier).isdigit():
-                    v_obj = Vendor.objects.filter(id=int(v_identifier)).first()
-                if not v_obj:
-                    v_obj = Vendor.objects.filter(external_vendor_id=str(v_identifier)).first()
-                if not v_obj:
-                    v_obj = Vendor.objects.filter(name=str(v_identifier)).first()
-
-                if v_obj:
-                    assignment, created = HeroVendorAssignment.objects.get_or_create(
-                        user=user,
-                        vendor=v_obj,
-                        defaults={'assigned_by': assigned_by, 'is_active': True}
-                    )
-                    if not created and not assignment.is_active:
-                        assignment.is_active = True
-                        assignment.save()
-                    added.append(v_obj.name)
-
+            assigned = list(user.assigned_vendor_ids or [])
+            for vid in vendor_ids:
+                if vid not in assigned:
+                    assigned.append(vid)
+            user.assigned_vendor_ids = assigned
+            if not user.external_vendor_id and assigned:
+                user.external_vendor_id = assigned[0]
+            user.save(update_fields=['assigned_vendor_ids', 'external_vendor_id'])
             return success_response(
                 data=UserSerializer(user).data,
-                message=f"Assigned vendors {added} to user {user.username}"
+                message=f"Assigned vendors {vendor_ids} to user {user.username}"
             )
 
         elif request.method == 'DELETE':
             v_identifier = request.data.get('vendor_id') or request.query_params.get('vendor_id')
             if not v_identifier:
                 return error_response(message="vendor_id is required.")
-
-            v_obj = None
-            if str(v_identifier).isdigit():
-                v_obj = Vendor.objects.filter(id=int(v_identifier)).first()
-            if not v_obj:
-                v_obj = Vendor.objects.filter(external_vendor_id=str(v_identifier)).first()
-            if not v_obj:
-                v_obj = Vendor.objects.filter(name=str(v_identifier)).first()
-
-            if v_obj:
-                HeroVendorAssignment.objects.filter(user=user, vendor=v_obj).delete()
-                return success_response(
-                    data=UserSerializer(user).data,
-                    message=f"Removed vendor {v_obj.name} from user {user.username}"
-                )
-            return error_response(message="Vendor not found.")
+            vid = str(v_identifier).strip()
+            assigned = [x for x in (user.assigned_vendor_ids or []) if str(x) != vid]
+            user.assigned_vendor_ids = assigned
+            if str(user.external_vendor_id or '') == vid:
+                user.external_vendor_id = assigned[0] if assigned else None
+            user.save(update_fields=['assigned_vendor_ids', 'external_vendor_id'])
+            return success_response(
+                data=UserSerializer(user).data,
+                message=f"Removed vendor {vid} from user {user.username}"
+            )
 
     @action(detail=False, methods=['post'], url_path='sync')
     def sync_ilync_users(self, request):
+        """Refresh live iLync user list only — does not write to HERO DB."""
         synced = fetch_and_sync_all_ilync_users(max_pages=20, size=50)
         return success_response(
-            data={"synced_count": len(synced)},
-            message=f"Successfully synchronized {len(synced)} users from external ILYNC portal."
+            data={"synced_count": len(synced), "persisted": False},
+            message=f"Fetched {len(synced)} live users from iLync (not stored in HERO DB)."
         )
 
     @action(detail=False, methods=['get'], url_path='my-team')
@@ -308,13 +304,14 @@ class UserViewSet(viewsets.ModelViewSet):
         allowed_vendor_ids = get_user_vendor_ids(user)
 
         if allowed_vendor_ids is None:
-            team_qs = User.objects.filter(is_active=True).order_by('id')
+            team_qs = User.objects.filter(is_active=True).filter(
+                Q(external_user_id__isnull=True) | Q(external_user_id='')
+            ).order_by('id')
         elif not allowed_vendor_ids:
             team_qs = User.objects.none()
         else:
             team_qs = User.objects.filter(
-                Q(vendor_id__in=allowed_vendor_ids) |
-                Q(hero_vendor_assignments__vendor_id__in=allowed_vendor_ids)
+                Q(external_vendor_id__in=allowed_vendor_ids)
             ).filter(is_active=True).distinct().order_by('id')
 
         results = []

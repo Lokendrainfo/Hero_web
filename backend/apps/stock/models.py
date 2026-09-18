@@ -2,6 +2,8 @@ from django.db import models
 from apps.vendors.models import Vendor
 
 class StockItem(models.Model):
+    class Meta:
+        managed = False
     vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE, related_name='inventory')
     part_number = models.CharField(max_length=100)
     name = models.CharField(max_length=255)

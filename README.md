@@ -9,13 +9,15 @@
 ## frontend/vite-config.js
 ## docker-compose.yml
 
-1. **Backend**:
+1. **Backend** (prefer concurrent server — Flutter fires many APIs at once):
    ```bash
    cd backend
    python -m pip install -r requirements.txt
+   export db=local
    python manage.py migrate
-   python -m database.seed.initial_data
-   python manage.py runserver 8000
+   chmod +x scripts/run_concurrent.sh
+   ./scripts/run_concurrent.sh
+   # fallback single-process: python manage.py runserver 8000
    ```
 
 2. **Frontend**:

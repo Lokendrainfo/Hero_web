@@ -4,6 +4,8 @@ from apps.machines.models import Machine
 from apps.authentication.models import User
 
 class Task(models.Model):
+    class Meta:
+        managed = False
     vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE, related_name='tasks')
     machine = models.ForeignKey(Machine, on_delete=models.SET_NULL, null=True, blank=True)
     assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)

@@ -2,6 +2,8 @@ from django.db import models
 from apps.machines.models import Machine
 
 class MaintenanceSchedule(models.Model):
+    class Meta:
+        managed = False
     machine = models.ForeignKey(Machine, on_delete=models.CASCADE, related_name='maintenance_logs')
     title = models.CharField(max_length=255)
     maintenance_type = models.CharField(max_length=100, default='ROUTINE')

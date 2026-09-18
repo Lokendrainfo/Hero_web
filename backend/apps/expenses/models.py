@@ -1,8 +1,5 @@
 from django.db import models
 from decimal import Decimal
-from apps.vendors.models import Vendor
-from apps.machines.models import Machine
-from apps.tasks.models import Task
 from apps.authentication.models import User
 
 PAYMENT_TYPE_CHOICES = (
@@ -10,19 +7,19 @@ PAYMENT_TYPE_CHOICES = (
     ('ACTUAL_WITH_PROOF', 'Actuals / As per Proof'),
 )
 
+
 class ExpenseCategory(models.Model):
     name = models.CharField(max_length=150, unique=True)
     code = models.CharField(max_length=100, unique=True)
     order = models.IntegerField(default=0)
-    
-    # Expense Master Enhancement Fields
+
     payment_type = models.CharField(max_length=50, choices=PAYMENT_TYPE_CHOICES, default='FIXED_MONTHLY')
     uom = models.CharField(max_length=50, null=True, blank=True)
     default_quantity = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     default_rate = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     monthly_cost = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     requires_proof = models.BooleanField(default=False)
-    
+
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -44,6 +41,7 @@ class ExpenseCategory(models.Model):
     def __str__(self):
         return f"{self.name} ({self.get_payment_type_display()})"
 
+
 class ExpenseSubCategory(models.Model):
     category = models.ForeignKey(ExpenseCategory, on_delete=models.CASCADE, related_name='subcategories')
     name = models.CharField(max_length=150)
@@ -59,33 +57,38 @@ class ExpenseSubCategory(models.Model):
     def __str__(self):
         return f"{self.category.name} -> {self.name}"
 
+
 class Expense(models.Model):
+    """HERO-owned expense. Vendor/machine/task are external string IDs only."""
     expense_id = models.CharField(max_length=50, unique=True, null=True, blank=True)
 
-    # Scoping / Relations
-    vendor = models.ForeignKey(Vendor, on_delete=models.CASCADE, related_name='expenses', null=True, blank=True)
-    machine = models.ForeignKey(Machine, on_delete=models.SET_NULL, null=True, blank=True, related_name='expenses')
-    task = models.ForeignKey(Task, on_delete=models.SET_NULL, null=True, blank=True, related_name='expenses')
-    operator = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='operator_expenses')
+    external_vendor_id = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    machine_chassis_no = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    external_task_id = models.CharField(max_length=100, null=True, blank=True, db_index=True)
+    operator = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='operator_expenses'
+    )
 
-    # Categories
     category = models.CharField(max_length=100, default='MISCELLANEOUS')
     subcategory = models.CharField(max_length=100, blank=True, null=True)
-    category_ref = models.ForeignKey(ExpenseCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='expenses')
-    subcategory_ref = models.ForeignKey(ExpenseSubCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='expenses')
+    category_ref = models.ForeignKey(
+        ExpenseCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='expenses'
+    )
+    subcategory_ref = models.ForeignKey(
+        ExpenseSubCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='expenses'
+    )
 
-    # Master Enhancement References
-    payment_type = models.CharField(max_length=50, choices=PAYMENT_TYPE_CHOICES, default='FIXED_MONTHLY', null=True, blank=True)
+    payment_type = models.CharField(
+        max_length=50, choices=PAYMENT_TYPE_CHOICES, default='FIXED_MONTHLY', null=True, blank=True
+    )
     requires_proof = models.BooleanField(default=False)
 
-    # Details
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     project = models.CharField(max_length=255, blank=True, null=True)
     site = models.CharField(max_length=255, blank=True, null=True)
     expense_date = models.DateField()
 
-    # Amounts & Taxes
     quantity = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('1.00'))
     unit = models.CharField(max_length=50, default='NOS', blank=True, null=True)
     rate = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
@@ -98,29 +101,33 @@ class Expense(models.Model):
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
 
-    # Supplier & Invoicing
     supplier_name = models.CharField(max_length=255, blank=True, null=True)
     invoice_number = models.CharField(max_length=100, blank=True, null=True)
     invoice_date = models.DateField(null=True, blank=True)
 
-    # Payment
     payment_mode = models.CharField(max_length=50, default='CASH', blank=True, null=True)
     payment_reference = models.CharField(max_length=100, blank=True, null=True)
     payment_date = models.DateField(null=True, blank=True)
 
-    # Approval Workflow
-    status = models.CharField(max_length=50, default='DRAFT') # DRAFT, SUBMITTED, APPROVED, REJECTED, PAID
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_expenses')
+    status = models.CharField(max_length=50, default='DRAFT')
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_expenses'
+    )
     submitted_at = models.DateTimeField(null=True, blank=True)
-    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_expenses')
+    approved_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_expenses'
+    )
     approved_at = models.DateTimeField(null=True, blank=True)
-    rejected_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='rejected_expenses')
+    rejected_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='rejected_expenses'
+    )
     rejected_at = models.DateTimeField(null=True, blank=True)
     rejection_reason = models.TextField(blank=True, null=True)
-    paid_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='paid_expenses')
+    paid_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='paid_expenses'
+    )
     paid_at = models.DateTimeField(null=True, blank=True)
 
-    # Attachments & Metadata
     remarks = models.TextField(blank=True, null=True)
     receipt_url = models.URLField(blank=True, null=True)
     attachment = models.FileField(upload_to='expenses/attachments/', blank=True, null=True)
@@ -151,7 +158,7 @@ class Expense(models.Model):
             gst_amt = taxable * (gst_pct / Decimal('100.0'))
         else:
             gst_amt = Decimal('0.00')
-        
+
         tot = taxable + gst_amt
 
         self.basic_amount = basic.quantize(Decimal('0.01'))

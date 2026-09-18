@@ -25,6 +25,28 @@ def build_secure_media_url(request, photo_field):
     except Exception:
         return str(photo_field)
 
+
+def _hydrate_vendor_dict(ext_id):
+    if not ext_id:
+        return None
+    try:
+        from apps.common.vendor_scope import _hydrate_vendor
+        proxy = _hydrate_vendor(ext_id)
+        return {
+            "id": proxy.external_vendor_id,
+            "external_vendor_id": proxy.external_vendor_id,
+            "name": proxy.name,
+            "code": getattr(proxy, 'code', '') or '',
+        }
+    except Exception:
+        return {
+            "id": str(ext_id),
+            "external_vendor_id": str(ext_id),
+            "name": str(ext_id),
+            "code": "",
+        }
+
+
 class AttendanceRecordSerializer(serializers.ModelSerializer):
     user_id = serializers.SerializerMethodField()
     user_name = serializers.SerializerMethodField()
@@ -34,6 +56,7 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
     reporting_manager_id = serializers.SerializerMethodField()
     reporting_manager_name = serializers.SerializerMethodField()
     
+    vendor = serializers.SerializerMethodField()
     vendor_id = serializers.SerializerMethodField()
     vendor_name = serializers.SerializerMethodField()
     
@@ -56,7 +79,7 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
             'id', 'user', 'user_id', 'user_name', 'employee_id', 'phone_number', 'role',
             'reporting_manager_id', 'reporting_manager_name',
             'attendance_type', 'machine_id', 'machine_chassis_no', 'machine_assignment_id',
-            'vendor', 'vendor_id', 'vendor_name', 'site_id',
+            'vendor', 'vendor_id', 'vendor_name', 'external_vendor_id', 'site_id',
             'marked_for_user', 'marked_for_user_id', 'marked_for_user_name',
             'marked_by', 'marked_by_user_id', 'marked_by_user_name',
             'status', 'check_in', 'check_out', 'check_in_time', 'check_out_time',
@@ -105,19 +128,22 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
             return mgr.get_full_name() or mgr.username
         return None
 
-    def get_vendor_id(self, obj):
-        if obj.vendor:
-            return obj.vendor.id
-        elif obj.user and obj.user.vendor:
-            return obj.user.vendor.id
+    def _resolve_vendor_id(self, obj):
+        if obj.external_vendor_id:
+            return str(obj.external_vendor_id)
+        if obj.user and getattr(obj.user, 'external_vendor_id', None):
+            return str(obj.user.external_vendor_id)
         return None
 
+    def get_vendor(self, obj):
+        return _hydrate_vendor_dict(self._resolve_vendor_id(obj))
+
+    def get_vendor_id(self, obj):
+        return self._resolve_vendor_id(obj)
+
     def get_vendor_name(self, obj):
-        if obj.vendor:
-            return obj.vendor.name
-        elif obj.user and obj.user.vendor:
-            return obj.user.vendor.name
-        return ''
+        v = self.get_vendor(obj)
+        return v.get('name') if v else ''
 
     def get_marked_for_user_id(self, obj):
         return obj.marked_for_user.id if obj.marked_for_user else None
