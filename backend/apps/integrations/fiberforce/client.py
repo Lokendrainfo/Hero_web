@@ -1,5 +1,10 @@
 import os
+import threading
+
 import requests
+
+_thread_local = threading.local()
+
 
 class FiberForceClient:
     def __init__(self):
@@ -8,6 +13,13 @@ class FiberForceClient:
             'FIBERFORCE_KEY',
             'viq_vIkdGfQn-YGg3934R6AsNOJCGJGxpyrIt4hLATcQCek',
         )
+
+    def _session(self):
+        session = getattr(_thread_local, 'ff_session', None)
+        if session is None:
+            session = requests.Session()
+            _thread_local.ff_session = session
+        return session
 
     def _headers(self, json_body=False):
         headers = {
@@ -21,7 +33,7 @@ class FiberForceClient:
     def _request(self, method, path, *, json=None, params=None, timeout=25):
         url = f"{self.base_url}{path}"
         try:
-            response = requests.request(
+            response = self._session().request(
                 method,
                 url,
                 headers=self._headers(json_body=json is not None),
@@ -105,6 +117,22 @@ class FiberForceClient:
             "status": status or "open",
             "limit": limit,
         })
+
+    def get_fleet_attendance_today(self, machine_chassis_nos=None, attendance_key=None):
+        """
+        Today-only punch-in board (Asia/Kolkata).
+        POST /api/ext/v1/fleet/attendance/today/
+        Send commissioned chassis as a JSON array. Actual start = first RPM > 500 today.
+        """
+        body = {}
+        if machine_chassis_nos:
+            if isinstance(machine_chassis_nos, str):
+                body["machine_chassis_no"] = machine_chassis_nos
+            else:
+                body["machine_chassis_no"] = [str(c).strip() for c in machine_chassis_nos if str(c).strip()]
+        if attendance_key:
+            body["attendance_key"] = str(attendance_key).strip()
+        return self._request("POST", "/api/ext/v1/fleet/attendance/today/", json=body, timeout=8)
 
     def list_refuels(
         self,

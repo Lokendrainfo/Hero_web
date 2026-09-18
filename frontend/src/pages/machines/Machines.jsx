@@ -74,11 +74,26 @@ export const Machines = () => {
   };
 
   useEffect(() => {
+    // Load once when the Machines page / session opens
     fetchMachines(false, false);
+
+    // Silent refresh every 1 minute while the page stays open
     const interval = setInterval(() => {
-      fetchMachines(false, true); // Silent auto-refresh every 10s
-    }, 10000);
-    return () => clearInterval(interval);
+      fetchMachines(false, true);
+    }, 60_000);
+
+    // Refresh again when the tab/session becomes active
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        fetchMachines(false, true);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, []);
 
   const isVendorAssigned = (m) => Boolean(m?.is_vendor_assigned || m?.is_commissioned_tab);

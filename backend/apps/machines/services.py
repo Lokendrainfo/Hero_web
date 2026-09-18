@@ -8,6 +8,25 @@ from apps.common.vendor_scope import get_user_vendor_ids, normalize_machine_iden
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_int(val, default=0):
+    try:
+        if val is None or val == '':
+            return default
+        return int(float(val))
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(val, default=0.0):
+    try:
+        if val is None or val == '':
+            return default
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
 def sync_fiberforce_machines():
     client = FiberForceClient()
     response = client.get_machines()
@@ -187,19 +206,22 @@ def collect_ilync_assigned_chassis(vendors):
     if not vendors:
         return assigned
     try:
+        from concurrent.futures import ThreadPoolExecutor
         from apps.integrations.ilync_client import IlyncClient
-        client = IlyncClient()
     except Exception:
         return assigned
 
-    for v_obj in vendors:
+    vendors = list(vendors)
+
+    def _one(v_obj):
+        codes = set()
         ext_v_id = getattr(v_obj, 'external_vendor_id', None) or getattr(v_obj, 'id', None)
         if not ext_v_id:
-            continue
+            return codes
         try:
-            live_res = client.get_vendor_by_id(ext_v_id)
+            live_res = IlyncClient(timeout=(2.0, 5.0)).get_vendor_by_id(ext_v_id)
         except Exception:
-            continue
+            return codes
         payload = (
             live_res.get('data')
             if (isinstance(live_res, dict) and live_res.get('success'))
@@ -207,7 +229,7 @@ def collect_ilync_assigned_chassis(vendors):
         )
         macs = (payload or {}).get('machines') or (payload or {}).get('assigned_machines') or []
         if not isinstance(macs, list):
-            continue
+            return codes
         for item in macs:
             if isinstance(item, dict):
                 code = str(
@@ -222,9 +244,15 @@ def collect_ilync_assigned_chassis(vendors):
                     or ''
                 ).strip()
                 if code:
-                    assigned.add(code)
+                    codes.add(code)
             elif isinstance(item, str) and item.strip():
-                assigned.add(item.strip())
+                codes.add(item.strip())
+        return codes
+
+    workers = min(8, max(1, len(vendors)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for codes in pool.map(_one, vendors):
+            assigned.update(codes)
     return assigned
 
 
@@ -262,6 +290,37 @@ def fetch_live_fiberforce_machines(user, params=None):
     Fetches machines directly from FiberForce API without persisting into Hero DB.
     Enriches with live telemetry and filters according to user vendor scope.
     """
+    try:
+        return _fetch_live_fiberforce_machines_impl(user, params)
+    except Exception as exc:
+        logger.exception("[LIVE_MACHINES] unhandled error: %s", exc)
+        print(f"[LIVE_MACHINES] fiberforce_request=FAILED error={exc} response_status=503")
+        return {
+            "success": False,
+            "status_code": 503,
+            "error": "Unable to load live machine data",
+            "message": str(exc) or "Unable to load live machine data from FiberForce API.",
+            "empty_state_code": "FIBERFORCE_UNAVAILABLE",
+            "empty_state_message": "Unable to load live machine data from FiberForce.",
+            "count": 0,
+            "results": [],
+            "status_counts": {
+                "ALL": 0,
+                "COMMISSIONED": 0,
+                "LIVE": 0,
+                "RUNNING": 0,
+                "IDLE": 0,
+                "MAINTENANCE": 0,
+                "BREAKDOWN": 0,
+                "OFFLINE": 0,
+            },
+            "vendor_assigned_count": 0,
+            "fiberforce_matched_count": 0,
+            "assigned_chassis": [],
+        }
+
+
+def _fetch_live_fiberforce_machines_impl(user, params=None):
     if params is None:
         params = {}
 
@@ -305,6 +364,8 @@ def fetch_live_fiberforce_machines(user, params=None):
         }
 
     raw_machines = ff_res.get('data', [])
+    if not isinstance(raw_machines, list):
+        raw_machines = []
     api_machine_count = len(raw_machines)
 
     # 1. Resolve active vendors in scope
@@ -335,15 +396,23 @@ def fetch_live_fiberforce_machines(user, params=None):
             target_machines = [m for m in raw_machines if str(m.get('machine_chassis_no') or '').strip() in assigned_chassis]
 
     # Map existing DB machine IDs (read-only) for stable routing if available
-    existing_id_map = dict(Machine.objects.values_list('machine_chassis_no', 'id'))
+    try:
+        existing_id_map = dict(Machine.objects.values_list('machine_chassis_no', 'id'))
+    except Exception as exc:
+        logger.warning("[LIVE_MACHINES] DB id map unavailable: %s", exc)
+        existing_id_map = {}
 
     # Fetch live telemetry concurrently
     def fetch_telemetry_for_machine(m):
         chassis = str(m.get('machine_chassis_no') or '').strip()
         if not chassis:
             return chassis, {}
-        t_res = client.get_live_telemetry(chassis, timeout=3.5)
-        return chassis, t_res.get('data', {}) if isinstance(t_res, dict) and t_res.get('success') else {}
+        try:
+            t_res = client.get_live_telemetry(chassis, timeout=3.5)
+            data = t_res.get('data', {}) if isinstance(t_res, dict) and t_res.get('success') else {}
+            return chassis, data if isinstance(data, dict) else {}
+        except Exception:
+            return chassis, {}
 
     telemetry_map = {}
     if target_machines:
@@ -355,8 +424,10 @@ def fetch_live_fiberforce_machines(user, params=None):
     # Decorate and build full live machine dicts
     live_items = []
     for idx, m in enumerate(target_machines):
+        if not isinstance(m, dict):
+            continue
         chassis = str(m.get('machine_chassis_no') or '').strip()
-        tele = telemetry_map.get(chassis, {})
+        tele = telemetry_map.get(chassis, {}) or {}
         model_code = m.get('model_code') or tele.get('model_code') or 'A600'
         model_name = m.get('model_name') or tele.get('model_name') or f"APOLLO {model_code} V2"
         engine_no = m.get('engine_no') or ''
@@ -369,7 +440,7 @@ def fetch_live_fiberforce_machines(user, params=None):
         site_id = tele.get('site_id') or tele.get('geo_block_id') or m.get('site_id')
 
         is_online = bool(tele.get('is_online')) if 'is_online' in tele else True
-        rpm_val = int(tele.get('rpm') or 0)
+        rpm_val = _safe_int(tele.get('rpm'), 0)
         state_val = str(tele.get('state') or '').upper()
         engine_on = bool(tele.get('engine_on')) or (rpm_val > 0) or (state_val in ['WORKING_RPM_LIMIT', 'DRILLING', 'MOVING', 'RUNNING'])
         state_label = tele.get('state_label') or tele.get('state') or ('working / drilling' if engine_on else 'stopped')
@@ -381,19 +452,23 @@ def fetch_live_fiberforce_machines(user, params=None):
         else:
             status = 'IDLE'
 
-        fuel_pct = float(tele.get('fuel_pct') if tele.get('fuel_pct') is not None else 58.0)
-        fuel_cap = float(tele.get('tank_capacity_l') or (160.0 if model_code == 'A800' else 100.0))
-        fuel_litres = float(tele.get('fuel_litres') if tele.get('fuel_litres') is not None else round((fuel_pct / 100.0) * fuel_cap, 1))
+        fuel_pct = _safe_float(tele.get('fuel_pct'), 58.0) if tele.get('fuel_pct') is not None else 58.0
+        fuel_cap = _safe_float(tele.get('tank_capacity_l'), 160.0 if model_code == 'A800' else 100.0)
+        fuel_litres = (
+            _safe_float(tele.get('fuel_litres'), round((fuel_pct / 100.0) * fuel_cap, 1))
+            if tele.get('fuel_litres') is not None
+            else round((fuel_pct / 100.0) * fuel_cap, 1)
+        )
 
-        hours_today = float(tele.get('engine_hours_today') or 0.0)
-        hours_total = float(tele.get('engine_hours_total') or 0.0)
+        hours_today = _safe_float(tele.get('engine_hours_today'), 0.0)
+        hours_total = _safe_float(tele.get('engine_hours_total'), 0.0)
 
         hrs_part = int(hours_today)
         mins_part = int(round((hours_today - hrs_part) * 60))
         runtime_str = f"{hrs_part:02d}h {mins_part:02d}m" if hours_today > 0 else ("03h 30m" if is_online else "00h 00m")
 
-        latitude = float(tele.get('latitude') or 0.0)
-        longitude = float(tele.get('longitude') or 0.0)
+        latitude = _safe_float(tele.get('latitude'), 0.0)
+        longitude = _safe_float(tele.get('longitude'), 0.0)
 
         operator_raw = m.get('operator') or tele.get('operator') or {}
         operator_name = operator_raw.get('name') if isinstance(operator_raw, dict) else (str(operator_raw) if operator_raw else "Ravi Kumar")
@@ -431,13 +506,13 @@ def fetch_live_fiberforce_machines(user, params=None):
             "runtime_str": runtime_str,
             "engine_hours": hours_total,
             "engine_hours_today": hours_today,
-            "today_consumption": float(tele.get('fuel_consumed_today') or 0.0),
-            "today_refueled": float(tele.get('fuel_refueled_today') or 0.0),
+            "today_consumption": _safe_float(tele.get('fuel_consumed_today'), 0.0),
+            "today_refueled": _safe_float(tele.get('fuel_refueled_today'), 0.0),
             "rpm": rpm_val,
-            "coolant_temp": float(tele.get('coolant_temp') or 0.0),
-            "oil_pressure": float(tele.get('oil_pressure') or 0.0),
-            "supply_voltage": float(tele.get('supply_voltage') or 0.0),
-            "internal_battery_v": float(tele.get('internal_battery_v') or 0.0),
+            "coolant_temp": _safe_float(tele.get('coolant_temp'), 0.0),
+            "oil_pressure": _safe_float(tele.get('oil_pressure'), 0.0),
+            "supply_voltage": _safe_float(tele.get('supply_voltage'), 0.0),
+            "internal_battery_v": _safe_float(tele.get('internal_battery_v'), 0.0),
             "operator": operator_raw,
             "operator_name": operator_name,
             "filled_by": operator_name,

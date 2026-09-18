@@ -63,5 +63,21 @@ class DashboardTaskStatisticsTestCase(unittest.TestCase):
         self.assertEqual(primary_tasks[1]["id"], "s2")
 
 
+class DashboardMachineKpiHelpersTestCase(unittest.TestCase):
+    def test_row_started_shift_counts_present_and_late(self):
+        import os
+        import django
+        os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.testing')
+        django.setup()
+        from apps.dashboard.views import _row_started_shift, _unique_chassis
+
+        self.assertTrue(_row_started_shift({'attendance_key': 'present'}))
+        self.assertTrue(_row_started_shift({'attendance_key': 'late_punch_in'}))
+        self.assertTrue(_row_started_shift({'actual_work_start_time': '08:12'}))
+        self.assertFalse(_row_started_shift({'attendance_key': 'absent'}))
+        self.assertFalse(_row_started_shift({'attendance_key': 'no_work_window'}))
+        self.assertEqual(_unique_chassis(['A', 'A', '', None, 'B']), ['A', 'B'])
+
+
 if __name__ == '__main__':
     unittest.main()

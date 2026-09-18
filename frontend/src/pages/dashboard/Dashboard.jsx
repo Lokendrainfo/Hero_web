@@ -1,20 +1,24 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { dashboardService } from '../../services/dashboardService';
 import { attendanceService } from '../../services/attendanceService';
-import { taskService } from '../../services/taskService';
+import { trackingService } from '../../services/trackingService';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../context/ToastContext';
 import { getDefaultRoute } from '../../utils/permissions';
 import { PageHeader } from '../../components/common/PageHeader';
 import { DateField } from '../../components/common/DateField';
+import { LeafletMap } from '../../components/common/LeafletMap';
 import { getTodayDateString } from '../../utils/dateUtils';
-import { LucideMapPin, LucideCheckSquare, LucideShieldAlert } from 'lucide-react';
+import { LucideMapPin, LucideShieldAlert, LucideCheckCircle2, LucideWrench } from 'lucide-react';
+
+const isCommissioned = (m) => Boolean(m?.is_vendor_assigned || m?.is_commissioned_tab);
 
 export const Dashboard = () => {
   const [data, setData] = useState(null);
-  const [vendorTasks, setVendorTasks] = useState([]);
   const [shiftState, setShiftState] = useState({ status: 'Not Checked In', check_in: null });
+  const [mapMachines, setMapMachines] = useState([]);
+  const [mapLoading, setMapLoading] = useState(true);
   const { showToast } = useToast();
   const { user, permissions, isAdmin, selectedVendorId, hasPermission } = useAuth();
   const navigate = useNavigate();
@@ -29,67 +33,39 @@ export const Dashboard = () => {
   const [selectedDate, setSelectedDate] = useState(() => getTodayDateString());
 
   useEffect(() => {
-    setData(null);
     const params = { date: selectedDate };
     if (selectedVendorId && selectedVendorId !== 'all') params.vendor_id = selectedVendorId;
 
     let cancelled = false;
-    Promise.all([
-      dashboardService.getSummary(params),
-      attendanceService.getTeamAttendance(params).catch(() => null),
-    ]).then(([summaryRes, teamRes]) => {
-      if (cancelled) return;
-      const summary = summaryRes?.data || summaryRes || {};
-      const teamPayload = teamRes?.data?.data || teamRes?.data || teamRes || null;
-      const teamSummary = teamPayload?.summary;
-      const scopeMatrix = teamPayload?.scope_matrix;
-      if (teamSummary && typeof teamSummary === 'object') {
-        summary.vendor_team_attendance = {
-          ...(summary.vendor_team_attendance || {}),
-          total_team: teamSummary.total ?? summary.vendor_team_attendance?.total_team ?? 0,
-          present: teamSummary.present ?? 0,
-          absent: teamSummary.absent ?? 0,
-          half_day: teamSummary.half_day ?? 0,
-          leave: teamSummary.leave ?? 0,
-          week_off: teamSummary.week_off ?? 0,
-          not_marked: teamSummary.not_marked ?? 0,
-          attendance_text: `${teamSummary.present ?? 0} / ${teamSummary.total ?? 0} Present`,
-          scope_matrix: Array.isArray(scopeMatrix)
-            ? scopeMatrix
-            : (summary.vendor_team_attendance?.scope_matrix || []),
-        };
-        if (summary.quick_stats) {
-          summary.quick_stats = {
-            ...summary.quick_stats,
-            team_present: teamSummary.present ?? 0,
-            team_total: teamSummary.total ?? 0,
-          };
-        }
-      }
-      setData(summary);
-    }).catch(console.error);
+    dashboardService.getSummary(params)
+      .then((summaryRes) => {
+        if (cancelled) return;
+        setData(summaryRes?.data || summaryRes || {});
+      })
+      .catch(console.error);
 
     return () => { cancelled = true; };
   }, [selectedDate, selectedVendorId]);
 
   useEffect(() => {
-    setVendorTasks([]);
-    const params = { page: 0, size: 10, taskType: 'FIBER_TRENCHING_DUCTING_TASK' };
-    const userVendorId = user?.vendor?.external_vendor_id || user?.vendor_id || user?.vendor?.id || null;
-    const targetVendorId = (selectedVendorId && selectedVendorId !== 'all')
-      ? selectedVendorId
-      : (!isAdmin && userVendorId ? userVendorId : null);
-    if (targetVendorId && targetVendorId !== 'all') params.vendor_id = targetVendorId;
-
-    taskService.getMyTasks(params)
-      .then(res => {
-        const raw = res.data || res;
-        const norm = raw.results ? raw : (raw.data || {});
-        const list = norm.results || norm.content || (Array.isArray(norm) ? norm : []);
-        setVendorTasks(list);
+    let cancelled = false;
+    setMapLoading(true);
+    trackingService.getLiveLocations({ commissioned_only: 1, light: 1 })
+      .then((res) => {
+        if (cancelled) return;
+        const raw = res.data?.data !== undefined ? res.data.data : (res.data !== undefined ? res.data : res);
+        let list = [];
+        if (Array.isArray(raw)) list = raw;
+        else if (raw && Array.isArray(raw.results)) list = raw.results;
+        else if (raw && Array.isArray(raw.data)) list = raw.data;
+        setMapMachines(list);
       })
-      .catch(console.error);
-  }, [selectedVendorId, user, isAdmin]);
+      .catch(console.error)
+      .finally(() => {
+        if (!cancelled) setMapLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [selectedVendorId]);
 
   const handleCheckIn = async (e) => {
     e.stopPropagation();
@@ -118,12 +94,19 @@ export const Dashboard = () => {
   const scopeMatrix = Array.isArray(team.scope_matrix) && team.scope_matrix.length
     ? team.scope_matrix
     : [
-        { scope: 'HERO', total: 0, present: 0, not_marked: 0 },
+        // { scope: 'HERO', total: 0, present: 0, not_marked: 0 },
         { scope: 'VENDOR', total: 0, present: 0, not_marked: 0 },
         { scope: 'OPERATOR', total: 0, present: 0, not_marked: 0 },
         { scope: 'TRACKER', total: 0, present: 0, not_marked: 0 },
         { scope: 'HELPER', total: 0, present: 0, not_marked: 0 },
       ];
+
+  const fleetMapMachines = useMemo(() => (
+    mapMachines
+      .filter(isCommissioned)
+      .filter((m) => m.latitude != null && m.longitude != null)
+  ), [mapMachines]);
+  const mapRunning = fleetMapMachines.filter((m) => (m.status || '').toUpperCase() === 'RUNNING').length;
 
   return (
     <div className="screen-container">
@@ -144,24 +127,41 @@ export const Dashboard = () => {
         }
       />
 
-      <div className="kpi-strip">
-        <div className="kpi-cell" onClick={() => navigate('/machines')}>
-          <div className="kpi-label">Machines running</div>
-          <div className="kpi-value">{data?.quick_stats?.running_machines ?? 0}<span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 500 }}> / {data?.quick_stats?.total_machines ?? 0}</span></div>
+      <section className="panel fleet-kpi-card">
+        <div className="panel-header">
+          <div>
+            <h2 className="panel-title">Commissioned fleet</h2>
+            <p className="page-subtitle">One view of today’s machine counts</p>
+          </div>
         </div>
-        <div className="kpi-cell" onClick={() => navigate('/tasks')}>
-          <div className="kpi-label">Tasks pending</div>
-          <div className="kpi-value">{data?.quick_stats?.tasks_pending ?? 0}</div>
+        <div className="fleet-kpi-grid">
+          <button type="button" className="fleet-kpi-item" onClick={() => navigate('/machines')}>
+            <span className="kpi-label">Total machines</span>
+            <span className="kpi-value">{data?.quick_stats?.commissioned_machines ?? data?.quick_stats?.total_machines ?? 0}</span>
+          </button>
+          <button type="button" className="fleet-kpi-item" onClick={() => navigate('/attendance')}>
+            <span className="kpi-label">Machine actual shift</span>
+            <span className="kpi-value">
+              {data?.quick_stats?.machine_actual_shift ?? 0}
+              <small> / {data?.quick_stats?.machine_actual_shift_total ?? data?.quick_stats?.commissioned_machines ?? 0}</small>
+            </span>
+          </button>
+          <button type="button" className="fleet-kpi-item" onClick={() => navigate('/attendance')}>
+            <span className="kpi-label">Machine attendance</span>
+            <span className="kpi-value">
+              {data?.quick_stats?.machine_attendance_present ?? 0}
+              <small> / {data?.quick_stats?.machine_attendance_total ?? data?.quick_stats?.commissioned_machines ?? 0}</small>
+            </span>
+          </button>
+          <button type="button" className="fleet-kpi-item" onClick={() => navigate('/machines')}>
+            <span className="kpi-label">Under working RPM</span>
+            <span className="kpi-value">
+              {data?.quick_stats?.running_machines ?? 0}
+              <small> / {data?.quick_stats?.commissioned_machines ?? data?.quick_stats?.total_machines ?? 0}</small>
+            </span>
+          </button>
         </div>
-        <div className="kpi-cell" onClick={() => navigate('/alerts')}>
-          <div className="kpi-label">Open alerts</div>
-          <div className="kpi-value">{data?.quick_stats?.alerts_count ?? 0}</div>
-        </div>
-        <div className="kpi-cell" onClick={() => navigate('/attendance')}>
-          <div className="kpi-label">Team present</div>
-          <div className="kpi-value">{team.present ?? 0}<span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 500 }}> / {team.total_team ?? 0}</span></div>
-        </div>
-      </div>
+      </section>
 
       <div className="split-2">
         <section className="panel">
@@ -197,7 +197,7 @@ export const Dashboard = () => {
                 </div>
 
                 <div className="metric-list att-scope-list">
-                  {scopeMatrix.map((row) => {
+                  {scopeMatrix.filter((row) => row.scope !== 'HERO').map((row) => {
                     const total = Number(row.total) || 0;
                     const present = Number(row.present) || 0;
                     const notMarked = Number(row.not_marked) || 0;
@@ -223,16 +223,110 @@ export const Dashboard = () => {
 
         <section className="panel">
           <div className="panel-header">
-            <h2 className="panel-title">Lead machine</h2>
-            <button type="button" className="panel-link" onClick={() => navigate('/machines')}>All machines</button>
+            <h2 className="panel-title">Machine health</h2>
+            <button type="button" className="panel-link" onClick={() => navigate('/attendance')}>
+              Open attendance
+            </button>
           </div>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>{data?.machine_status_widget?.name || 'No machine assigned'}</div>
-          <span className="badge-pill badge-running">{data?.machine_status_widget?.status || 'IDLE'}</span>
-          <div className="metric-list" style={{ marginTop: 12 }}>
-            <div className="metric-row"><span>Runtime today</span><strong>{data?.machine_status_widget?.runtime || '00h 00m'}</strong></div>
-            <div className="metric-row"><span>Fuel level</span><strong>{data?.machine_status_widget?.current_fuel_level || '0.00 L'}</strong></div>
-            <div className="metric-row"><span>Today’s consumption</span><strong>{data?.machine_status_widget?.today_consumption || '0.00 L'}</strong></div>
-          </div>
+          {(() => {
+            const health = data?.machine_health || {};
+            const issues = Array.isArray(health.issues) ? health.issues : [];
+            const commissioned = Number(
+              data?.quick_stats?.commissioned_machines
+              ?? health.commissioned
+              ?? data?.quick_stats?.total_machines
+              ?? 0
+            ) || 0;
+            const issueCount = Number(health.issue_count ?? issues.length) || 0;
+            const healthy = health.healthy !== false && issueCount === 0;
+            const healthyCount = Math.max(0, commissioned - issueCount);
+
+            if (healthy) {
+              return (
+                <div className="fleet-health fleet-health-ok">
+                  <div className="fleet-health-hero">
+                    <div className="fleet-health-icon" aria-hidden="true">
+                      <LucideCheckCircle2 size={24} />
+                    </div>
+                    <div className="fleet-health-hero-text">
+                      <div className="fleet-health-kicker">Fleet status</div>
+                      <div className="fleet-health-title">All machines working</div>
+                      <p className="fleet-health-copy">
+                        No open OEM breakdowns or Ops stops on commissioned machines.
+                      </p>
+                    </div>
+                    <span className="badge-pill badge-running">Healthy</span>
+                  </div>
+                  <div className="fleet-health-stats">
+                    <div className="fleet-health-stat">
+                      <span className="kpi-label">Healthy</span>
+                      <strong>{healthyCount}</strong>
+                    </div>
+                    <div className="fleet-health-stat">
+                      <span className="kpi-label">Not working</span>
+                      <strong>0</strong>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            return (
+              <div className="fleet-health">
+                <div className="fleet-health-alert">
+                  <div className="fleet-health-icon fleet-health-icon-warn" aria-hidden="true">
+                    <LucideWrench size={20} />
+                  </div>
+                  <div className="fleet-health-hero-text">
+                    <div className="fleet-health-kicker">Needs attention</div>
+                    <div className="fleet-health-title">Machines not working</div>
+                    <p className="fleet-health-copy">
+                      {issueCount} of {commissioned || issueCount} commissioned machines have an open OEM breakdown or Ops stop.
+                    </p>
+                  </div>
+                  <span className="badge-pill badge-breakdown">{issueCount} down</span>
+                </div>
+                <div className="fleet-health-stats">
+                  <div className="fleet-health-stat">
+                    <span className="kpi-label">Healthy</span>
+                    <strong>{healthyCount}</strong>
+                  </div>
+                  <div className="fleet-health-stat is-warn">
+                    <span className="kpi-label">Not working</span>
+                    <strong>{issueCount}</strong>
+                  </div>
+                </div>
+                <div className="metric-list fleet-health-issue-list">
+                  {issues.map((issue) => (
+                    <div
+                      key={`${issue.kind || 'ISSUE'}-${issue.chassis_no || issue.ticket}`}
+                      className="metric-row fleet-health-issue"
+                      onClick={() => navigate('/attendance')}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <span>
+                        <strong style={{ display: 'block' }}>{issue.name || issue.chassis_no}</strong>
+                        <em className="fleet-health-reason">
+                          {(issue.kind || '').toUpperCase() === 'OPS' ? 'Ops stop' : 'OEM breakdown'}
+                          {issue.reason ? ` · ${issue.reason}` : ''}
+                        </em>
+                      </span>
+                      <strong>{issue.ticket || ((issue.kind || '').toUpperCase() === 'OPS' ? 'OPS' : 'OEM')}</strong>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="btn-secondary fleet-health-more"
+                  onClick={() => navigate('/attendance')}
+                >
+                  {issueCount > issues.length
+                    ? `View all ${issueCount} on machine attendance`
+                    : 'Open machine attendance'}
+                </button>
+              </div>
+            );
+          })()}
         </section>
       </div>
 
@@ -303,76 +397,42 @@ export const Dashboard = () => {
         </section>
       </div>
 
-      <section className="panel" style={{ padding: 0 }}>
-        <div className="panel-header" style={{ padding: '14px 16px 0' }}>
+      <section className="panel dashboard-map-panel">
+        <div className="panel-header">
           <div>
             <h2 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <LucideCheckSquare size={15} /> Assigned tasks
+              <LucideMapPin size={15} /> Fleet locations
             </h2>
-            <p className="page-subtitle">Scope vs completed for this vendor</p>
+            <p className="page-subtitle">
+              {mapLoading
+                ? 'Loading live GPS…'
+                : `${fleetMapMachines.length} commissioned on map · ${mapRunning} running`}
+            </p>
           </div>
-          <button type="button" className="panel-link" onClick={() => navigate('/tasks')}>
-            View all ({vendorTasks.length})
+          <button type="button" className="panel-link" onClick={() => navigate('/tracking')}>
+            Open live tracking
           </button>
         </div>
-
-        {(() => {
-          const listToRender = vendorTasks.length > 0 ? vendorTasks : (data?.assigned_tasks || []);
-          if (listToRender.length === 0) {
-            return (
-              <div className="empty-state" style={{ border: 'none', borderRadius: 0 }}>
-                <h3>No tasks assigned</h3>
-                <p>Tasks from ILYNC will appear here for the selected vendor.</p>
-              </div>
-            );
-          }
-          return (
-            <div className="table-container" style={{ border: 'none' }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Task</th>
-                    <th>Location</th>
-                    <th>Progress</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {listToRender.slice(0, 6).map((t) => {
-                    const coveredKm = t.covered_distance !== undefined ? Number(t.covered_distance) : (t.coveredLengthKm !== undefined ? Number(t.coveredLengthKm) : 0);
-                    const totalKm = t.planned_distance !== undefined ? Number(t.planned_distance) : (t.plannedLengthKm !== undefined ? Number(t.plannedLengthKm) : (t.routeSnapshot?.lengthKm ? Number(t.routeSnapshot.lengthKm) : 0));
-                    const rawPct = t.progress_percent !== undefined ? Number(t.progress_percent) : (t.pct !== undefined ? Number(t.pct) : (totalKm > 0 ? (coveredKm / totalKm) * 100 : 0));
-                    const pct = Math.min(100, Math.max(0, Math.round(rawPct)));
-                    const isDone = t.status === 'COMPLETED' || pct === 100;
-                    return (
-                      <tr key={t.id || t.taskCode} onClick={() => navigate('/tasks')} style={{ cursor: 'pointer' }}>
-                        <td>
-                          <div style={{ fontWeight: 600 }}>{t.displayName || t.title || t.taskType}</div>
-                          <div className="page-subtitle">{t.taskCode || '—'}</div>
-                        </td>
-                        <td>{t.locationStr || t.location?.blockName || t.location?.locationName || '—'}</td>
-                        <td style={{ minWidth: 140 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: 4 }}>
-                            <span>{coveredKm.toFixed(2)} / {totalKm > 0 ? totalKm.toFixed(2) : '—'} km</span>
-                            <span>{pct}%</span>
-                          </div>
-                          <div className="progress-track">
-                            <div className="progress-fill" style={{ width: `${pct}%`, background: isDone ? 'var(--live)' : 'var(--primary, #0284c7)' }} />
-                          </div>
-                        </td>
-                        <td>
-                          <span className={`badge-pill ${isDone ? 'badge-running' : 'badge-idle'}`}>
-                            {t.status || 'IN_PROGRESS'}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+        <div className="dashboard-map-canvas">
+          {!mapLoading && fleetMapMachines.length === 0 ? (
+            <div className="empty-state" style={{ border: 'none', borderRadius: 0, minHeight: 280 }}>
+              <h3>No machines on map</h3>
+              <p>Waiting for live GPS from FiberForce on commissioned machines.</p>
             </div>
-          );
-        })()}
+          ) : (
+            <LeafletMap
+              machines={fleetMapMachines}
+              height="100%"
+              zoom={11}
+              showRoute={false}
+              title="Fleet map"
+              chrome={false}
+              fill
+              loading={mapLoading}
+              fitToken={`${selectedVendorId || 'all'}-${fleetMapMachines.length}`}
+            />
+          )}
+        </div>
       </section>
     </div>
   );

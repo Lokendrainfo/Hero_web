@@ -759,6 +759,243 @@ textarea:focus {
   background: var(--bg-subtle);
 }
 
+.fleet-kpi-card {
+  padding-bottom: 4px;
+}
+
+.fleet-kpi-card .panel-header {
+  margin-bottom: 2px;
+}
+
+.fleet-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--border);
+}
+
+.fleet-kpi-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 0;
+  margin: 0;
+  padding: 12px 14px 10px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.fleet-kpi-item:last-child {
+  border-right: none;
+}
+
+.fleet-kpi-item:hover {
+  background: var(--bg-subtle);
+}
+
+.fleet-kpi-item .kpi-label {
+  display: block;
+  min-height: 0;
+  margin: 0;
+}
+
+.fleet-kpi-item .kpi-value {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  font-size: 1.35rem;
+  line-height: 1.15;
+}
+
+.fleet-kpi-item .kpi-value small {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+@media (max-width: 900px) {
+  .fleet-kpi-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .fleet-kpi-item {
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .fleet-kpi-item:nth-child(2n) {
+    border-right: none;
+  }
+
+  .fleet-kpi-item:nth-child(n + 3) {
+    border-bottom: none;
+  }
+}
+
+.kpi-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.fleet-health {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.fleet-health-ok .fleet-health-hero {
+  background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%);
+  border-color: #bbf7d0;
+}
+
+.fleet-health-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.fleet-health-hero-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.fleet-health-kicker {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.fleet-health-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
+}
+
+.fleet-health-icon-warn {
+  background: #fff7ed;
+  color: #c2410c;
+  border-color: #fed7aa;
+}
+
+.fleet-health-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.fleet-health-copy {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.fleet-health-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.fleet-health-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-right: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.fleet-health-stat:last-child {
+  border-right: none;
+}
+
+.fleet-health-stat strong {
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.fleet-health-stat.is-warn strong {
+  color: #b91c1c;
+}
+
+.fleet-health-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.fleet-health-alert .fleet-health-title {
+  color: #991b1b;
+}
+
+.fleet-health-alert .fleet-health-copy {
+  color: #b91c1c;
+}
+
+.fleet-health-alert .badge-pill {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.fleet-health-hero .badge-pill {
+  margin-left: auto;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.fleet-health-reason {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+  font-weight: 500;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.fleet-health-issue-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.fleet-health-more {
+  width: 100%;
+  justify-content: center;
+  font-size: 0.78rem;
+}
+
 .kpi-label {
   font-size: 0.6875rem;
   font-weight: 600;
@@ -1808,6 +2045,30 @@ textarea:focus {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+}
+
+.dashboard-map-panel {
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.dashboard-map-panel .panel-header {
+  padding-bottom: 12px;
+}
+
+.dashboard-map-canvas {
+  height: 420px;
+  margin: 0 -16px -16px;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  overflow: hidden;
+  background: #e8edf2;
+}
+
+@media (max-width: 860px) {
+  .dashboard-map-canvas {
+    height: 320px;
+  }
 }
 
 @media (max-width: 860px) {

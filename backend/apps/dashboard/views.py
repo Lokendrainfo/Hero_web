@@ -1,14 +1,16 @@
-from rest_framework.views import APIView
-from rest_framework import permissions
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+
+from django.db.models import Avg, Q, Sum
 from django.utils import timezone
-from django.db.models import Q
-from datetime import timedelta
-from apps.machines.models import Machine
-from apps.tasks.models import Task
+from rest_framework import permissions
+from rest_framework.views import APIView
+
 from apps.alerts.models import Alert
 from apps.common.responses import success_response
-
 from apps.common.vendor_scope import filter_queryset_by_vendor, get_user_vendor_ids
+from apps.machines.models import Machine
+
 
 def safe_float(val, default=0.0):
     try:
@@ -17,84 +19,260 @@ def safe_float(val, default=0.0):
         return default
 
 
-def _ilync_assigned_chassis_for_vendors(vendors):
-    """
-    Collect machine chassis / machineNo values assigned on live iLync vendor records.
-    Dashboard machine KPIs should only count these assigned machines, not the full FiberForce fleet.
-    """
-    assigned = set()
-    if not vendors:
-        return assigned
-    try:
-        from apps.integrations.ilync_client import IlyncClient
-        client = IlyncClient()
-    except Exception:
-        return assigned
+MACHINE_ATTENDANCE_PRESENT = {
+    'PRESENT', 'CHECKED_IN', 'CHECKED_OUT', 'OPERATING', 'WORKING',
+}
 
-    for v_obj in vendors:
+
+def _unique_chassis(values):
+    seen = []
+    for raw in values or []:
+        code = str(raw or '').strip()
+        if code and code not in seen:
+            seen.append(code)
+    return seen
+
+
+def _row_started_shift(row):
+    if not isinstance(row, dict):
+        return False
+    if row.get('actual_work_start_at') or row.get('actual_work_start_time'):
+        return True
+    key = str(row.get('attendance_key') or '').strip().lower()
+    if key in ('present', 'late_punch_in'):
+        return True
+    return str(row.get('status') or '').strip().lower() == 'present'
+
+
+def _extract_chassis_from_payload(payload):
+    assigned = []
+    macs = (payload or {}).get('machines') or (payload or {}).get('assigned_machines') or []
+    if not isinstance(macs, list):
+        return assigned
+    for item in macs:
+        if isinstance(item, dict):
+            code = str(
+                item.get('machineNo')
+                or item.get('machine_no')
+                or item.get('machine_chassis_no')
+                or item.get('serial_number')
+                or item.get('chassis_no')
+                or item.get('name')
+                or item.get('code')
+                or item.get('id')
+                or ''
+            ).strip()
+        elif isinstance(item, str):
+            code = item.strip()
+        else:
+            code = ''
+        if code and code not in assigned:
+            assigned.append(code)
+    return assigned
+
+
+def _fetch_ilync_vendor_payloads(vendors):
+    from apps.integrations.ilync_client import IlyncClient
+
+    vendors = list(vendors or [])
+    if not vendors:
+        return []
+
+    def _one(v_obj):
         ext_v_id = getattr(v_obj, 'external_vendor_id', None) or getattr(v_obj, 'id', None)
+        payload = {}
         if not ext_v_id:
-            continue
+            return v_obj, payload
         try:
-            live_res = client.get_vendor_by_id(ext_v_id)
+            live_res = IlyncClient(timeout=(2.5, 6.0)).get_vendor_by_id(ext_v_id)
         except Exception:
-            continue
+            live_res = None
         payload = (
             live_res.get('data')
             if (isinstance(live_res, dict) and live_res.get('success'))
             else (live_res if isinstance(live_res, dict) else {})
         )
-        macs = (payload or {}).get('machines') or (payload or {}).get('assigned_machines') or []
-        if not isinstance(macs, list):
+        if not isinstance(payload, dict):
+            payload = {}
+        return v_obj, payload
+
+    workers = min(8, max(1, len(vendors)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_one, vendors))
+
+
+def _ff_row_is_running(item):
+    if not isinstance(item, dict):
+        return False
+    try:
+        rpm = int(item.get('rpm') or 0)
+    except (TypeError, ValueError):
+        rpm = 0
+    state = str(item.get('state') or item.get('state_label') or item.get('status') or '').upper()
+    engine_on = bool(item.get('engine_on')) or rpm > 0
+    return engine_on or state in (
+        'RUNNING', 'WORKING', 'WORKING_RPM_LIMIT', 'DRILLING', 'MOVING',
+    )
+
+
+def _ff_list_has_live_signals(ff_machines):
+    for item in ff_machines or []:
+        if not isinstance(item, dict):
             continue
-        for item in macs:
-            if isinstance(item, dict):
-                code = str(
-                    item.get('machineNo')
-                    or item.get('machine_no')
-                    or item.get('machine_chassis_no')
-                    or item.get('serial_number')
-                    or item.get('chassis_no')
-                    or item.get('name')
-                    or item.get('code')
-                    or item.get('id')
-                    or ''
-                ).strip()
-                if code:
-                    assigned.add(code)
-            elif isinstance(item, str) and item.strip():
-                assigned.add(item.strip())
-    return assigned
+        if item.get('rpm') is not None or item.get('engine_on') is not None:
+            return True
+        if item.get('state') or item.get('state_label'):
+            return True
+    return False
 
 
-def _filter_machines_to_assigned(machines_qs, chassis_set):
-    if not chassis_set:
-        return machines_qs.none()
-    return machines_qs.filter(
-        Q(machine_chassis_no__in=chassis_set)
-        | Q(serial_number__in=chassis_set)
-        | Q(name__in=chassis_set)
-        | Q(code__in=chassis_set)
-    ).distinct()
+def _commissioned_machine_kpis(att_date, assigned_chassis, ff_machines=None, att_res=None):
+    """
+    Total = Machines "Commissioned" tab: FiberForce machines that are vendor-assigned on iLync.
+    Not raw iLync machine list length (that can include IDs not present on FiberForce).
+    Pass att_res to avoid a second FiberForce fleet-attendance round-trip.
+    """
+    assigned_set = set(_unique_chassis(assigned_chassis))
+    chassis_list = []
+    commissioned_rows = []
+    for m in (ff_machines or []):
+        if not isinstance(m, dict):
+            continue
+        chassis = str(m.get('machine_chassis_no') or '').strip()
+        if not chassis or chassis not in assigned_set:
+            continue
+        if chassis in chassis_list:
+            continue
+        chassis_list.append(chassis)
+        commissioned_rows.append(m)
+
+    if not chassis_list:
+        chassis_list = _unique_chassis(assigned_chassis)
+
+    commissioned = len(chassis_list)
+    running = 0
+    actual_shift = 0
+    actual_shift_total = commissioned
+    machine_attendance_present = 0
+    machine_attendance_total = commissioned
+
+    if commissioned_rows and _ff_list_has_live_signals(ff_machines):
+        running = sum(1 for m in commissioned_rows if _ff_row_is_running(m))
+    elif chassis_list:
+        running = Machine.objects.filter(
+            Q(machine_chassis_no__in=chassis_list) | Q(serial_number__in=chassis_list),
+            status='RUNNING',
+        ).count()
+
+    if chassis_list:
+        try:
+            if att_res is None:
+                from apps.integrations.fiberforce.client import FiberForceClient
+                att_res = FiberForceClient().get_fleet_attendance_today(chassis_list)
+            att_data = att_res.get('data') if isinstance(att_res, dict) else {}
+            if not isinstance(att_data, dict):
+                att_data = {}
+            rows = att_data.get('machines') if isinstance(att_data.get('machines'), list) else []
+            counts = att_data.get('counts') if isinstance(att_data.get('counts'), dict) else {}
+            if rows:
+                actual_shift = sum(1 for row in rows if _row_started_shift(row))
+            else:
+                actual_shift = int(counts.get('present') or 0) + int(counts.get('late_punch_in') or 0)
+        except Exception as exc:
+            print("[Dashboard] FiberForce fleet attendance error:", exc)
+
+        try:
+            from apps.attendance.models import AttendanceRecord
+            present_keys = set()
+            recs = AttendanceRecord.objects.filter(
+                date=att_date,
+                attendance_type='MACHINE',
+            ).filter(
+                Q(machine_chassis_no__in=chassis_list) | Q(machine_id__in=chassis_list)
+            )
+            for rec in recs:
+                st = str(rec.status or '').upper().replace(' ', '_')
+                if st not in MACHINE_ATTENDANCE_PRESENT:
+                    continue
+                key = str(rec.machine_chassis_no or rec.machine_id or '').strip()
+                if key:
+                    present_keys.add(key)
+            machine_attendance_present = len(present_keys)
+        except Exception as exc:
+            print("[Dashboard] Machine attendance KPI error:", exc)
+
+    return {
+        'commissioned': commissioned,
+        'running': running,
+        'actual_shift': actual_shift,
+        'actual_shift_total': actual_shift_total,
+        'machine_attendance_present': machine_attendance_present,
+        'machine_attendance_total': machine_attendance_total,
+        'chassis_list': chassis_list,
+    }
+
+
+def _quick_commissioned_chassis(assigned_chassis, ff_machines=None):
+    assigned_set = set(_unique_chassis(assigned_chassis))
+    chassis_list = []
+    for m in (ff_machines or []):
+        if not isinstance(m, dict):
+            continue
+        chassis = str(m.get('machine_chassis_no') or '').strip()
+        if chassis and chassis in assigned_set and chassis not in chassis_list:
+            chassis_list.append(chassis)
+    return chassis_list or _unique_chassis(assigned_chassis)
 
 
 class DashboardSummaryView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request):
-        user = request.user
-        
-        user_name = user.get_full_name() or user.username if user.is_authenticated else "Operations Manager"
+        from apps.common.ttl_cache import ttl_get, ttl_set
+        from apps.common.responses import error_response
 
+        try:
+            return self._build_summary(request, ttl_get, ttl_set)
+        except Exception as exc:
+            print(f"[Dashboard] summary failed: {exc}")
+            return error_response(
+                message="Unable to load dashboard summary right now. Please retry.",
+                errors={"detail": str(exc)},
+                status_code=503,
+            )
+
+    def _build_summary(self, request, ttl_get, ttl_set):
+        user = request.user
+        user_name = (
+            (user.get_full_name() or user.username)
+            if getattr(user, 'is_authenticated', False)
+            else "Operations Manager"
+        )
         q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
 
-        # Vendor Scoped Machine & Task Querysets
         req_v = q_params.get('vendor_id') or q_params.get('vendor')
+        date_param = q_params.get('date') or ''
+        cache_key = (
+            f"dashboard:summary:"
+            f"{getattr(user, 'id', 'anon')}:"
+            f"{req_v or 'all'}:"
+            f"{date_param or 'today'}"
+        )
+        cached = ttl_get(cache_key)
+        if cached is not None:
+            return success_response(data=cached, message="Dashboard screen data fetched successfully (cached)")
+
         if (not req_v or str(req_v).lower() in ['all', 'none']) and user and getattr(user, 'is_authenticated', False):
             role_str = str(getattr(user, 'role', '') or getattr(user, 'role_key', '')).upper()
             is_user_vendor = 'VENDOR' in role_str
             if not getattr(user, 'is_superuser', False) and is_user_vendor:
-                u_vid = getattr(user, 'vendor_id', None) or (user.vendor.external_vendor_id if getattr(user, 'vendor', None) else None)
+                u_vid = getattr(user, 'vendor_id', None)
+                try:
+                    vendor_obj = user.vendor if u_vid else None
+                    if vendor_obj and getattr(vendor_obj, 'external_vendor_id', None):
+                        u_vid = vendor_obj.external_vendor_id
+                except Exception:
+                    pass
                 if u_vid and hasattr(request, 'GET'):
                     try:
                         request.GET = request.GET.copy()
@@ -102,42 +280,100 @@ class DashboardSummaryView(APIView):
                     except Exception:
                         pass
 
-        machines_qs = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
-        tasks_qs = filter_queryset_by_vendor(Task.objects.all(), user, 'vendor_id', request=request)
-
-        # Restrict machine KPIs/widgets to iLync-assigned machines only (not full fleet dump)
         from apps.vendors.models import Vendor
         vendor_ids = get_user_vendor_ids(user)
         v_qs = Vendor.objects.filter(is_active=True)
         if vendor_ids is not None:
             v_qs = v_qs.filter(id__in=vendor_ids)
         if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
-            v_qs = v_qs.filter(
-                Q(external_vendor_id=req_v) | Q(name__iexact=req_v) | Q(id=req_v if str(req_v).isdigit() else None)
-            )
-        assigned_chassis = _ilync_assigned_chassis_for_vendors(list(v_qs))
-        machines_qs = _filter_machines_to_assigned(machines_qs, assigned_chassis)
+            v_filter = Q(external_vendor_id=req_v) | Q(name__iexact=req_v)
+            if str(req_v).isdigit():
+                v_filter |= Q(id=int(req_v))
+            v_qs = v_qs.filter(v_filter)
+        target_vendors = list(v_qs)
 
-        # Query first available machine for widgets
+        def _ff_machines():
+            cached_ff = ttl_get('dashboard:ff_machines')
+            if cached_ff is not None:
+                return cached_ff
+            try:
+                from apps.integrations.fiberforce.client import FiberForceClient
+                payload = FiberForceClient().get_machines()
+                data = payload.get('data') if isinstance(payload, dict) else []
+                rows = data if isinstance(data, list) else []
+                ttl_set('dashboard:ff_machines', rows, ttl_seconds=30)
+                return rows
+            except Exception as exc:
+                print("[Dashboard] FiberForce machines list error:", exc)
+                return []
+
+        def _ff_open_issues():
+            cached_issues = ttl_get('dashboard:open_issues')
+            if cached_issues is not None:
+                return cached_issues
+            try:
+                from apps.attendance.views import _index_open_machine_issues
+                oem, ops = _index_open_machine_issues()
+                pair = (oem or {}, ops or {})
+                ttl_set('dashboard:open_issues', pair, ttl_seconds=30)
+                return pair
+            except Exception as exc:
+                print("[Dashboard] Open machine issues fetch error:", exc)
+                return {}, {}
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            ff_future = pool.submit(_ff_machines)
+            issues_future = pool.submit(_ff_open_issues)
+            vendor_pairs = _fetch_ilync_vendor_payloads(target_vendors)
+            ff_machines = ff_future.result()
+            oem_by_chassis, ops_by_chassis = issues_future.result()
+
+        assigned_chassis = []
+        for _v_obj, payload in vendor_pairs:
+            for code in _extract_chassis_from_payload(payload):
+                if code not in assigned_chassis:
+                    assigned_chassis.append(code)
+
+        # Start fleet attendance early while we build local fuel widgets
+        chassis_preview = _quick_commissioned_chassis(assigned_chassis, ff_machines)
+
+        def _ff_attendance():
+            if not chassis_preview:
+                return {}
+            try:
+                from apps.integrations.fiberforce.client import FiberForceClient
+                return FiberForceClient().get_fleet_attendance_today(chassis_preview)
+            except Exception as exc:
+                print("[Dashboard] FiberForce fleet attendance error:", exc)
+                return {}
+
+        att_executor = ThreadPoolExecutor(max_workers=1)
+        att_future = att_executor.submit(_ff_attendance)
+
+        machines_qs = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
+        if assigned_chassis:
+            machines_qs = machines_qs.filter(
+                Q(machine_chassis_no__in=assigned_chassis)
+                | Q(serial_number__in=assigned_chassis)
+                | Q(name__in=assigned_chassis)
+                | Q(code__in=assigned_chassis)
+            ).distinct()
+        else:
+            machines_qs = machines_qs.none()
+
         first_machine = machines_qs.filter(site_name__isnull=False).exclude(site_name='').first() or machines_qs.first()
 
-        # Dynamic Project / Site Name from Vendor assignment or Machines DB
         site_name = None
         if vendor_ids:
             assigned_v = Vendor.objects.filter(id__in=vendor_ids).first()
             if assigned_v:
                 site_name = assigned_v.address or f"{assigned_v.name} Site"
-
         if not site_name:
             site_name = first_machine.site_name if (first_machine and first_machine.site_name) else "Sujangarh-SITE"
-
         project_name = site_name if "Project" in site_name else f"{site_name} Project"
 
-        # Current Dynamic Date filter from query params
-        date_param = q_params.get('date')
         if date_param:
             try:
-                from datetime import datetime
                 today = datetime.strptime(date_param, '%Y-%m-%d')
             except ValueError:
                 today = timezone.now()
@@ -145,57 +381,12 @@ class DashboardSummaryView(APIView):
             today = timezone.now()
 
         current_date_str = today.strftime('%d %b %Y')
-        due_date_str = (today + timedelta(days=2)).strftime('%d %b %Y')
+        att_date = today.date() if hasattr(today, 'date') else today
+        today_date_str = att_date.strftime('%Y-%m-%d') if hasattr(att_date, 'strftime') else str(att_date)
 
-        # Real DB Machine Stats calculated strictly from accessible vendor data
         total_machines = machines_qs.count()
-        running_machines = machines_qs.filter(status='RUNNING').count()
         active_alerts = Alert.objects.filter(is_read=False).count() if total_machines > 0 else 0
-        # Live tasks and authoritative task statistics from single source of truth helper
-        task_list_items = []
-        authorized_tasks = []
-        pending_tasks = 0
-        task_stats = {"total": 0, "pending": 0, "completed": 0, "in_progress": 0, "created": 0}
 
-        try:
-            from apps.common.progress import get_task_statistics
-            page_sz = int(q_params.get('size') or q_params.get('page_size') or 10)
-            task_stats = get_task_statistics(user=user, request=request, task_type='FIBER_TRENCHING_DUCTING_TASK', page_size=page_sz)
-            authorized_tasks = task_stats.get("authorized_tasks", [])
-            pending_tasks = task_stats.get("pending", 0)
-
-            for t_idx, t_item in enumerate(authorized_tasks[:10]):
-                t_code = t_item.get('taskCode') or t_item.get('task_code') or f'TASK-{t_idx+1}'
-                t_disp = t_item.get('displayName') or t_item.get('title') or 'Block Scope'
-                cov_km = safe_float(t_item.get('covered_distance') if t_item.get('covered_distance') is not None else t_item.get('coveredLengthKm'), 0.0)
-                tot_km = safe_float(t_item.get('planned_distance') if t_item.get('planned_distance') is not None else t_item.get('totalLengthKm'), 0.0)
-                pct = safe_float(t_item.get('progress_percent') if t_item.get('progress_percent') is not None else t_item.get('pct'), 0.0)
-                location_str = t_item.get('locationStr') or (t_item.get('location', {}).get('blockName') if isinstance(t_item.get('location'), dict) else None) or t_disp
-
-                task_list_items.append({
-                    "id": t_item.get('id', t_code),
-                    "taskCode": t_code,
-                    "title": t_disp,
-                    "displayName": t_disp,
-                    "locationStr": location_str,
-                    "subtitle": f"Location: {location_str}",
-                    "coveredLengthKm": cov_km,
-                    "covered_distance": cov_km,
-                    "plannedLengthKm": tot_km,
-                    "planned_distance": tot_km,
-                    "coveredScopeStr": f"{cov_km:.2f} km",
-                    "totalScopeStr": f"{tot_km:.2f} km",
-                    "progress_percent": pct,
-                    "pct": pct,
-                    "status": t_item.get('status', 'IN_PROGRESS'),
-                    "vendorName": t_item.get('vendorName') or '',
-                    "due_date": due_date_str,
-                    "overdue_text": "On Schedule"
-                })
-        except Exception as err:
-            print("[Dashboard] Authorized live tasks fetch error:", err)
-
-        # Machine and Fuel Status widgets: prefer active/running machine with fuel
         active_m = (
             machines_qs.filter(status='RUNNING').first() or
             machines_qs.filter(is_online=True).first() or
@@ -203,23 +394,11 @@ class DashboardSummaryView(APIView):
             machines_qs.first()
         )
 
-        live_telemetry = {}
-        if active_m and active_m.machine_chassis_no:
-            try:
-                from apps.integrations.fiberforce.client import FiberForceClient
-                ff_client = FiberForceClient()
-                ff_res = ff_client.get_live_telemetry(active_m.machine_chassis_no)
-                if isinstance(ff_res, dict) and ff_res.get('success') and isinstance(ff_res.get('data'), dict):
-                    live_telemetry = ff_res['data']
-            except Exception as e:
-                print("[Dashboard] FiberForce live telemetry error:", e)
-
-        fuel_litres = safe_float(live_telemetry.get('fuel_litres'), safe_float(active_m.current_fuel_level if active_m else 0))
-        state_label = live_telemetry.get('state_label', active_m.status if active_m else 'IDLE')
-        is_online = live_telemetry.get('is_online', active_m.is_online if active_m else False)
-        today_consumption = safe_float(live_telemetry.get('fuel_consumed_today'), safe_float(active_m.today_consumption if active_m else 0))
-        engine_hours_today = safe_float(live_telemetry.get('engine_hours_today'), safe_float(active_m.engine_hours_today if active_m else 0.0))
-
+        fuel_litres = safe_float(active_m.current_fuel_level if active_m else 0)
+        state_label = active_m.status if active_m else 'IDLE'
+        is_online = active_m.is_online if active_m else False
+        today_consumption = safe_float(active_m.today_consumption if active_m else 0)
+        engine_hours_today = safe_float(active_m.engine_hours_today if active_m else 0.0)
         hrs = int(engine_hours_today)
         mins = int((engine_hours_today % 1) * 60)
         runtime_display = active_m.runtime_str if (active_m and active_m.runtime_str and active_m.runtime_str != '00h 00m') else f"{hrs:02d}h {mins:02d}m"
@@ -236,7 +415,6 @@ class DashboardSummaryView(APIView):
             "today_consumption": f"{today_consumption:.2f} L"
         }
 
-        from django.db.models import Sum, Avg
         fuel_agg = machines_qs.aggregate(
             t_fuel=Sum('current_fuel_level'),
             t_cap=Sum('fuel_capacity'),
@@ -269,76 +447,67 @@ class DashboardSummaryView(APIView):
             "acknowledged_by": user_name
         }
 
-        quick_stats = {
-            "total_machines": total_machines,
-            "running_machines": running_machines,
-            "assigned_machines": total_machines,
-            "assigned_chassis_count": len(assigned_chassis),
-            "shots_in_progress": 1 if total_machines > 0 else 0,
-            "tasks_pending": pending_tasks,
-            "tasks_total": task_stats.get("total", 0),
-            "tasks_completed": task_stats.get("completed", 0),
-            "tasks_in_progress": task_stats.get("in_progress", 0),
-            "tasks_created": task_stats.get("created", 0),
-            "alerts_count": active_alerts,
-            "attendance_pct": 92 if total_machines > 0 else 0
+        try:
+            att_res = att_future.result(timeout=10)
+        except Exception:
+            att_res = {}
+        finally:
+            att_executor.shutdown(wait=False)
+
+        machine_kpis = _commissioned_machine_kpis(att_date, assigned_chassis, ff_machines, att_res=att_res)
+        commissioned = machine_kpis.get('commissioned') or 0
+        running_live = machine_kpis.get('running') or 0
+
+        ff_name_by_chassis = {}
+        for item in ff_machines or []:
+            if not isinstance(item, dict):
+                continue
+            ch = str(item.get('machine_chassis_no') or '').strip()
+            if not ch:
+                continue
+            model = str(item.get('model_code') or 'HDD').strip() or 'HDD'
+            short = ch[-4:] if len(ch) >= 4 else ch
+            ff_name_by_chassis[ch] = f"{model} HDD ({short})"
+
+        health_issues = []
+        chassis_set = set(machine_kpis.get('chassis_list') or [])
+        # Same as attendance: prefer OEM breakdown over Ops stop when both open
+        for chassis in chassis_set:
+            issue = (oem_by_chassis or {}).get(chassis) or (ops_by_chassis or {}).get(chassis)
+            if not issue:
+                continue
+            kind = str(issue.get('kind') or 'OEM').upper()
+            health_issues.append({
+                "chassis_no": chassis,
+                "name": ff_name_by_chassis.get(chassis) or f"HDD ({chassis[-4:] if len(chassis) >= 4 else chassis})",
+                "kind": kind,
+                "ticket": issue.get('tt_number'),
+                "reason": issue.get('reason') or ('Ops stop' if kind == 'OPS' else 'Internal breakdown'),
+                "status": issue.get('status') or 'OPEN',
+                "severity": issue.get('severity'),
+                "started_at": str(issue.get('started_at') or '') or None,
+            })
+        machine_health = {
+            "healthy": len(health_issues) == 0,
+            "commissioned": commissioned,
+            "issue_count": len(health_issues),
+            "issues": health_issues[:4],
+            "issues_preview_limit": 4,
+            "has_more_issues": len(health_issues) > 4,
         }
 
-        tot_cov_sum = sum(safe_float(t.get('covered_distance') or t.get('coveredLengthKm')) for t in authorized_tasks)
-        tot_plan_sum = sum(safe_float(t.get('planned_distance') or t.get('totalLengthKm')) for t in authorized_tasks)
-        perf_pct = int((tot_cov_sum / tot_plan_sum) * 100) if tot_plan_sum > 0 else 0
-
-        fiber_tasks = {
-            "Fiber 1": task_list_items
-        }
-
-        has_tasks = len(authorized_tasks) > 0
-        performance = {
-            "achievement": f"{tot_cov_sum:.2f} km" if has_tasks else "0.00 km",
-            "target": f"{tot_plan_sum:.2f} km" if has_tasks else "0.00 km",
-            "percentage": perf_pct,
-            "message": "You're on track! Keep it up." if has_tasks else "No tasks assigned to you"
-        }
-
-        my_shift = {
-            "status": "Present",
-            "check_in": "08:42 AM",
-            "working_duration": "5h 28m",
-            "shift_time": "08:00 AM - 06:00 PM"
-        }
-
-        # Vendor Scoped Team & Attendance Statistics for Dashboard (LIVE from iLync)
         from apps.attendance.models import AttendanceRecord
         from apps.attendance.views import (
             ATTENDANCE_SCOPE_ROLES,
             bump_scope_matrix,
             normalize_attendance_role,
         )
-        from apps.vendors.models import Vendor
-        from apps.integrations.ilync_client import IlyncClient
 
-        client = IlyncClient()
-        req_v = q_params.get('vendor_id') or q_params.get('vendor')
-
-        v_qs = Vendor.objects.filter(is_active=True)
-        if vendor_ids is not None:
-            v_qs = v_qs.filter(id__in=vendor_ids)
-        if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
-            v_qs = v_qs.filter(
-                Q(external_vendor_id=req_v) | Q(name__iexact=req_v) | Q(id=req_v if str(req_v).isdigit() else None)
-            )
-
-        target_vendors = list(v_qs)
-        # Normalize selected date to a Date (not datetime) for AttendanceRecord.date
-        att_date = today.date() if hasattr(today, 'date') else today
-        today_date_str = att_date.strftime('%Y-%m-%d') if hasattr(att_date, 'strftime') else str(att_date)
         today_recs = list(
             AttendanceRecord.objects.filter(date=att_date)
             .exclude(attendance_type='MACHINE')
             .select_related('user')
         )
-
-        # Index records for O(1) lookup across iLync roster users
         by_external = {}
         by_username = {}
         by_email = {}
@@ -370,19 +539,10 @@ class DashboardSummaryView(APIView):
             for scope in ATTENDANCE_SCOPE_ROLES
         }
 
-        for v_obj in target_vendors:
-            ext_v_id = v_obj.external_vendor_id or v_obj.id
-            live_res = None
-            try:
-                live_res = client.get_vendor_by_id(ext_v_id)
-            except Exception:
-                pass
-
-            v_payload = live_res.get('data') if (isinstance(live_res, dict) and live_res.get('success')) else (live_res if isinstance(live_res, dict) else {})
+        for _v_obj, v_payload in vendor_pairs:
             raw_users = v_payload.get('users') or []
             if not isinstance(raw_users, list):
                 raw_users = []
-
             for u_info in raw_users:
                 if not isinstance(u_info, dict):
                     continue
@@ -421,11 +581,29 @@ class DashboardSummaryView(APIView):
                 else:
                     not_marked_count += 1
                     st = 'NOT_MARKED'
-
                 bump_scope_matrix(scope_matrix_map, u_role, st)
 
-        quick_stats["team_present"] = present_count
-        quick_stats["team_total"] = total_team_members
+        quick_stats = {
+            "total_machines": commissioned,
+            "commissioned_machines": commissioned,
+            "running_machines": running_live,
+            "assigned_machines": commissioned,
+            "assigned_chassis_count": commissioned,
+            "machine_actual_shift": machine_kpis.get('actual_shift') or 0,
+            "machine_actual_shift_total": machine_kpis.get('actual_shift_total') or commissioned,
+            "machine_attendance_present": machine_kpis.get('machine_attendance_present') or 0,
+            "machine_attendance_total": machine_kpis.get('machine_attendance_total') or commissioned,
+            "shots_in_progress": 1 if commissioned > 0 else 0,
+            "tasks_pending": 0,
+            "tasks_total": 0,
+            "tasks_completed": 0,
+            "tasks_in_progress": 0,
+            "tasks_created": 0,
+            "alerts_count": active_alerts,
+            "attendance_pct": 92 if commissioned > 0 else 0,
+            "team_present": present_count,
+            "team_total": total_team_members,
+        }
 
         vendor_team_attendance = {
             "total_team": total_team_members,
@@ -446,13 +624,24 @@ class DashboardSummaryView(APIView):
             "current_date": current_date_str,
             "quick_stats": quick_stats,
             "machine_status_widget": machine_status_widget,
+            "machine_health": machine_health,
             "fuel_status_widget": fuel_status_widget,
             "fuel_theft_widget": fuel_theft_widget,
-            "fiber_tasks": fiber_tasks,
-            "assigned_tasks": task_list_items,
-            "performance": performance,
-            "my_shift": my_shift,
-            "vendor_team_attendance": vendor_team_attendance
+            "fiber_tasks": {"Fiber 1": []},
+            "assigned_tasks": [],
+            "performance": {
+                "achievement": "0.00 km",
+                "target": "0.00 km",
+                "percentage": 0,
+                "message": "No tasks assigned to you",
+            },
+            "my_shift": {
+                "status": "Present",
+                "check_in": "08:42 AM",
+                "working_duration": "5h 28m",
+                "shift_time": "08:00 AM - 06:00 PM",
+            },
+            "vendor_team_attendance": vendor_team_attendance,
         }
+        ttl_set(cache_key, data, ttl_seconds=30)
         return success_response(data=data, message="Dashboard screen data fetched successfully")
-
