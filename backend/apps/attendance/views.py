@@ -268,15 +268,33 @@ def resolve_target_user(user_id_param, request_user=None):
         if u:
             return u
 
+    target_vendor = None
+    if request_user:
+        target_vendor = getattr(request_user, 'vendor', None) or get_user_vendor(request_user)
+
+    # 3b. If still not found and request_user has a vendor with external_vendor_id, sync live vendor users to resolve
+    if target_vendor and getattr(target_vendor, 'external_vendor_id', None):
+        try:
+            from apps.vendors.services import sync_vendor_detail_links
+            sync_vendor_detail_links(target_vendor, target_vendor.external_vendor_id)
+            u = User.objects.filter(external_user_id=param_str).first()
+            if u:
+                return u
+            u = User.objects.filter(
+                Q(employee_id=param_str) |
+                Q(username=param_str) |
+                Q(phone_number=param_str)
+            ).first()
+            if u:
+                return u
+        except Exception:
+            pass
+
     # 4. If still not found, create lightweight shell user with external_user_id = param_str
     base_name = param_str.split('@')[0] if '@' in param_str else param_str
     clean_u = clean_username(base_name)
     if User.objects.filter(username=clean_u).exists():
         clean_u = f"{clean_u}_{int(timezone.now().timestamp())}"
-
-    target_vendor = None
-    if request_user:
-        target_vendor = getattr(request_user, 'vendor', None) or get_user_vendor(request_user)
 
     u, _ = User.objects.get_or_create(
         username=clean_u,
@@ -729,6 +747,14 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if loc_source: existing.location_source = loc_source
             existing.updated_by = request.user
             existing.save()
+
+            # Temporary diagnostic logging (no sensitive credentials)
+            print(
+                f"[AttendanceMapping] iLync_user_id={getattr(user, 'external_user_id', None)} | "
+                f"Hero_user_id={user.id} | vendor_id={existing.vendor_id} | "
+                f"attendance record id={existing.id} | check-in result=SUCCESS"
+            )
+
             serializer = AttendanceRecordSerializer(existing, context={'request': request})
             return Response({
                 "success": True,
@@ -763,6 +789,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 "Pending Attendance Approval",
                 f"Attendance check-in submitted by {user.get_full_name() or user.username} for {today} requires your approval."
             )
+
+        # Temporary diagnostic logging (no sensitive credentials)
+        print(
+            f"[AttendanceMapping] iLync_user_id={getattr(user, 'external_user_id', None)} | "
+            f"Hero_user_id={user.id} | vendor_id={record.vendor_id} | "
+            f"attendance record id={record.id} | check-in result=SUCCESS"
+        )
 
         serializer = AttendanceRecordSerializer(record, context={'request': request})
         return Response({
@@ -1442,6 +1475,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
                 result_list.append({
                     'user_id': effective_user_id,
+                    'external_user_id': ext_u_id,
                     'employee_id': emp_display,
                     'user_name': name,
                     'phone_number': mobile,
