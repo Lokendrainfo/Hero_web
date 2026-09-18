@@ -383,28 +383,83 @@ class LoginSerializer(serializers.Serializer):
                 if v_ext_id:
                     hero_vendor = Vendor.objects.filter(Q(external_vendor_id=v_ext_id) | Q(name__iexact=v_name)).first()
 
-                if not user_obj:
-                    # Match existing user by external_user_id or phone or email before creating
-                    if u_ext_id:
-                        user_obj = User.objects.filter(external_user_id=u_ext_id).first()
-                    if not user_obj and u_mobile:
-                        user_obj = User.objects.filter(Q(phone_number=u_mobile) | Q(username=u_mobile)).first()
-                    if not user_obj and u_email and not u_email.lower().startswith('user@'):
-                        user_obj = User.objects.filter(email__iexact=u_email).first()
+                matched_user = None
+                mapping_status = 'MISSING'
 
-                if user_obj:
-                    user = user_obj
+                # 1. Primary canonical: iLync userId -> Hero User.external_user_id
+                if u_ext_id:
+                    ext_matches = list(User.objects.filter(external_user_id=u_ext_id))
+                    if len(ext_matches) > 1:
+                        mapping_status = 'DUPLICATE_EXTERNAL_ID'
+                        print(
+                            f"[iLyncMapping] vendor_external_id={v_ext_id} | vendor_hero_id={hero_vendor.id if hero_vendor else None} | "
+                            f"iLync_userId={u_ext_id} | iLync_empId={u_emp_id} | "
+                            f"Hero_user_id=None | Hero_external_user_id={u_ext_id} | "
+                            f"Hero_vendor_id=None | mapping_status=DUPLICATE_EXTERNAL_ID"
+                        )
+                    elif len(ext_matches) == 1:
+                        cand = ext_matches[0]
+                        if hero_vendor and cand.vendor_id and cand.vendor_id != hero_vendor.id:
+                            # Rule 8: If external_user_id exists but belongs to another vendor:
+                            # DO NOT silently reassign it. Treat it as a mapping conflict. Log the conflict. Do not use that Hero user for attendance.
+                            mapping_status = 'CROSS_VENDOR_CONFLICT'
+                            print(
+                                f"[iLyncMapping] vendor_external_id={v_ext_id} | vendor_hero_id={hero_vendor.id if hero_vendor else None} | "
+                                f"iLync_userId={u_ext_id} | iLync_empId={u_emp_id} | "
+                                f"Hero_user_id={cand.id} | Hero_external_user_id={cand.external_user_id} | "
+                                f"Hero_vendor_id={cand.vendor_id} | mapping_status=CROSS_VENDOR_CONFLICT"
+                            )
+                        else:
+                            matched_user = cand
+                            mapping_status = 'CORRECT'
+
+                # 2. Secondary fallback matches ONLY within this vendor, and ONLY if user has no external_user_id
+                if not matched_user and mapping_status != 'CROSS_VENDOR_CONFLICT':
+                    cand_qs = User.objects.filter(vendor=hero_vendor) if hero_vendor else User.objects.none()
+                    cand_user = None
+                    if u_emp_id:
+                        cand_user = cand_qs.filter(Q(employee_id=u_emp_id) | Q(username=u_emp_id)).first()
+                    if not cand_user and u_mobile:
+                        cand_user = cand_qs.filter(Q(phone_number=u_mobile) | Q(username=u_mobile)).first()
+                    if not cand_user and u_email and not u_email.lower().startswith('user@'):
+                        cand_user = cand_qs.filter(email__iexact=u_email).first()
+
+                    if cand_user:
+                        if cand_user.external_user_id and cand_user.external_user_id != u_ext_id:
+                            mapping_status = 'CROSS_VENDOR_CONFLICT'
+                            print(
+                                f"[iLyncMapping] vendor_external_id={v_ext_id} | vendor_hero_id={hero_vendor.id if hero_vendor else None} | "
+                                f"iLync_userId={u_ext_id} | iLync_empId={u_emp_id} | "
+                                f"Hero_user_id={cand_user.id} | Hero_external_user_id={cand_user.external_user_id} | "
+                                f"Hero_vendor_id={cand_user.vendor_id} | mapping_status=CROSS_VENDOR_CONFLICT"
+                            )
+                            cand_user = None
+                        else:
+                            matched_user = cand_user
+                            mapping_status = 'CORRECT'
+
+                print(
+                    f"[iLyncMapping] vendor_external_id={v_ext_id} | vendor_hero_id={hero_vendor.id if hero_vendor else None} | "
+                    f"iLync_userId={u_ext_id} | iLync_empId={u_emp_id} | "
+                    f"Hero_user_id={matched_user.id if matched_user else None} | "
+                    f"Hero_external_user_id={matched_user.external_user_id if matched_user else None} | "
+                    f"Hero_vendor_id={matched_user.vendor_id if matched_user else None} | "
+                    f"mapping_status={mapping_status}"
+                )
+
+                if matched_user:
+                    user = matched_user
                     up_fields = []
-                    if u_ext_id and user.external_user_id != u_ext_id:
+                    if u_ext_id and not user.external_user_id:
                         user.external_user_id = u_ext_id
                         up_fields.append('external_user_id')
-                    if u_emp_id and user.employee_id != u_emp_id:
+                    if u_emp_id and not user.employee_id:
                         user.employee_id = u_emp_id
                         up_fields.append('employee_id')
                     if u_mobile and not user.phone_number:
                         user.phone_number = u_mobile
                         up_fields.append('phone_number')
-                    if hero_vendor and user.vendor != hero_vendor:
+                    if hero_vendor and not user.vendor:
                         user.vendor = hero_vendor
                         up_fields.append('vendor')
                     if resolved_role and user.role != resolved_role:
@@ -415,7 +470,7 @@ class LoginSerializer(serializers.Serializer):
                         up_fields.append('is_active')
                     if up_fields:
                         user.save(update_fields=up_fields)
-                else:
+                elif mapping_status != 'CROSS_VENDOR_CONFLICT':
                     # Create minimum required Hero user record from LIVE iLync data
                     base_username = u_emp_id or u_mobile or u_ext_id or f"user_{username}"
                     clean_uname = base_username
@@ -442,6 +497,13 @@ class LoginSerializer(serializers.Serializer):
                     )
                     user.set_password(password or 'Pass@123')
                     user.save(update_fields=['password'])
+                    mapping_status = 'CORRECT'
+                    print(
+                        f"[iLyncMapping] vendor_external_id={v_ext_id} | vendor_hero_id={hero_vendor.id if hero_vendor else None} | "
+                        f"iLync_userId={u_ext_id} | iLync_empId={u_emp_id} | "
+                        f"Hero_user_id={user.id} | Hero_external_user_id={user.external_user_id} | "
+                        f"Hero_vendor_id={user.vendor_id} | mapping_status={mapping_status}"
+                    )
 
                 if hero_vendor and user:
                     HeroVendorAssignment.objects.get_or_create(

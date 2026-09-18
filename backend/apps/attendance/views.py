@@ -234,19 +234,35 @@ def resolve_target_user(user_id_param, request_user=None):
     if not param_str or param_str.lower() in ('none', 'null', 'undefined'):
         return None
 
+    target_vendor = None
+    if request_user:
+        target_vendor = getattr(request_user, 'vendor', None) or get_user_vendor(request_user)
+
     # 1. Search FIRST by external_user_id (exact match for iLync ID)
     u = User.objects.filter(external_user_id=param_str).first()
     if u:
+        if target_vendor and u.vendor_id and u.vendor_id != target_vendor.id:
+            # Rule 8: Treat as mapping conflict. Do not use cross-vendor user.
+            print(
+                f"[iLyncMapping] vendor_external_id={getattr(target_vendor, 'external_vendor_id', None)} | "
+                f"vendor_hero_id={target_vendor.id} | iLync_userId={param_str} | iLync_empId=None | "
+                f"Hero_user_id={u.id} | Hero_external_user_id={u.external_user_id} | "
+                f"Hero_vendor_id={u.vendor_id} | mapping_status=CROSS_VENDOR_CONFLICT"
+            )
+            return None
         return u
 
-    # 2. Search by employee_id, username, phone_number, email
-    u = User.objects.filter(
+    # 2. Search by employee_id, username, phone_number, email (scoped to target_vendor if known)
+    cand_qs = User.objects.filter(vendor=target_vendor) if target_vendor else User.objects.all()
+    u = cand_qs.filter(
         Q(employee_id=param_str) |
         Q(username=param_str) |
         Q(phone_number=param_str) |
         Q(email__iexact=param_str)
     ).first()
     if u:
+        if u.external_user_id and u.external_user_id != param_str:
+            return None
         return u
 
     # 2b. Search with common vendor/employee prefixes stripped (e.g. VND-9000000010, EMP-9000000010)
@@ -254,33 +270,33 @@ def resolve_target_user(user_id_param, request_user=None):
         if param_str.upper().startswith(prefix):
             clean_token = param_str[len(prefix):].split('-')[0].strip()
             if clean_token:
-                u = User.objects.filter(
+                u = cand_qs.filter(
                     Q(username=clean_token) |
                     Q(phone_number=clean_token) |
                     Q(employee_id__icontains=clean_token)
                 ).first()
                 if u:
+                    if u.external_user_id and u.external_user_id != param_str:
+                        return None
                     return u
 
     # 3. If not found by external ID / username / email / phone, check if param_str is digit matching local User ID primary key
     if param_str.isdigit():
         u = User.objects.filter(id=int(param_str)).first()
         if u:
+            if target_vendor and u.vendor_id and u.vendor_id != target_vendor.id:
+                return None
             return u
-
-    target_vendor = None
-    if request_user:
-        target_vendor = getattr(request_user, 'vendor', None) or get_user_vendor(request_user)
 
     # 3b. If still not found and request_user has a vendor with external_vendor_id, sync live vendor users to resolve
     if target_vendor and getattr(target_vendor, 'external_vendor_id', None):
         try:
             from apps.vendors.services import sync_vendor_detail_links
             sync_vendor_detail_links(target_vendor, target_vendor.external_vendor_id)
-            u = User.objects.filter(external_user_id=param_str).first()
+            u = User.objects.filter(external_user_id=param_str, vendor=target_vendor).first()
             if u:
                 return u
-            u = User.objects.filter(
+            u = User.objects.filter(vendor=target_vendor).filter(
                 Q(employee_id=param_str) |
                 Q(username=param_str) |
                 Q(phone_number=param_str)
@@ -1337,41 +1353,86 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 designation = str(u_info.get('designation') or u_info.get('role') or 'OPERATOR').strip()
 
                 # Canonical User Mapping:
-                # 1. Primary: iLync userId -> Hero User.external_user_id
                 matched_user = None
-                if ext_u_id:
-                    matched_user = User.objects.filter(external_user_id=ext_u_id).first()
-                if not matched_user and emp_id_str:
-                    matched_user = User.objects.filter(Q(employee_id=emp_id_str) | Q(username=emp_id_str)).first()
-                    if not matched_user:
-                        for pref in ('VND-', 'EMP-', 'VND_', 'EMP_'):
-                            if emp_id_str.upper().startswith(pref):
-                                cln = emp_id_str[len(pref):].split('-')[0].strip()
-                                if cln:
-                                    matched_user = User.objects.filter(Q(username=cln) | Q(phone_number=cln)).first()
-                                    if matched_user:
-                                        break
-                if not matched_user and mobile:
-                    matched_user = User.objects.filter(Q(phone_number=mobile) | Q(username=mobile)).first()
-                if not matched_user and email and not email.lower().startswith('user@'):
-                    matched_user = User.objects.filter(email__iexact=email).first()
+                mapping_status = 'MISSING'
 
-                # Temporary diagnostic logging (no sensitive credentials)
+                # 1. Primary: iLync userId -> Hero User.external_user_id
+                if ext_u_id:
+                    ext_matches = list(User.objects.filter(external_user_id=ext_u_id))
+                    if len(ext_matches) > 1:
+                        mapping_status = 'DUPLICATE_EXTERNAL_ID'
+                        print(
+                            f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={v_obj.id} | "
+                            f"iLync_userId={ext_u_id} | iLync_empId={emp_id_str} | "
+                            f"Hero_user_id=None | Hero_external_user_id={ext_u_id} | "
+                            f"Hero_vendor_id=None | mapping_status=DUPLICATE_EXTERNAL_ID"
+                        )
+                    elif len(ext_matches) == 1:
+                        cand = ext_matches[0]
+                        if cand.vendor_id and cand.vendor_id != v_obj.id:
+                            # Rule 8: If external_user_id exists but belongs to another vendor:
+                            # DO NOT silently reassign it. Treat it as a mapping conflict. Log the conflict. Do not use that Hero user for attendance.
+                            mapping_status = 'CROSS_VENDOR_CONFLICT'
+                            print(
+                                f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={v_obj.id} | "
+                                f"iLync_userId={ext_u_id} | iLync_empId={emp_id_str} | "
+                                f"Hero_user_id={cand.id} | Hero_external_user_id={cand.external_user_id} | "
+                                f"Hero_vendor_id={cand.vendor_id} | mapping_status=CROSS_VENDOR_CONFLICT"
+                            )
+                            matched_user = None
+                        else:
+                            matched_user = cand
+                            mapping_status = 'CORRECT'
+
+                # 2. Secondary fallback matches ONLY within this vendor, and ONLY if user has no external_user_id
+                if not matched_user and mapping_status != 'CROSS_VENDOR_CONFLICT':
+                    cand_qs = User.objects.filter(vendor=v_obj)
+                    cand_user = None
+                    if emp_id_str:
+                        cand_user = cand_qs.filter(Q(employee_id=emp_id_str) | Q(username=emp_id_str)).first()
+                        if not cand_user:
+                            for pref in ('VND-', 'EMP-', 'VND_', 'EMP_'):
+                                if emp_id_str.upper().startswith(pref):
+                                    cln = emp_id_str[len(pref):].split('-')[0].strip()
+                                    if cln:
+                                        cand_user = cand_qs.filter(Q(username=cln) | Q(phone_number=cln)).first()
+                                        if cand_user:
+                                            break
+                    if not cand_user and mobile:
+                        cand_user = cand_qs.filter(Q(phone_number=mobile) | Q(username=mobile)).first()
+                    if not cand_user and email and not email.lower().startswith('user@'):
+                        cand_user = cand_qs.filter(email__iexact=email).first()
+
+                    if cand_user:
+                        if cand_user.external_user_id and cand_user.external_user_id != ext_u_id:
+                            mapping_status = 'CROSS_VENDOR_CONFLICT'
+                            print(
+                                f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={v_obj.id} | "
+                                f"iLync_userId={ext_u_id} | iLync_empId={emp_id_str} | "
+                                f"Hero_user_id={cand_user.id} | Hero_external_user_id={cand_user.external_user_id} | "
+                                f"Hero_vendor_id={cand_user.vendor_id} | mapping_status=CROSS_VENDOR_CONFLICT"
+                            )
+                            cand_user = None
+                        else:
+                            matched_user = cand_user
+                            mapping_status = 'CORRECT'
+
                 print(
-                    f"[AttendanceRoster] vendor_ext_id={ext_v_id} | vendor_name={v_obj.name} | "
-                    f"iLync_users_count={len(raw_users)} | iLync_userId={ext_u_id} | empId={emp_id} | "
-                    f"Hero_matched_user_id={matched_user.id if matched_user else None} | "
+                    f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={v_obj.id} | "
+                    f"iLync_userId={ext_u_id} | iLync_empId={emp_id_str} | "
+                    f"Hero_user_id={matched_user.id if matched_user else None} | "
                     f"Hero_external_user_id={matched_user.external_user_id if matched_user else None} | "
-                    f"Hero_vendor_id={matched_user.vendor_id if matched_user else None}"
+                    f"Hero_vendor_id={matched_user.vendor_id if matched_user else None} | "
+                    f"mapping_status={mapping_status}"
                 )
 
                 # Auto-enrich matched user external_user_id / employee_id / vendor without duplicate creation
                 if matched_user:
                     up_fields = []
-                    if ext_u_id and matched_user.external_user_id != ext_u_id:
+                    if ext_u_id and not matched_user.external_user_id:
                         matched_user.external_user_id = ext_u_id
                         up_fields.append('external_user_id')
-                    if emp_id_str and matched_user.employee_id != emp_id_str:
+                    if emp_id_str and not matched_user.employee_id:
                         matched_user.employee_id = emp_id_str
                         up_fields.append('employee_id')
                     if not matched_user.vendor_id and v_obj:
@@ -1398,21 +1459,8 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 # Find today's AttendanceRecord from Hero DB for this user
                 rec_qs = AttendanceRecord.objects.filter(date=req_date).exclude(attendance_type='MACHINE')
                 rec = None
-                if ext_u_id:
-                    rec = rec_qs.filter(
-                        Q(user__external_user_id=ext_u_id) |
-                        Q(user__username=ext_u_id) |
-                        Q(user__employee_id=ext_u_id) |
-                        (Q(user__id=int(ext_u_id)) if ext_u_id.isdigit() else Q(pk=-1))
-                    ).first()
-                if not rec and matched_user:
+                if matched_user:
                     rec = rec_qs.filter(user=matched_user).first()
-                if not rec and emp_id_str:
-                    rec = rec_qs.filter(Q(user__employee_id=emp_id_str) | Q(user__username=emp_id_str)).first()
-                if not rec and email and not email.lower().startswith('user@'):
-                    rec = rec_qs.filter(user__email__iexact=email).first()
-                if not rec and mobile:
-                    rec = rec_qs.filter(Q(user__phone_number=mobile) | Q(user__username=mobile)).first()
 
                 st = (rec.status if rec else 'NOT_MARKED').upper()
                 counts['total'] += 1
