@@ -9,6 +9,7 @@ from apps.common.serializers import CircleSerializer, DistrictSerializer, BlockS
 class UserSerializer(serializers.ModelSerializer):
     vendor_details = VendorSerializer(source='vendor', read_only=True)
     name = serializers.SerializerMethodField()
+    designation = serializers.SerializerMethodField()
     roles = serializers.SerializerMethodField()
     vendors = serializers.SerializerMethodField()
     permissions = serializers.SerializerMethodField()
@@ -46,7 +47,7 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'username', 'external_user_id', 'name', 'email', 'first_name', 'last_name',
-            'employee_id', 'phone_number', 'vendor', 'vendor_id', 'vendor_details', 'vendor_name', 'role', 'roles',
+            'employee_id', 'phone_number', 'vendor', 'vendor_id', 'vendor_details', 'vendor_name', 'role', 'roles', 'designation',
             'vendors', 'permissions', 'reporting_manager', 'reporting_manager_id', 'reporting_manager_name',
             'reporting_manager_details', 'direct_reports', 'password',
             'user_type', 'advance_scope_type', 'selected_circle', 'selected_district', 'selected_block',
@@ -84,6 +85,9 @@ class UserSerializer(serializers.ModelSerializer):
     def get_name(self, obj):
         full_name = obj.get_full_name()
         return full_name if full_name.strip() else obj.username
+
+    def get_designation(self, obj):
+        return getattr(obj, 'designation', None) or getattr(obj, 'role', '') or ''
 
     def get_vendor_name(self, obj):
         if obj.vendor:

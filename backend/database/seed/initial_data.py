@@ -18,8 +18,8 @@ def seed_all():
     # Superuser & Admins
     admin, _ = User.objects.get_or_create(username="admin", defaults={"email": "admin@hero.com"})
     admin.set_password("admin123")
-    admin.first_name = "Anupriya"
-    admin.last_name = "Sharma"
+    admin.first_name = "Admin"
+    admin.last_name = ""
     admin.vendor = hero_vendor
     admin.role = "ADMIN"
     admin.is_superuser = True

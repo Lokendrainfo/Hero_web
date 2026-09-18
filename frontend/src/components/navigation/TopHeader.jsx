@@ -78,7 +78,7 @@ export const TopHeader = ({ onToggleSidebar, onOpenDrawer }) => {
   }
 
   const displayName = user?.name || [user?.first_name, user?.last_name].filter(Boolean).join(' ') || user?.username || 'User';
-  const primaryRole = roles && roles.length > 0 ? roles[0] : (user?.role || 'VIEWER');
+  const primaryRole = user?.designation || (roles && roles.length > 0 ? roles[0] : (user?.role || 'VIEWER'));
   const vendorName = vendor?.name || user?.vendor_name || (vendors || [])[0]?.name || '—';
   const initials = displayName[0].toUpperCase();
 

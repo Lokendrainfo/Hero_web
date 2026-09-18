@@ -51,7 +51,23 @@ export const Machines = () => {
         setEmptyStateCode(next.emptyStateCode);
         setEmptyStateMessage(next.emptyStateMessage);
       })
-      .catch(console.error)
+      .catch((err) => {
+        console.error(err);
+        const errPayload = err?.response?.data || {};
+        setAllMachines([]);
+        setStatusCounts({
+          ALL: 0,
+          COMMISSIONED: 0,
+          LIVE: 0,
+          RUNNING: 0,
+          IDLE: 0,
+          MAINTENANCE: 0,
+          BREAKDOWN: 0,
+          OFFLINE: 0,
+        });
+        setEmptyStateCode('FIBERFORCE_UNAVAILABLE');
+        setEmptyStateMessage(errPayload.empty_state_message || errPayload.error || 'Unable to load live machine data.');
+      })
       .finally(() => {
         if (!isSilent) setLoading(false);
       });
@@ -99,6 +115,9 @@ export const Machines = () => {
     let body = emptyStateMessage || 'Nothing matches this filter or search.';
     if (allMachines.length > 0) {
       body = 'Nothing matches this filter or search.';
+    } else if (emptyStateCode === 'FIBERFORCE_UNAVAILABLE') {
+      title = 'Unable to load live machine data';
+      body = emptyStateMessage || 'Unable to connect to the FiberForce live machine API. Please check your connection or try again later.';
     } else if (emptyStateCode === 'NO_ASSIGNED_MACHINES') {
       title = 'No machines assigned';
       body = 'This vendor has no machines in ILYNC.';

@@ -4,224 +4,86 @@ from rest_framework.response import Response
 from .models import Machine
 from .serializers import MachineSerializer
 from apps.common.responses import success_response
-from apps.integrations.fiberforce.client import FiberForceClient
+from apps.common.vendor_scope import get_user_vendor_ids
+from .services import fetch_live_fiberforce_machines, get_live_machine_detail
 
-from django.db.models import Q
-
-from apps.common.vendor_scope import filter_queryset_by_vendor, check_vendor_access, get_user_vendor_ids
 
 class MachineViewSet(viewsets.ModelViewSet):
     queryset = Machine.objects.all().order_by('id')
     serializer_class = MachineSerializer
     permission_classes = [permissions.AllowAny]
 
-    def get_queryset(self):
-        user = self.request.user
-        qs = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=self.request)
-
-        # Search Filter
-        search = self.request.query_params.get('search', '').strip()
-        if search:
-            qs = qs.filter(
-                Q(machine_chassis_no__icontains=search) |
-                Q(serial_number__icontains=search) |
-                Q(engine_no__icontains=search) |
-                Q(model_code__icontains=search) |
-                Q(model_name__icontains=search) |
-                Q(name__icontains=search)
-            )
-
-        # Status Filter (COMMISSIONED = vendor-assigned; applied in list())
-        status_param = self.request.query_params.get('status', '').strip()
-        if status_param and status_param.upper() not in ('ALL', 'COMMISSIONED'):
-            if status_param.upper() == 'LIVE':
-                qs = qs.filter(is_online=True)
-            elif status_param.upper() == 'OFFLINE':
-                qs = qs.filter(is_online=False)
-            else:
-                qs = qs.filter(status__iexact=status_param)
-
-        return qs
-
     def list(self, request, *args, **kwargs):
-        user = request.user
-        should_resync = request.query_params.get('resync', '').lower() in ['true', '1'] or request.query_params.get('refresh', '').lower() in ['true', '1']
-        if should_resync:
-            try:
-                from .services import sync_fiberforce_machines
-                sync_fiberforce_machines()
-            except Exception:
-                pass
+        """
+        Live Machines List:
+        Sources live machine data from FiberForce/HDD API directly.
+        Does NOT persist or synchronize machine master records into Hero DB.
+        """
+        res = fetch_live_fiberforce_machines(request.user, request.query_params)
+        if not res.get("success") and res.get("status_code") == 503:
+            return Response(res, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response(res, status=status.HTTP_200_OK)
 
-        base_qs = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
-
-        from apps.vendors.models import Vendor
-        from .services import (
-            collect_ilync_assigned_chassis,
-            filter_queryset_to_assigned,
-        )
-
-        allowed_vendor_ids = get_user_vendor_ids(user)
-        v_qs = Vendor.objects.filter(is_active=True)
-        if allowed_vendor_ids is not None:
-            v_qs = v_qs.filter(id__in=allowed_vendor_ids)
-
-        req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
-        if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
-            v_filter = Q(external_vendor_id=req_v) | Q(name__iexact=req_v)
-            if str(req_v).isdigit():
-                v_filter |= Q(id=int(req_v))
-            v_qs = v_qs.filter(v_filter)
-
-        assigned_chassis = collect_ilync_assigned_chassis(list(v_qs))
-        assigned_qs = filter_queryset_to_assigned(base_qs, assigned_chassis)
-        vendor_assigned_count = assigned_qs.count()
-
-        empty_state_code = "OK"
-        empty_state_message = ""
-        if allowed_vendor_ids is not None and not allowed_vendor_ids:
-            empty_state_code = "NO_ASSIGNED_MACHINES"
-            empty_state_message = "No machines are assigned to this vendor."
-            vendor_assigned_count = 0
-        elif len(assigned_chassis) == 0:
-            empty_state_code = "NO_ASSIGNED_MACHINES"
-            empty_state_message = "No machines are assigned to this vendor."
-        elif vendor_assigned_count == 0 and base_qs.count() == 0:
-            empty_state_code = "NOT_IN_FIBERFORCE"
-            empty_state_message = "Machine assigned to vendor but not available in FiberForce."
-        elif vendor_assigned_count == 0 and len(assigned_chassis) > 0:
-            empty_state_code = "NOT_IN_FIBERFORCE"
-            empty_state_message = "Machine assigned to vendor but not available in FiberForce."
-
-        # Counts: COMMISSIONED = vendor-assigned machines only
-        status_counts = {
-            'ALL': base_qs.count(),
-            'COMMISSIONED': vendor_assigned_count,
-            'LIVE': base_qs.filter(is_online=True).count(),
-            'RUNNING': base_qs.filter(status__iexact='RUNNING').count(),
-            'IDLE': base_qs.filter(status__iexact='IDLE').count(),
-            'MAINTENANCE': base_qs.filter(status__iexact='MAINTENANCE').count(),
-            'BREAKDOWN': base_qs.filter(status__iexact='BREAKDOWN').count(),
-            'OFFLINE': base_qs.filter(is_online=False).count(),
-        }
-
-        qs = self.get_queryset()
-        status_param = (request.query_params.get('status') or '').strip().upper()
-        if status_param == 'COMMISSIONED':
-            qs = filter_queryset_to_assigned(qs, assigned_chassis)
-
-        assigned_id_set = set(assigned_qs.values_list('id', flat=True))
-
-        def decorate(rows):
-            out = []
-            for row in rows:
-                item = dict(row)
-                chassis = str(
-                    item.get('machine_chassis_no')
-                    or item.get('serial_number')
-                    or item.get('name')
-                    or item.get('code')
-                    or ''
-                ).strip()
-                is_assigned = bool(chassis and chassis in assigned_chassis)
-                if not is_assigned:
-                    mid = item.get('id')
-                    is_assigned = bool(mid and mid in assigned_id_set)
-                item['is_vendor_assigned'] = is_assigned
-                item['is_commissioned_tab'] = is_assigned
-                out.append(item)
-            return out
-
-        page = self.paginate_queryset(qs)
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            res_data = self.get_paginated_response(decorate(serializer.data)).data
-            res_data['status_counts'] = status_counts
-            res_data['vendor_assigned_count'] = vendor_assigned_count
-            res_data['fiberforce_matched_count'] = base_qs.count()
-            res_data['assigned_chassis'] = sorted(assigned_chassis)
-            res_data['empty_state_code'] = empty_state_code
-            res_data['empty_state_message'] = empty_state_message
-            return Response(res_data)
-
-        serializer = self.get_serializer(qs, many=True)
-        return success_response(data={
-            "count": len(serializer.data),
-            "results": decorate(serializer.data),
-            "status_counts": status_counts,
-            "vendor_assigned_count": vendor_assigned_count,
-            "fiberforce_matched_count": base_qs.count(),
-            "assigned_chassis": sorted(assigned_chassis),
-            "empty_state_code": empty_state_code,
-            "empty_state_message": empty_state_message
-        })
-
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        if instance.vendor_id:
-            check_vendor_access(request.user, instance.vendor_id)
-        serializer = self.get_serializer(instance)
-        return success_response(data=serializer.data)
+    def retrieve(self, request, pk=None, *args, **kwargs):
+        """
+        Live Machine Detail:
+        Sources live machine details directly from FiberForce API.
+        """
+        res = get_live_machine_detail(request.user, pk)
+        if not res.get("success"):
+            status_code = res.get("status_code", 404)
+            if status_code == 503:
+                return Response(res, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response(res, status=status.HTTP_404_NOT_FOUND)
+        return success_response(data=res["data"])
 
     @action(detail=False, methods=['post', 'get'], url_path='sync-fiberforce')
     def sync_fiberforce(self, request):
+        """
+        Manual CLI/Admin sync action if explicitly invoked.
+        Never called automatically during page loading.
+        """
         from .services import sync_fiberforce_machines
         result = sync_fiberforce_machines()
         return Response(result)
 
     @action(detail=True, methods=['get'])
     def status(self, request, pk=None):
-        machine = self.get_object()
-        if machine.vendor_id:
-            check_vendor_access(request.user, machine.vendor_id)
+        """
+        Live Machine Status:
+        Returns real-time telemetry from FiberForce API.
+        """
+        res = get_live_machine_detail(request.user, pk)
+        if not res.get("success"):
+            status_code = res.get("status_code", 404)
+            return Response(res, status=status.HTTP_404_NOT_FOUND if status_code == 404 else status.HTTP_503_SERVICE_UNAVAILABLE)
+        m = res["data"]
         return success_response(data={
-            'id': machine.id,
-            'name': machine.name,
-            'status': machine.status,
-            'fuel_level': float(machine.current_fuel_level),
-            'hours_operated': float(machine.engine_hours),
-            'last_ping': machine.last_ping,
-            'chassis_no': machine.machine_chassis_no,
-            'model_name': machine.model_name
+            'id': m.get('id'),
+            'name': m.get('name'),
+            'status': m.get('status'),
+            'fuel_level': float(m.get('current_fuel_level') or 0.0),
+            'hours_operated': float(m.get('engine_hours') or 0.0),
+            'last_ping': m.get('last_ping'),
+            'chassis_no': m.get('machine_chassis_no'),
+            'model_name': m.get('model_name')
         })
 
     @action(detail=False, methods=['get'], url_path='assigned')
     def assigned_machines(self, request):
-        user = request.user
-        should_resync = request.query_params.get('resync', '').lower() in ['true', '1']
-        
-        # Auto-resync from external APIs (FiberForce & Ilync) if DB is empty or explicitly requested
-        if should_resync or not Machine.objects.exists():
-            try:
-                from .services import sync_fiberforce_machines
-                sync_fiberforce_machines()
-            except Exception as e:
-                pass
-
-        machines = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
-
-        results = []
-        for m in machines:
-            vendor_name = m.vendor.name if m.vendor else "Unassigned Vendor"
-            results.append({
-                "id": m.id,
-                "machine_chassis_no": m.machine_chassis_no or getattr(m, 'chassis_number', getattr(m, 'serial_number', f"CH-{m.id}")),
-                "model_code": m.model_code or getattr(m, 'model', 'A600'),
-                "model_name": m.model_name or getattr(m, 'name', 'APOLLO A600 V2'),
-                "site_name": m.site_name or getattr(m, 'location_name', None) or getattr(m, 'location', "") or "",
-                "site_id": m.site_id,
-                "status": m.status or 'Online',
-                "is_commissioned": m.is_commissioned,
-                "is_online": m.is_online,
-                "vendor_id": m.vendor_id,
-                "vendor_name": vendor_name,
-                "engine_no": m.engine_no or '',
-                "vehicle_no": m.vehicle_no,
-                "fuel_card": m.fuel_card,
-                "current_fuel_level": float(m.current_fuel_level or 0.0),
-                "fuel_percentage": m.fuel_percentage or 0,
-                "engine_hours": float(m.engine_hours or 0.0)
-            })
+        """
+        Live Assigned Machines:
+        Returns vendor-assigned machines from live FiberForce API without DB writes.
+        """
+        res = fetch_live_fiberforce_machines(request.user, request.query_params)
+        if not res.get("success") and res.get("status_code") == 503:
+            return Response(res, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        all_results = res.get('results', [])
+        allowed_v_ids = get_user_vendor_ids(request.user)
+        if allowed_v_ids is not None:
+            results = all_results
+        else:
+            results = [m for m in all_results if m.get('is_vendor_assigned')]
         return Response({
             "success": True,
             "data": results,

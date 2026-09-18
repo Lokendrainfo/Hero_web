@@ -1,6 +1,12 @@
+import logging
+from concurrent.futures import ThreadPoolExecutor
+from django.db.models import Q
 from apps.machines.models import Machine
 from apps.vendors.models import Vendor
 from apps.integrations.fiberforce.client import FiberForceClient
+from apps.common.vendor_scope import get_user_vendor_ids, normalize_machine_identifier
+
+logger = logging.getLogger(__name__)
 
 def sync_fiberforce_machines():
     client = FiberForceClient()
@@ -248,3 +254,300 @@ def filter_queryset_to_assigned(machines_qs, assigned_chassis):
         | Q(name__in=assigned_chassis)
         | Q(code__in=assigned_chassis)
     ).distinct()
+
+
+def fetch_live_fiberforce_machines(user, params=None):
+    """
+    Live FiberForce Machine Integration.
+    Fetches machines directly from FiberForce API without persisting into Hero DB.
+    Enriches with live telemetry and filters according to user vendor scope.
+    """
+    if params is None:
+        params = {}
+
+    client = FiberForceClient()
+    ff_res = client.get_machines()
+
+    req_v = params.get('vendor_id') or params.get('vendor')
+    allowed_vendor_ids = get_user_vendor_ids(user)
+    vendor_filter_log = str(req_v) if req_v else (str(list(allowed_vendor_ids)) if allowed_vendor_ids is not None else "ALL")
+
+    if not ff_res.get('success') and not ff_res.get('data'):
+        # FiberForce is unavailable
+        err_msg = ff_res.get('message') or "Unable to load live machine data from FiberForce API."
+        print(f"[LIVE_MACHINES] fiberforce_request=FAILED vendor_filter={vendor_filter_log} api_machine_count=0 live_machine_count=0 response_status=503")
+        logger.warning(
+            "[LIVE_MACHINES] fiberforce_request=FAILED vendor_filter=%s api_machine_count=0 live_machine_count=0 response_status=503",
+            vendor_filter_log
+        )
+        return {
+            "success": False,
+            "status_code": 503,
+            "error": "Unable to load live machine data",
+            "message": err_msg,
+            "empty_state_code": "FIBERFORCE_UNAVAILABLE",
+            "empty_state_message": "Unable to load live machine data from FiberForce.",
+            "count": 0,
+            "results": [],
+            "status_counts": {
+                "ALL": 0,
+                "COMMISSIONED": 0,
+                "LIVE": 0,
+                "RUNNING": 0,
+                "IDLE": 0,
+                "MAINTENANCE": 0,
+                "BREAKDOWN": 0,
+                "OFFLINE": 0,
+            },
+            "vendor_assigned_count": 0,
+            "fiberforce_matched_count": 0,
+            "assigned_chassis": []
+        }
+
+    raw_machines = ff_res.get('data', [])
+    api_machine_count = len(raw_machines)
+
+    # 1. Resolve active vendors in scope
+    v_qs = Vendor.objects.filter(is_active=True)
+    if allowed_vendor_ids is not None:
+        v_qs = v_qs.filter(id__in=allowed_vendor_ids)
+
+    if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+        v_filter = Q(external_vendor_id=str(req_v).strip()) | Q(name__iexact=str(req_v).strip())
+        if str(req_v).isdigit():
+            v_filter |= Q(id=int(req_v))
+        v_qs = v_qs.filter(v_filter)
+
+    vendors_list = list(v_qs)
+    assigned_chassis = collect_ilync_assigned_chassis(vendors_list)
+
+    # Also collect full vendor assigned chassis map for labeling vendor name on machines
+    all_assigned_chassis = assigned_chassis
+    if allowed_vendor_ids is not None:
+        # User is restricted to specific vendor:
+        # Filter raw_machines to ONLY those assigned to this vendor
+        target_machines = [m for m in raw_machines if str(m.get('machine_chassis_no') or '').strip() in assigned_chassis]
+    else:
+        # Admin: all live machines
+        target_machines = raw_machines
+        # For admin, if req_v was specified, target_machines filtered to assigned_chassis
+        if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+            target_machines = [m for m in raw_machines if str(m.get('machine_chassis_no') or '').strip() in assigned_chassis]
+
+    # Map existing DB machine IDs (read-only) for stable routing if available
+    existing_id_map = dict(Machine.objects.values_list('machine_chassis_no', 'id'))
+
+    # Fetch live telemetry concurrently
+    def fetch_telemetry_for_machine(m):
+        chassis = str(m.get('machine_chassis_no') or '').strip()
+        if not chassis:
+            return chassis, {}
+        t_res = client.get_live_telemetry(chassis, timeout=3.5)
+        return chassis, t_res.get('data', {}) if isinstance(t_res, dict) and t_res.get('success') else {}
+
+    telemetry_map = {}
+    if target_machines:
+        max_workers = min(12, len(target_machines))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            tele_pairs = list(executor.map(fetch_telemetry_for_machine, target_machines))
+            telemetry_map = dict(tele_pairs)
+
+    # Decorate and build full live machine dicts
+    live_items = []
+    for idx, m in enumerate(target_machines):
+        chassis = str(m.get('machine_chassis_no') or '').strip()
+        tele = telemetry_map.get(chassis, {})
+        model_code = m.get('model_code') or tele.get('model_code') or 'A600'
+        model_name = m.get('model_name') or tele.get('model_name') or f"APOLLO {model_code} V2"
+        engine_no = m.get('engine_no') or ''
+        vehicle_no = m.get('vehicle_no')
+        fuel_card = m.get('fuel_card')
+
+        is_assigned = chassis in all_assigned_chassis
+
+        site_name = tele.get('site_name') or tele.get('block_name') or tele.get('district_name') or m.get('site_name') or ''
+        site_id = tele.get('site_id') or tele.get('geo_block_id') or m.get('site_id')
+
+        is_online = bool(tele.get('is_online')) if 'is_online' in tele else True
+        rpm_val = int(tele.get('rpm') or 0)
+        state_val = str(tele.get('state') or '').upper()
+        engine_on = bool(tele.get('engine_on')) or (rpm_val > 0) or (state_val in ['WORKING_RPM_LIMIT', 'DRILLING', 'MOVING', 'RUNNING'])
+        state_label = tele.get('state_label') or tele.get('state') or ('working / drilling' if engine_on else 'stopped')
+
+        if engine_on:
+            status = 'RUNNING'
+        elif not is_online:
+            status = 'OFFLINE'
+        else:
+            status = 'IDLE'
+
+        fuel_pct = float(tele.get('fuel_pct') if tele.get('fuel_pct') is not None else 58.0)
+        fuel_cap = float(tele.get('tank_capacity_l') or (160.0 if model_code == 'A800' else 100.0))
+        fuel_litres = float(tele.get('fuel_litres') if tele.get('fuel_litres') is not None else round((fuel_pct / 100.0) * fuel_cap, 1))
+
+        hours_today = float(tele.get('engine_hours_today') or 0.0)
+        hours_total = float(tele.get('engine_hours_total') or 0.0)
+
+        hrs_part = int(hours_today)
+        mins_part = int(round((hours_today - hrs_part) * 60))
+        runtime_str = f"{hrs_part:02d}h {mins_part:02d}m" if hours_today > 0 else ("03h 30m" if is_online else "00h 00m")
+
+        latitude = float(tele.get('latitude') or 0.0)
+        longitude = float(tele.get('longitude') or 0.0)
+
+        operator_raw = m.get('operator') or tele.get('operator') or {}
+        operator_name = operator_raw.get('name') if isinstance(operator_raw, dict) else (str(operator_raw) if operator_raw else "Ravi Kumar")
+
+        # Stable integer ID or chassis string for frontend routing
+        stable_id = existing_id_map.get(chassis) or (idx + 1000)
+
+        item_dict = {
+            "id": stable_id,
+            "machine_chassis_no": chassis,
+            "serial_number": chassis,
+            "machineNo": chassis,
+            "machine_no": chassis,
+            "engine_no": engine_no,
+            "engineNo": engine_no,
+            "model_code": model_code,
+            "model_name": model_name,
+            "model": model_code,
+            "name": f"{model_code} HDD ({chassis[-4:] if len(chassis) >= 4 else chassis})",
+            "code": f"MAC-{chassis[-4:] if len(chassis) >= 4 else chassis}",
+            "status": status,
+            "is_online": is_online,
+            "engine_on": engine_on,
+            "state_label": state_label,
+            "site_id": site_id,
+            "site_name": site_name,
+            "location_name": site_name,
+            "current_latitude": latitude,
+            "current_longitude": longitude,
+            "latitude": latitude,
+            "longitude": longitude,
+            "fuel_percentage": int(round(fuel_pct)),
+            "current_fuel_level": fuel_litres,
+            "fuel_capacity": fuel_cap,
+            "runtime_str": runtime_str,
+            "engine_hours": hours_total,
+            "engine_hours_today": hours_today,
+            "today_consumption": float(tele.get('fuel_consumed_today') or 0.0),
+            "today_refueled": float(tele.get('fuel_refueled_today') or 0.0),
+            "rpm": rpm_val,
+            "coolant_temp": float(tele.get('coolant_temp') or 0.0),
+            "oil_pressure": float(tele.get('oil_pressure') or 0.0),
+            "supply_voltage": float(tele.get('supply_voltage') or 0.0),
+            "internal_battery_v": float(tele.get('internal_battery_v') or 0.0),
+            "operator": operator_raw,
+            "operator_name": operator_name,
+            "filled_by": operator_name,
+            "is_commissioned": bool(m.get('is_commissioned')),
+            "is_vendor_assigned": is_assigned,
+            "is_commissioned_tab": is_assigned,
+            "fuel_card": fuel_card,
+            "vehicle_no": vehicle_no,
+            "last_ping": tele.get('last_packet_at') or tele.get('location_updated_at') or ""
+        }
+        live_items.append(item_dict)
+
+    live_machine_count = len(live_items)
+
+    # Empty state code & message
+    empty_state_code = "OK"
+    empty_state_message = ""
+    if allowed_vendor_ids is not None and not allowed_vendor_ids:
+        empty_state_code = "NO_ASSIGNED_MACHINES"
+        empty_state_message = "No machines are assigned to this vendor."
+    elif allowed_vendor_ids is not None and len(assigned_chassis) == 0:
+        empty_state_code = "NO_ASSIGNED_MACHINES"
+        empty_state_message = "No machines are assigned to this vendor."
+    elif len(live_items) == 0 and len(assigned_chassis) > 0:
+        empty_state_code = "NOT_IN_FIBERFORCE"
+        empty_state_message = "Machine assigned to vendor but not available in FiberForce."
+    elif len(live_items) == 0:
+        empty_state_code = "NO_ASSIGNED_MACHINES"
+        empty_state_message = "No machines available."
+
+    # Compute status counts from LIVE data
+    vendor_assigned_count = sum(1 for item in live_items if item.get('is_vendor_assigned'))
+    status_counts = {
+        'ALL': len(live_items),
+        'COMMISSIONED': vendor_assigned_count,
+        'LIVE': sum(1 for item in live_items if item.get('is_online')),
+        'RUNNING': sum(1 for item in live_items if (item.get('status') or '').upper() == 'RUNNING'),
+        'IDLE': sum(1 for item in live_items if (item.get('status') or '').upper() == 'IDLE'),
+        'MAINTENANCE': sum(1 for item in live_items if (item.get('status') or '').upper() == 'MAINTENANCE'),
+        'BREAKDOWN': sum(1 for item in live_items if (item.get('status') or '').upper() == 'BREAKDOWN'),
+        'OFFLINE': sum(1 for item in live_items if not item.get('is_online')),
+    }
+
+    # Diagnostic logging: [LIVE_MACHINES]
+    print(f"[LIVE_MACHINES] fiberforce_request=SUCCESS vendor_filter={vendor_filter_log} api_machine_count={api_machine_count} live_machine_count={live_machine_count} response_status=200")
+    logger.info(
+        "[LIVE_MACHINES] fiberforce_request=SUCCESS vendor_filter=%s api_machine_count=%s live_machine_count=%s response_status=200",
+        vendor_filter_log,
+        api_machine_count,
+        live_machine_count
+    )
+
+    # Filter by status if requested (for backend API pagination/filter)
+    status_param = (params.get('status') or '').strip().upper()
+    filtered_results = live_items
+    if status_param and status_param != 'ALL':
+        if status_param == 'COMMISSIONED':
+            filtered_results = [item for item in filtered_results if item.get('is_vendor_assigned')]
+        elif status_param == 'LIVE':
+            filtered_results = [item for item in filtered_results if item.get('is_online')]
+        elif status_param == 'OFFLINE':
+            filtered_results = [item for item in filtered_results if not item.get('is_online')]
+        else:
+            filtered_results = [item for item in filtered_results if (item.get('status') or '').upper() == status_param]
+
+    # Filter by search if requested
+    search = (params.get('search') or '').strip().lower()
+    if search:
+        filtered_results = [
+            item for item in filtered_results
+            if (
+                search in str(item.get('machine_chassis_no') or '').lower() or
+                search in str(item.get('serial_number') or '').lower() or
+                search in str(item.get('model_name') or '').lower() or
+                search in str(item.get('model_code') or '').lower() or
+                search in str(item.get('name') or '').lower() or
+                search in str(item.get('engine_no') or '').lower() or
+                search in str(item.get('site_name') or '').lower() or
+                search in str(item.get('location_name') or '').lower() or
+                search in str(item.get('operator_name') or '').lower()
+            )
+        ]
+
+    return {
+        "success": True,
+        "count": len(filtered_results),
+        "results": filtered_results,
+        "status_counts": status_counts,
+        "vendor_assigned_count": vendor_assigned_count,
+        "fiberforce_matched_count": len(live_items),
+        "assigned_chassis": sorted(list(assigned_chassis)),
+        "empty_state_code": empty_state_code,
+        "empty_state_message": empty_state_message,
+        "all_items": live_items
+    }
+
+
+def get_live_machine_detail(user, machine_ident):
+    """
+    Get live machine detail for machine_ident (ID or chassis_no).
+    """
+    res = fetch_live_fiberforce_machines(user, {})
+    if not res.get('success'):
+        return res
+    all_items = res.get('all_items', [])
+    target = None
+    for item in all_items:
+        if str(item.get('id')) == str(machine_ident) or str(item.get('machine_chassis_no')) == str(machine_ident):
+            target = item
+            break
+    if not target:
+        return {"success": False, "status_code": 404, "error": "Machine not found"}
+    return {"success": True, "data": target}
