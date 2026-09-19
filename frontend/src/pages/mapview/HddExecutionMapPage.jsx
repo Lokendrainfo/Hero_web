@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 import { useAuth } from '../../hooks/useAuth';
-import { mapHddExecutionResponse, filterHddExecutionByDate, parseDateToYMD } from '../../utils/mapHddExecutionResponse';
+import { mapHddExecutionResponse, filterHddExecutionByDate, parseDateToYMD, parseAnyDate } from '../../utils/mapHddExecutionResponse';
 import { PhotoLightbox, formatImageUrl } from '../../components/common/PhotoLightbox';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -203,6 +203,16 @@ export const HddExecutionMapPage = () => {
             if (childNorm.availableDates && childNorm.availableDates.length > 0) {
               const mergedDates = new Set([...(normalized.availableDates || []), ...childNorm.availableDates]);
               normalized.availableDates = Array.from(mergedDates).sort();
+            }
+            if (childNorm.updatedAt) {
+              const dNorm = parseAnyDate(normalized.updatedAt);
+              const dChild = parseAnyDate(childNorm.updatedAt);
+              const tNorm = dNorm ? dNorm.getTime() : 0;
+              const tChild = dChild ? dChild.getTime() : 0;
+              if (tChild > tNorm) {
+                normalized.updatedAt = childNorm.updatedAt;
+                normalized.lastModified = childNorm.lastModified || normalized.lastModified;
+              }
             }
           });
         }

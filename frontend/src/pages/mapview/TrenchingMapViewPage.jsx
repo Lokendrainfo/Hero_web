@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 import { useAuth } from '../../hooks/useAuth';
-import { mapHddExecutionResponse } from '../../utils/mapHddExecutionResponse';
+import { mapHddExecutionResponse, parseAnyDate } from '../../utils/mapHddExecutionResponse';
 import { getAvailableStates, getAvailableDistricts } from '../../utils/geographyMaster';
 import { PageHeader } from '../../components/common/PageHeader';
 import { SearchableSelect } from '../../components/common/Select';
@@ -17,9 +17,9 @@ import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { DateField } from '../../components/common/DateField';
 
 const compactWhen = (value) => {
-  if (!value || value === 'N/A') return '—';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
+  if (!value || value === 'N/A' || value === '—') return '—';
+  const parsed = parseAnyDate(value) || new Date(value);
+  if (!parsed || Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString('en-IN', {
     day: 'numeric',
     month: 'short',
@@ -80,13 +80,33 @@ export const TrenchingMapViewPage = () => {
         const existing = userExecMap.get(key);
         const existingDataScore = (existing.shots?.length || 0) + (existing.pits?.length || 0) + (existing.depthPoints?.length || 0);
         const currentDataScore = (ex.shots?.length || 0) + (ex.pits?.length || 0) + (ex.depthPoints?.length || 0);
-        if (currentDataScore > existingDataScore) {
-          userExecMap.set(key, {
-            ...ex,
-            id: existing.id || ex.id,
-            user: existing.user || ex.user
-          });
-        }
+
+        const dExisting = parseAnyDate(existing.updatedAt || existing.lastModified);
+        const dCurrent = parseAnyDate(ex.updatedAt || ex.lastModified);
+        const tExisting = dExisting ? dExisting.getTime() : 0;
+        const tCurrent = dCurrent ? dCurrent.getTime() : 0;
+        const latestTime = Math.max(tExisting, tCurrent);
+
+        const latestUpdatedAt = latestTime > 0 ? new Date(latestTime).toISOString() : (existing.updatedAt || ex.updatedAt);
+        const latestLastModified = latestTime > 0 ? new Date(latestTime).toLocaleString() : (existing.lastModified || ex.lastModified);
+
+        // Prefer the execution with richer telemetry (shots/pits/depthPoints), or if equal, the newer one
+        const preferCurrent = currentDataScore > existingDataScore || (currentDataScore === existingDataScore && tCurrent >= tExisting);
+        const primary = preferCurrent ? ex : existing;
+        const secondary = preferCurrent ? existing : ex;
+
+        // Use the ID of the task that actually contains telemetry so clicking Open Map works directly
+        const targetId = (primary.shots?.length || primary.pits?.length)
+          ? primary.id
+          : ((secondary.shots?.length || secondary.pits?.length) ? secondary.id : primary.id);
+
+        userExecMap.set(key, {
+          ...primary,
+          id: targetId,
+          user: existing.user || ex.user,
+          updatedAt: latestUpdatedAt,
+          lastModified: latestLastModified,
+        });
       }
     });
 

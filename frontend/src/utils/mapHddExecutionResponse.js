@@ -1,3 +1,32 @@
+export const parseAnyDate = (val) => {
+  if (!val || val === 'N/A' || val === '—') return null;
+  if (typeof val === 'number') {
+    const d = new Date(val > 1e11 ? val : val * 1000);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof val === 'string') {
+    const s = val.trim();
+    if (!s || s === 'N/A' || s === '—') return null;
+    if (/^\d+$/.test(s)) {
+      const num = Number(s);
+      const d = new Date(num > 1e11 ? num : num * 1000);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const ddmmyyyy = s.match(/^(\d{2})[-/](\d{2})[-/](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+    if (ddmmyyyy) {
+      const [, dd, mm, yyyy, h = '0', m = '0', sec = '0'] = ddmmyyyy;
+      const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(h), Number(m), Number(sec));
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return val;
+  }
+  return null;
+};
+
 export const parseDateToYMD = (dateVal) => {
   if (!dateVal) return null;
   if (typeof dateVal === 'number' || (typeof dateVal === 'string' && /^\d+$/.test(dateVal.trim()))) {
@@ -353,6 +382,51 @@ export const mapHddExecutionResponse = (task, execution = null) => {
 
   const availableDates = Array.from(availableDatesSet).sort();
 
+  // Compute the true latest modified timestamp from all available live telemetry
+  const candidateDates = [
+    task.updatedAt,
+    task.lastModified,
+    task.modifiedAt,
+    task.createdAt,
+    execution?.updatedAt,
+    execution?.createdAt,
+    task.taskExecution?.updatedAt,
+    task.taskExecution?.createdAt,
+    execData?.updatedAt,
+    execData?.createdAt,
+    fieldData?.submittedAt,
+  ];
+
+  shots.forEach(s => {
+    candidateDates.push(s.endTime, s.startTime, s.updatedAt, s.createdAt);
+    if (Array.isArray(s.depthReadings)) {
+      s.depthReadings.forEach(dp => candidateDates.push(dp.capturedAt, dp.createdAt));
+    }
+  });
+
+  pits.forEach(p => {
+    candidateDates.push(p.diggingTime, p.createdAt, p.updatedAt);
+  });
+
+  allDepthReadings.forEach(dp => {
+    candidateDates.push(dp.capturedAt, dp.createdAt);
+  });
+
+  let latestDateObj = null;
+  let maxTime = -Infinity;
+
+  candidateDates.forEach(val => {
+    const d = parseAnyDate(val);
+    if (d && d.getTime() > maxTime) {
+      maxTime = d.getTime();
+      latestDateObj = d;
+    }
+  });
+
+  const finalUpdatedAt = latestDateObj ? latestDateObj.toISOString() : (task.updatedAt || null);
+  const finalLastModified = latestDateObj ? latestDateObj.toLocaleString() : (task.updatedAt ? new Date(task.updatedAt).toLocaleString() : 'N/A');
+  const finalDate = latestDateObj ? latestDateObj.toISOString().split('T')[0] : (task.updatedAt ? new Date(task.updatedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+
   return {
     id: String(task.id),
     taskId: String(task.id || task.taskCode || ''),
@@ -365,9 +439,9 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     userRole: task.assigneeSnapshot?.designation || task.assignee?.designation || 'Project Manager',
     vendorId: task.vendorId,
     vendorName: task.vendorName,
-    date: task.updatedAt ? new Date(task.updatedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-    updatedAt: task.updatedAt || null,
-    lastModified: task.updatedAt ? new Date(task.updatedAt).toLocaleString() : 'N/A',
+    date: finalDate,
+    updatedAt: finalUpdatedAt,
+    lastModified: finalLastModified,
     status: task.status || 'CREATED',
     workExecutionMode: fieldData?.workExecutionMode || (trenching ? 'HDD' : 'N/A'),
     shots,

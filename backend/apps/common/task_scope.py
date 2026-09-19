@@ -1,7 +1,75 @@
+import re
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from apps.integrations.ilync_client import IlyncClient
 from apps.common.vendor_scope import get_user_vendor_ids, check_vendor_access
 from apps.vendors.models import Vendor
+
+def parse_iso_epoch(val):
+    if not val:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val / 1000.0 if val > 1e11 else val)
+    val_str = str(val).strip()
+    if not val_str or val_str == 'N/A' or val_str == '—':
+        return None
+    if val_str.isdigit():
+        num = float(val_str)
+        return float(num / 1000.0 if num > 1e11 else num)
+    m = re.match(r'^(\d{2})[-/](\d{2})[-/](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?', val_str)
+    if m:
+        dd, mm, yyyy, h, mnt, sec = m.groups()
+        try:
+            dt = datetime(int(yyyy), int(mm), int(dd), int(h or 0), int(mnt or 0), int(sec or 0), tzinfo=timezone.utc)
+            return dt.timestamp()
+        except Exception:
+            pass
+    try:
+        clean_iso = val_str.replace('Z', '+00:00')
+        dt = datetime.fromisoformat(clean_iso)
+        return dt.timestamp()
+    except Exception:
+        pass
+    return None
+
+def resolve_latest_task_timestamp(task_obj, exec_data=None):
+    candidates = [
+        task_obj.get('updatedAt'),
+        task_obj.get('lastModified'),
+        task_obj.get('modifiedAt'),
+        task_obj.get('createdAt'),
+    ]
+    if isinstance(exec_data, dict):
+        candidates.extend([
+            exec_data.get('updatedAt'),
+            exec_data.get('createdAt'),
+        ])
+        fd = exec_data.get('fieldData') or exec_data.get('trenching') or {}
+        if isinstance(fd, dict):
+            candidates.append(fd.get('submittedAt'))
+            tr = fd.get('trenching') if isinstance(fd.get('trenching'), dict) else fd
+            shots = tr.get('hddShot') or tr.get('shots') or exec_data.get('shots') or []
+            pits = tr.get('pitDetails') or tr.get('pits') or exec_data.get('pits') or []
+            if isinstance(shots, list):
+                for s in shots:
+                    if isinstance(s, dict):
+                        candidates.extend([s.get('hddEndTime'), s.get('hddStartTime'), s.get('updatedAt'), s.get('createdAt')])
+                        dps = s.get('depthCapture') or s.get('depthReadings') or []
+                        if isinstance(dps, list):
+                            for dp in dps:
+                                if isinstance(dp, dict):
+                                    candidates.extend([dp.get('capturedAt'), dp.get('createdAt'), dp.get('timestamp')])
+            if isinstance(pits, list):
+                for p in pits:
+                    if isinstance(p, dict):
+                        candidates.extend([p.get('pitDiggingTime'), p.get('updatedAt'), p.get('createdAt')])
+
+    epochs = [parse_iso_epoch(c) for c in candidates if parse_iso_epoch(c) is not None]
+    if epochs:
+        max_ep = max(epochs)
+        dt = datetime.fromtimestamp(max_ep, tz=timezone.utc)
+        return dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+    return task_obj.get('updatedAt')
 
 def safe_float(val, default=0.0):
     try:
@@ -193,6 +261,16 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         for task_obj, exec_data in exec_pairs:
             if not task_obj or not isinstance(exec_data, dict):
                 continue
+            
+            # Attach live iLync execution directly to task_obj in-memory (no DB writes)
+            task_obj['taskExecution'] = exec_data
+            
+            # Calculate latest activity timestamp directly from live iLync telemetry
+            latest_iso = resolve_latest_task_timestamp(task_obj, exec_data)
+            if latest_iso:
+                task_obj['updatedAt'] = latest_iso
+                task_obj['lastModified'] = latest_iso
+
             field_data = exec_data.get('fieldData') or exec_data.get('trenching') or exec_data
             trenching = field_data.get('trenching') if isinstance(field_data, dict) else (field_data if isinstance(field_data, dict) else {})
             shots = (trenching.get('hddShot') if isinstance(trenching, dict) else None) or exec_data.get('shots') or field_data.get('hddShot') or []
@@ -287,9 +365,38 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         return eff_vid, eff_vname
 
     for i, root in enumerate(base_content):
+        l1_list = level1_children_lists[i] if i < len(level1_children_lists) else []
+        root_epochs = [parse_iso_epoch(root.get('updatedAt'))]
+
+        for l1 in l1_list:
+            l1_epochs = [parse_iso_epoch(l1.get('updatedAt'))]
+            try:
+                idx = level1_flat.index(l1)
+                l2_list = level2_children_lists[idx] if idx < len(level2_children_lists) else []
+                for l2 in l2_list:
+                    l2_ep = parse_iso_epoch(l2.get('updatedAt'))
+                    if l2_ep is not None:
+                        l1_epochs.append(l2_ep)
+            except ValueError:
+                pass
+
+            valid_l1_eps = [e for e in l1_epochs if e is not None]
+            if valid_l1_eps:
+                max_l1 = max(valid_l1_eps)
+                dt = datetime.fromtimestamp(max_l1, tz=timezone.utc)
+                l1['updatedAt'] = dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+                l1['lastModified'] = l1['updatedAt']
+                root_epochs.append(max_l1)
+
+        valid_r_eps = [e for e in root_epochs if e is not None]
+        if valid_r_eps:
+            max_r = max(valid_r_eps)
+            dt = datetime.fromtimestamp(max_r, tz=timezone.utc)
+            root['updatedAt'] = dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+            root['lastModified'] = root['updatedAt']
+
         r_vid, r_vname = format_and_add(root)
 
-        l1_list = level1_children_lists[i] if i < len(level1_children_lists) else []
         for l1 in l1_list:
             l1_vid, l1_vname = format_and_add(l1, parent_vid=r_vid, parent_vname=r_vname)
 
