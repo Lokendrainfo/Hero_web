@@ -18,6 +18,46 @@ from apps.common.reporting_scope import get_reporting_scope
 
 import base64
 from django.core.files.base import ContentFile
+from django.core.cache import cache
+from apps.integrations.ilync_client import IlyncClient
+
+def get_vendor_ilync_detail(vendor_obj_or_ext_id, use_cache=True, ttl=120):
+    """
+    Fetches vendor detail from iLync GET /api/vendor/{external_vendor_id}.
+    Returns data dictionary (or None if unavailable/error).
+    Caches briefly (default 120s) to avoid redundant requests within the same operations.
+    """
+    if not vendor_obj_or_ext_id:
+        return None
+
+    if hasattr(vendor_obj_or_ext_id, 'external_vendor_id'):
+        ext_v_id = getattr(vendor_obj_or_ext_id, 'external_vendor_id', None)
+    else:
+        ext_v_id = str(vendor_obj_or_ext_id).strip()
+
+    if not ext_v_id:
+        return None
+
+    cache_key = f"ilync_vendor_detail_{ext_v_id}"
+    if use_cache:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    client = IlyncClient()
+    try:
+        res = client.get_vendor_by_id(ext_v_id)
+        if res and isinstance(res, dict) and res.get('success'):
+            v_data = res.get('data') if 'data' in res and isinstance(res.get('data'), dict) else res
+            if isinstance(v_data, dict):
+                cache.set(cache_key, v_data, timeout=ttl)
+                return v_data
+        elif isinstance(res, dict) and not res.get('success'):
+            print(f"[iLyncVendorDetail] Vendor {ext_v_id} lookup failed: {res.get('message')}")
+    except Exception as err:
+        print(f"[iLyncVendorDetail] Exception fetching vendor {ext_v_id}: {err}")
+
+    return None
 
 def process_attendance_photo(request_or_data, photo_type='checkin', user_id=None):
     """
@@ -528,9 +568,14 @@ def _machine_working_payload(m_status, chassis_val, oem_by_chassis, ops_by_chass
     }
 
 
-def validate_employee_attendance_access(request_user, target_user):
+def validate_employee_attendance_access(request_user, target_user, vendor_obj=None):
     """
     Validates if request_user is authorized to manage/view attendance for target_user.
+    PRIMARY SOURCE OF TRUTH:
+      iLync vendor API data.users[] list.
+      A vendor can mark attendance for ANY ACTIVE USER returned in that vendor's
+      iLync vendor API users[] list:
+          iLync users[].userId == target_user.external_user_id
     Returns HTTP 403 PermissionDenied if unauthorized.
     """
     if not request_user or not request_user.is_authenticated:
@@ -546,29 +591,63 @@ def validate_employee_attendance_access(request_user, target_user):
     if not allowed_vendor_ids:
         raise PermissionDenied("You do not have permission to manage attendance for this employee.")
 
-    # Determine target user vendor
+    # 1. Determine the authorizing vendor
+    authorizing_vendor = vendor_obj
+    if not authorizing_vendor:
+        authorizing_vendor = getattr(request_user, 'vendor', None) or get_user_vendor(request_user, allow_network=False)
+    if not authorizing_vendor and allowed_vendor_ids:
+        from apps.vendors.models import Vendor
+        authorizing_vendor = Vendor.objects.filter(id=allowed_vendor_ids[0]).first()
+
+    if not authorizing_vendor:
+        raise PermissionDenied("You do not have permission to manage attendance for this employee.")
+
+    if allowed_vendor_ids is not None and authorizing_vendor.id not in allowed_vendor_ids:
+        raise PermissionDenied(f"You do not have permission to manage attendance for vendor '{authorizing_vendor.name}'.")
+
+    # 2. Check if authorizing_vendor has an iLync external_vendor_id
+    ext_v_id = getattr(authorizing_vendor, 'external_vendor_id', None)
+    target_ext_uid = getattr(target_user, 'external_user_id', None)
+    is_self_checkin = (request_user.id == target_user.id)
+
+    if ext_v_id:
+        v_data = get_vendor_ilync_detail(authorizing_vendor)
+        if not v_data or not isinstance(v_data, dict):
+            # If this is personal self-check-in for a local employee without external_user_id (e.g. test fixtures), fall back to local check
+            if is_self_checkin and not target_ext_uid:
+                pass
+            else:
+                print(f"[AttendanceAuth] Failed to retrieve live iLync roster for vendor={authorizing_vendor.id} (ext={ext_v_id}) | target_user_id={getattr(target_user, 'id', None)}")
+                raise PermissionDenied(f"Unable to verify live team roster from iLync for vendor '{authorizing_vendor.name}'.")
+        else:
+            raw_users = v_data.get('users') or []
+            active_ilync_user_ids = {
+                str(u.get('userId') or u.get('id')).strip()
+                for u in raw_users
+                if isinstance(u, dict) and u.get('active') is True and (u.get('userId') or u.get('id'))
+            }
+
+            if not target_ext_uid:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError("Target employee has no associated external user ID.")
+
+            if target_ext_uid not in active_ilync_user_ids:
+                print(f"[AttendanceAuth] DENIED: target_ext_uid={target_ext_uid} not in vendor {authorizing_vendor.id} ({authorizing_vendor.name}) active iLync users: {active_ilync_user_ids}")
+                raise PermissionDenied(f"Employee is not an active team member under vendor '{authorizing_vendor.name}' in iLync.")
+
+            print(f"[AttendanceAuth] ALLOWED: target_ext_uid={target_ext_uid} verified in vendor {authorizing_vendor.id} ({authorizing_vendor.name}) active iLync users")
+            return True
+
+    # Fallback for vendors without external_vendor_id (e.g. local test fixtures):
     target_vendor_ids = []
     if target_user.vendor_id:
         target_vendor_ids.append(target_user.vendor_id)
     target_assignments = list(target_user.hero_vendor_assignments.filter(is_active=True).values_list('vendor_id', flat=True))
     target_vendor_ids.extend(target_assignments)
 
-    # If target user belongs to explicit vendors, ensure request_user has access to at least one
     if target_vendor_ids:
         if not any(v_id in allowed_vendor_ids for v_id in target_vendor_ids):
             raise PermissionDenied("You do not have permission to manage attendance for this employee.")
-    else:
-        # If target user is a new iLync team member shell user without assigned vendor_id, associate primary vendor
-        if allowed_vendor_ids and len(allowed_vendor_ids) > 0:
-            try:
-                from apps.vendors.models import Vendor
-                v_inst = Vendor.objects.filter(id=allowed_vendor_ids[0]).first()
-                if v_inst:
-                    target_user.vendor = v_inst
-                    target_user.save(update_fields=['vendor'])
-            except Exception as e:
-                print(f"[AttendanceAccess] Error associating vendor to shell user: {e}")
-
     return True
 
 class AttendanceViewSet(viewsets.ModelViewSet):
@@ -776,34 +855,38 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         t_user_elapsed = (time.perf_counter() - t_user_start) * 1000
         print(f"[AttendanceCheckInTiming] USER_RESOLUTION | elapsed_ms={t_user_elapsed:.2f}ms | user_id={getattr(user, 'id', None)} | external_user_id={getattr(user, 'external_user_id', None)}")
 
-        # 2. AUTHORIZATION
+        # 2. AUTHORIZATION & VENDOR RESOLUTION
         t_auth_start = time.perf_counter()
-        if target_requested:
-            # Validate user's current valid Hero vendor mapping (do not reassign or allow cross-vendor conflict)
-            resolved_vendor = user.vendor or get_user_vendor(user, allow_network=False)
-            if req_vendor_id and resolved_vendor:
-                req_v_str = str(req_vendor_id).strip()
-                if req_v_str.isdigit() and int(req_v_str) != resolved_vendor.id:
-                    t_auth_elapsed = (time.perf_counter() - t_auth_start) * 1000
-                    print(f"[AttendanceCheckInTiming] AUTHORIZATION | elapsed_ms={t_auth_elapsed:.2f}ms | cross_vendor_conflict=True")
-                    return error_response(
-                        message=f"Employee {user.get_full_name() or user.username} is registered under vendor '{resolved_vendor.name}'. Cross-vendor check-in is not permitted.",
-                        status_code=status.HTTP_400_BAD_REQUEST
-                    )
 
-            # Validate logged-in user's authorization for that vendor/team member
-            validate_employee_attendance_access(request.user, user)
+        authorizing_vendor = None
+        if req_vendor_id:
+            from apps.vendors.models import Vendor
+            req_v_str = str(req_vendor_id).strip()
+            if req_v_str.isdigit():
+                authorizing_vendor = Vendor.objects.filter(id=int(req_v_str)).first()
+            if not authorizing_vendor:
+                authorizing_vendor = Vendor.objects.filter(external_vendor_id=req_v_str).first()
+            if not authorizing_vendor:
+                authorizing_vendor = Vendor.objects.filter(name__iexact=req_v_str).first()
+
+        if not authorizing_vendor:
+            authorizing_vendor = getattr(request.user, 'vendor', None) or get_user_vendor(request.user, allow_network=False)
+
+        if not authorizing_vendor:
+            allowed_v_ids = get_user_vendor_ids(request.user)
+            if allowed_v_ids:
+                from apps.vendors.models import Vendor
+                authorizing_vendor = Vendor.objects.filter(id=allowed_v_ids[0]).first()
+
+        # Validate logged-in user's authorization for that vendor and target team member via iLync roster
+        validate_employee_attendance_access(request.user, user, vendor_obj=authorizing_vendor)
+
         t_auth_elapsed = (time.perf_counter() - t_auth_start) * 1000
         print(f"[AttendanceCheckInTiming] AUTHORIZATION | elapsed_ms={t_auth_elapsed:.2f}ms | auth_result=AUTHORIZED")
 
-        # 3. VENDOR_RESOLUTION
+        # 3. VENDOR_RESOLUTION (The vendor whose iLync roster authorized the check-in)
         t_vend_start = time.perf_counter()
-        target_vendor = user.vendor or get_user_vendor(user, allow_network=False) or get_user_vendor(request.user, allow_network=False)
-        if not target_vendor and req_vendor_id:
-            from apps.vendors.models import Vendor
-            req_v_clean = str(req_vendor_id).strip()
-            if req_v_clean.isdigit():
-                target_vendor = Vendor.objects.filter(id=int(req_v_clean)).first()
+        target_vendor = authorizing_vendor or user.vendor or get_user_vendor(user, allow_network=False)
         reporting_mgr = resolve_reporting_manager(user, marked_by_user=request.user, vendor=target_vendor)
         t_vend_elapsed = (time.perf_counter() - t_vend_start) * 1000
         print(f"[AttendanceCheckInTiming] VENDOR_RESOLUTION | elapsed_ms={t_vend_elapsed:.2f}ms | vendor_id={getattr(target_vendor, 'id', None)} | vendor_name={getattr(target_vendor, 'name', None)}")
@@ -973,7 +1056,17 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     message=f"Target employee not found for identifier '{ext_user_id or target_user_id}'.",
                     status_code=status.HTTP_404_NOT_FOUND
                 )
-            validate_employee_attendance_access(request.user, target_user)
+            req_v = request.data.get('vendor_id') or request.data.get('vendor')
+            authorizing_vendor = None
+            if req_v:
+                from apps.vendors.models import Vendor
+                req_v_str = str(req_v).strip()
+                if req_v_str.isdigit():
+                    authorizing_vendor = Vendor.objects.filter(id=int(req_v_str)).first()
+            if not authorizing_vendor:
+                authorizing_vendor = getattr(request.user, 'vendor', None) or get_user_vendor(request.user, allow_network=False)
+
+            validate_employee_attendance_access(request.user, target_user, vendor_obj=authorizing_vendor)
             user = target_user
 
         today = timezone.localdate()
@@ -1031,14 +1124,35 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if not target_user:
             return error_response(message="Target team member not found.", status_code=status.HTTP_404_NOT_FOUND)
 
-        validate_employee_attendance_access(request.user, target_user)
+        req_v = request.data.get('vendor_id') or request.data.get('vendor')
+        authorizing_vendor = None
+        if req_v:
+            from apps.vendors.models import Vendor
+            req_v_str = str(req_v).strip()
+            if req_v_str.isdigit():
+                authorizing_vendor = Vendor.objects.filter(id=int(req_v_str)).first()
+            if not authorizing_vendor:
+                authorizing_vendor = Vendor.objects.filter(external_vendor_id=req_v_str).first()
+            if not authorizing_vendor:
+                authorizing_vendor = Vendor.objects.filter(name__iexact=req_v_str).first()
+
+        if not authorizing_vendor:
+            authorizing_vendor = getattr(request.user, 'vendor', None) or get_user_vendor(request.user, allow_network=False)
+
+        if not authorizing_vendor:
+            allowed_v_ids = get_user_vendor_ids(request.user)
+            if allowed_v_ids:
+                from apps.vendors.models import Vendor
+                authorizing_vendor = Vendor.objects.filter(id=allowed_v_ids[0]).first()
+
+        validate_employee_attendance_access(request.user, target_user, vendor_obj=authorizing_vendor)
         today = timezone.localdate()
         lat = request.data.get('latitude') or request.data.get('check_in_latitude')
         lng = request.data.get('longitude') or request.data.get('check_in_longitude')
         acc = request.data.get('accuracy') or request.data.get('check_in_accuracy')
         photo = process_attendance_photo(request, 'checkin', target_user.id)
 
-        target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
+        target_vendor = authorizing_vendor or target_user.vendor or get_user_vendor(target_user, allow_network=False)
         reporting_mgr = resolve_reporting_manager(target_user, marked_by_user=request.user, vendor=target_vendor)
 
         # Snapshot data
@@ -1272,25 +1386,55 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             ).exclude(
                 Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
             ).distinct().order_by('id')
-        elif not allowed_vendor_ids:
-            team_qs = User.objects.none()
-        else:
+        if not allowed_vendor_ids:
+            return Response({"results": []}, status=status.HTTP_200_OK)
+
+        # Source vendor's CURRENT team from iLync vendor API data.users[]
+        results = []
+        seen_user_ids = set()
+        from apps.vendors.models import Vendor
+        vendors = Vendor.objects.filter(id__in=allowed_vendor_ids)
+        for v_obj in vendors:
+            v_data = get_vendor_ilync_detail(v_obj)
+            if v_data and isinstance(v_data, dict):
+                ilync_users = v_data.get('users') or []
+                for u_info in ilync_users:
+                    if not isinstance(u_info, dict) or u_info.get('active') is False:
+                        continue
+                    ext_uid = str(u_info.get('userId') or u_info.get('id') or '').strip()
+                    name = str(u_info.get('name') or u_info.get('contactName') or 'Team Member').strip()
+                    role = str(u_info.get('designation') or u_info.get('role') or 'OPERATOR').strip()
+                    emp_id = str(u_info.get('empId') or '').strip()
+
+                    hero_u = User.objects.filter(external_user_id=ext_uid).first() if ext_uid else None
+                    u_key = hero_u.id if hero_u else ext_uid
+                    if u_key and u_key not in seen_user_ids:
+                        seen_user_ids.add(u_key)
+                        results.append({
+                            "id": hero_u.id if hero_u else ext_uid,
+                            "external_user_id": ext_uid,
+                            "name": (hero_u.get_full_name() if hero_u else None) or name,
+                            "employee_id": (hero_u.employee_id if hero_u else None) or emp_id or (f"EMP-{hero_u.id}" if hero_u else f"EMP-{ext_uid}"),
+                            "role": role,
+                            "avatar_url": getattr(hero_u, 'avatar_url', None) if hero_u else None
+                        })
+
+        if not results:
             team_qs = User.objects.filter(
                 Q(vendor_id__in=allowed_vendor_ids) |
                 Q(hero_vendor_assignments__vendor_id__in=allowed_vendor_ids)
             ).filter(is_active=True).exclude(
                 Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
             ).distinct().order_by('id')
+            for u in team_qs:
+                results.append({
+                    "id": u.id,
+                    "name": u.get_full_name() or u.username,
+                    "employee_id": u.employee_id or u.external_user_id or f"EMP-{u.id}",
+                    "role": u.get_role_list()[0] if u.get_role_list() else (u.role or 'Field Surveyor'),
+                    "avatar_url": u.avatar_url if hasattr(u, 'avatar_url') else None
+                })
 
-        results = []
-        for u in team_qs:
-            results.append({
-                "id": u.id,
-                "name": u.get_full_name() or u.username,
-                "employee_id": u.employee_id or u.external_user_id or f"EMP-{u.id}",
-                "role": u.get_role_list()[0] if u.get_role_list() else (u.role or 'Field Surveyor'),
-                "avatar_url": u.avatar_url if hasattr(u, 'avatar_url') else None
-            })
         return Response({"results": results}, status=status.HTTP_200_OK)
 
     # 4.8 Fetch User Attendance History Timeline
@@ -1665,14 +1809,15 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         seen_record_ids = set()
 
         for v_obj in target_vendors:
-            ext_v_id = str(v_obj.external_vendor_id or v_obj.id).strip()
-            live_res = None
-            try:
-                live_res = client.get_vendor_by_id(ext_v_id)
-            except Exception as e:
-                print(f"[AttendanceRoster] Error fetching live iLync vendor data for {v_obj.name}: {e}")
-
-            v_payload = live_res.get('data') if (isinstance(live_res, dict) and live_res.get('success')) else (live_res if isinstance(live_res, dict) else {})
+            v_payload = get_vendor_ilync_detail(v_obj)
+            if not v_payload or not isinstance(v_payload, dict):
+                ext_v_id = str(v_obj.external_vendor_id or v_obj.id).strip()
+                try:
+                    live_res = client.get_vendor_by_id(ext_v_id)
+                    v_payload = live_res.get('data') if (isinstance(live_res, dict) and live_res.get('success')) else (live_res if isinstance(live_res, dict) else {})
+                except Exception as e:
+                    print(f"[AttendanceRoster] Error fetching live iLync vendor data for {v_obj.name}: {e}")
+                    v_payload = {}
 
             v_circle = extract_geo(v_payload, ['circles', 'circle', 'circleName', 'state'])
             v_district = extract_geo(v_payload, ['districts', 'district', 'districtName', 'city'])
@@ -1719,12 +1864,17 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                         mapping_status = 'DUPLICATE_EXTERNAL_ID'
                     elif len(ext_matches) == 1:
                         cand = ext_matches[0]
-                        if cand.vendor_id and cand.vendor_id != v_obj.id:
-                            mapping_status = 'CROSS_VENDOR_CONFLICT'
-                            matched_user = None
-                        else:
-                            matched_user = cand
-                            mapping_status = 'CORRECT'
+                        matched_user = cand
+                        mapping_status = 'CORRECT'
+                        from apps.vendors.models import HeroVendorAssignment
+                        assignment, _ = HeroVendorAssignment.objects.get_or_create(
+                            user=cand,
+                            vendor=v_obj,
+                            defaults={'is_active': True}
+                        )
+                        if not assignment.is_active:
+                            assignment.is_active = True
+                            assignment.save(update_fields=['is_active'])
 
                 # 2. Secondary fallback matches ONLY within this vendor, and ONLY if user has no conflicting external_user_id
                 if not matched_user and mapping_status != 'CROSS_VENDOR_CONFLICT':
@@ -1765,6 +1915,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     if not matched_user.vendor_id and v_obj:
                         matched_user.vendor = v_obj
                         up_fields.append('vendor')
+                    norm_role = normalize_attendance_role(designation)
+                    if norm_role and matched_user.role in ('VIEWER', None, ''):
+                        matched_user.role = norm_role
+                        up_fields.append('role')
                     if up_fields:
                         try:
                             matched_user.save(update_fields=up_fields)

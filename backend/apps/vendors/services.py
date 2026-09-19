@@ -12,7 +12,11 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
 
     client = IlyncClient()
     try:
-        res = client.get_vendor_by_id(ext_v_id)
+        if isinstance(ext_v_id, dict):
+            res = ext_v_id
+            ext_v_id = res.get('id') or getattr(vendor_obj, 'external_vendor_id', None)
+        else:
+            res = client.get_vendor_by_id(ext_v_id)
         if not res or not isinstance(res, dict):
             return
         
@@ -68,20 +72,14 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
                     continue
                 elif len(ext_matches) == 1:
                     cand = ext_matches[0]
+                    matched_user = cand
+                    mapping_status = 'CORRECT'
                     if cand.vendor_id and cand.vendor_id != vendor_obj.id:
-                        # Rule 8: If external_user_id exists but belongs to another vendor:
-                        # DO NOT silently reassign it. Treat as a mapping conflict. Log the conflict. Do not use that Hero user.
-                        mapping_status = 'CROSS_VENDOR_CONFLICT'
-                        print(
-                            f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={vendor_obj.id} | "
-                            f"iLync_userId={ext_u_id} | iLync_empId={emp_id_str} | "
-                            f"Hero_user_id={cand.id} | Hero_external_user_id={cand.external_user_id} | "
-                            f"Hero_vendor_id={cand.vendor_id} | mapping_status=CROSS_VENDOR_CONFLICT"
+                        HeroVendorAssignment.objects.get_or_create(
+                            user=cand,
+                            vendor_id=cand.vendor_id,
+                            defaults={'is_active': True}
                         )
-                        continue
-                    else:
-                        matched_user = cand
-                        mapping_status = 'CORRECT'
 
             # 2. Secondary fallback matches ONLY within the SAME vendor, and ONLY if user has no external_user_id
             # Rule 4: NEVER match an iLync user to another vendor's Hero User.
@@ -128,7 +126,7 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
                 if email and (not matched_user.email or matched_user.email != email):
                     matched_user.email = email
                     changed = True
-                if u_role and matched_user.role != u_role:
+                if u_role and (matched_user.role != u_role or matched_user.role in ('VIEWER', None, '')):
                     matched_user.role = u_role
                     changed = True
                 if not matched_user.vendor:
@@ -145,11 +143,14 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
                     changed = True
                 if changed:
                     matched_user.save()
-                HeroVendorAssignment.objects.get_or_create(
+                assignment, _ = HeroVendorAssignment.objects.get_or_create(
                     user=matched_user,
                     vendor=vendor_obj,
                     defaults={'is_active': True}
                 )
+                if not assignment.is_active:
+                    assignment.is_active = True
+                    assignment.save(update_fields=['is_active'])
                 synced_user_ids.append(matched_user.id)
                 print(
                     f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={vendor_obj.id} | "
@@ -206,14 +207,16 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
 
         # Remove / unassign any duplicate database users for this vendor that are not in the iLync vendor users array
         if synced_user_ids:
+            HeroVendorAssignment.objects.filter(vendor=vendor_obj).exclude(user_id__in=synced_user_ids).update(is_active=False)
             stale_users = User.objects.filter(vendor=vendor_obj).exclude(id__in=synced_user_ids)
             from apps.attendance.models import AttendanceRecord
             for su in list(stale_users):
-                if not AttendanceRecord.objects.filter(user=su).exists():
+                has_active_assignments = su.hero_vendor_assignments.filter(is_active=True).exists()
+                if not AttendanceRecord.objects.filter(user=su).exists() and not su.external_user_id and not has_active_assignments:
                     su.delete()
                 else:
                     su.vendor = None
-                    su.save()
+                    su.save(update_fields=['vendor'])
 
     except Exception as e:
         logger.error(f"Error syncing detail links for vendor {vendor_obj.name}: {str(e)}")
