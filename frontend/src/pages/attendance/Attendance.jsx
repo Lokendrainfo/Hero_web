@@ -1350,275 +1350,275 @@ export const Attendance = () => {
                           }).length;
 
                           return (
-                          <div style={{
-                            background: hasNotWorking ? '#fef2f2' : '#f8fafc',
-                            borderTop: `1px solid ${hasNotWorking ? '#fecaca' : '#e2e8f0'}`,
-                            padding: '16px 20px',
-                          }}>
                             <div style={{
-                              fontSize: '0.88rem',
-                              fontWeight: '700',
-                              color: hasNotWorking ? '#991b1b' : '#334155',
-                              marginBottom: '12px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px',
-                              flexWrap: 'wrap',
+                              background: hasNotWorking ? '#fef2f2' : '#f8fafc',
+                              borderTop: `1px solid ${hasNotWorking ? '#fecaca' : '#e2e8f0'}`,
+                              padding: '16px 20px',
                             }}>
-                              <LucideTruck size={18} style={{ color: hasNotWorking ? '#dc2626' : '#d97706' }} />
-                              <span>Assigned Machines & Equipment Attendance ({teamGroup.machines.length})</span>
-                              {hasNotWorking && (
-                                <span style={{
-                                  fontSize: '0.72rem',
-                                  fontWeight: 700,
-                                  color: '#b91c1c',
-                                  background: '#fee2e2',
-                                  border: '1px solid #fecaca',
-                                  borderRadius: 999,
-                                  padding: '2px 8px',
-                                }}>
-                                  {notWorkingCount} not working
-                                </span>
-                              )}
-                            </div>
-                            <div className="table-container" style={{
-                              borderRadius: '10px',
-                              border: `1px solid ${hasNotWorking ? '#fecaca' : '#cbd5e1'}`,
-                              background: '#ffffff',
-                            }}>
-                              <table className="data-table">
-                                <thead>
-                                  <tr>
-                                    <th style={{ paddingLeft: '16px' }}>Machine / Model</th>
-                                    <th>Chassis / Machine No</th>
-                                    <th>Operator</th>
-                                    <th>Check-In / Out</th>
-                                    <th>Telemetry / Photos</th>
-                                    <th>Working status</th>
-                                    <th>Issue / Reason</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {teamGroup.machines.map(mac => {
-                                    const workingState = mac.working_state
-                                      || (mac.status === 'NOT_WORKING' ? 'NOT_WORKING'
-                                        : (['CHECKED_IN', 'PRESENT', 'OPERATING', 'CHECKED_OUT', 'WORKING'].includes(mac.status) ? 'WORKING' : 'NOT_MARKED'));
-                                    const isWorking = workingState === 'WORKING';
-                                    const isNotWorking = workingState === 'NOT_WORKING';
-                                    const issueKind = mac.issue_kind;
-                                    const issueReason = mac.issue_reason || mac.notes || '';
-                                    const issueTicket = mac.issue_ticket;
-                                    const attStatus = mac.attendance_status || (isNotWorking ? null : mac.status);
+                              <div style={{
+                                fontSize: '0.88rem',
+                                fontWeight: '700',
+                                color: hasNotWorking ? '#991b1b' : '#334155',
+                                marginBottom: '12px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                flexWrap: 'wrap',
+                              }}>
+                                <LucideTruck size={18} style={{ color: hasNotWorking ? '#dc2626' : '#d97706' }} />
+                                <span>Assigned Machines & Equipment Attendance ({teamGroup.machines.length})</span>
+                                {hasNotWorking && (
+                                  <span style={{
+                                    fontSize: '0.72rem',
+                                    fontWeight: 700,
+                                    color: '#b91c1c',
+                                    background: '#fee2e2',
+                                    border: '1px solid #fecaca',
+                                    borderRadius: 999,
+                                    padding: '2px 8px',
+                                  }}>
+                                    {notWorkingCount} not working
+                                  </span>
+                                )}
+                              </div>
+                              <div className="table-container" style={{
+                                borderRadius: '10px',
+                                border: `1px solid ${hasNotWorking ? '#fecaca' : '#cbd5e1'}`,
+                                background: '#ffffff',
+                              }}>
+                                <table className="data-table">
+                                  <thead>
+                                    <tr>
+                                      <th style={{ paddingLeft: '16px' }}>Machine / Model</th>
+                                      <th>Chassis / Machine No</th>
+                                      <th>Operator</th>
+                                      <th>Check-In / Out</th>
+                                      <th>Telemetry / Photos</th>
+                                      <th>Working status</th>
+                                      <th>Issue / Reason</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {teamGroup.machines.map(mac => {
+                                      const workingState = mac.working_state
+                                        || (mac.status === 'NOT_WORKING' ? 'NOT_WORKING'
+                                          : (['CHECKED_IN', 'PRESENT', 'OPERATING', 'CHECKED_OUT', 'WORKING'].includes(mac.status) ? 'WORKING' : 'NOT_MARKED'));
+                                      const isWorking = workingState === 'WORKING';
+                                      const isNotWorking = workingState === 'NOT_WORKING';
+                                      const issueKind = mac.issue_kind;
+                                      const issueReason = mac.issue_reason || mac.notes || '';
+                                      const issueTicket = mac.issue_ticket;
+                                      const attStatus = mac.attendance_status || (isNotWorking ? null : mac.status);
 
-                                    return (
-                                    <tr key={mac.machine_id || mac.chassis_no || mac.machine_no}>
-                                      <td style={{ paddingLeft: '16px' }}>
-                                        <div style={{ fontWeight: '700', color: '#0f172a' }}>{mac.name}</div>
-                                        <div style={{ fontSize: '0.72rem', color: '#64748b' }}>{mac.code}</div>
-                                      </td>
-                                      <td>
-                                        <span style={{ fontFamily: 'monospace', fontWeight: '700', fontSize: '0.8rem', color: '#1e293b' }}>
-                                          {mac.chassis_no || mac.machine_no}
-                                        </span>
-                                      </td>
-                                      <td>
-                                        <span style={{ fontSize: '0.78rem', fontWeight: '600', color: '#475569' }}>
-                                          👤 {mac.operator_name || 'Unassigned'}
-                                        </span>
-                                      </td>
-                                      <td>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                            <span style={{ fontSize: '0.78rem', fontWeight: '600', color: mac.check_in ? '#047857' : '#94a3b8' }}>
-                                              In: {mac.check_in || '--:--'}
+                                      return (
+                                        <tr key={mac.machine_id || mac.chassis_no || mac.machine_no}>
+                                          <td style={{ paddingLeft: '16px' }}>
+                                            <div style={{ fontWeight: '700', color: '#0f172a' }}>{mac.name}</div>
+                                            <div style={{ fontSize: '0.72rem', color: '#64748b' }}>{mac.code}</div>
+                                          </td>
+                                          <td>
+                                            <span style={{ fontFamily: 'monospace', fontWeight: '700', fontSize: '0.8rem', color: '#1e293b' }}>
+                                              {mac.chassis_no || mac.machine_no}
                                             </span>
-                                            {!mac.check_in && !isNotWorking && (
-                                              <button
-                                                type="button"
-                                                onClick={() => handleCheckInMachine(mac)}
-                                                style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
-                                              >
-                                                Check In
-                                              </button>
-                                            )}
-                                          </div>
-
-                                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                            <span style={{ fontSize: '0.78rem', fontWeight: '600', color: mac.check_out ? '#1d4ed8' : '#94a3b8' }}>
-                                              Out: {mac.check_out || '--:--'}
+                                          </td>
+                                          <td>
+                                            <span style={{ fontSize: '0.78rem', fontWeight: '600', color: '#475569' }}>
+                                              👤 {mac.operator_name || 'Unassigned'}
                                             </span>
-                                            {mac.check_in && !mac.check_out && (
-                                              <button
-                                                type="button"
-                                                onClick={() => handleCheckOutMachine(mac)}
-                                                style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
-                                              >
-                                                Check Out
-                                              </button>
-                                            )}
-                                          </div>
-
-                                          {mac.total_working_hours && (
-                                            <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>
-                                              ⏱ {mac.total_working_hours}
-                                            </span>
-                                          )}
-                                        </div>
-                                      </td>
-                                      <td>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                          {mac.check_in_latitude ? (
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: '#047857', fontWeight: '600' }}>
-                                              <LucideMapPin size={12} />
-                                              <span>{Number(mac.check_in_latitude).toFixed(4)}, {Number(mac.check_in_longitude).toFixed(4)}</span>
-                                              {mac.check_in_accuracy && <span style={{ color: '#64748b', fontSize: '0.68rem' }}>(±{mac.check_in_accuracy}m)</span>}
-                                            </div>
-                                          ) : (
-                                            <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS log</span>
-                                          )}
-
-                                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                                            <button
-                                              type="button"
-                                              onClick={() => openPhotoModal(mac.check_in_photo, 'CHECK_IN')}
-                                              style={{
-                                                display: 'inline-flex',
-                                                alignItems: 'center',
-                                                gap: '4px',
-                                                padding: '3px 8px',
-                                                background: mac.check_in_photo ? '#f0fdf4' : '#f8fafc',
-                                                color: mac.check_in_photo ? '#166534' : '#64748b',
-                                                border: `1px solid ${mac.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
-                                                borderRadius: '6px',
-                                                fontSize: '0.7rem',
-                                                fontWeight: '700',
-                                                cursor: 'pointer',
-                                                width: 'fit-content'
-                                              }}
-                                            >
-                                              <LucideCamera size={12} /> Check-In Photo
-                                            </button>
-
-                                            {mac.check_out_photo && (
-                                              <button
-                                                type="button"
-                                                onClick={() => openPhotoModal(mac.check_out_photo, 'CHECK_OUT')}
-                                                style={{
-                                                  display: 'inline-flex',
-                                                  alignItems: 'center',
-                                                  gap: '4px',
-                                                  padding: '3px 8px',
-                                                  background: '#eff6ff',
-                                                  color: '#1d4ed8',
-                                                  border: '1px solid #bfdbfe',
-                                                  borderRadius: '6px',
-                                                  fontSize: '0.7rem',
-                                                  fontWeight: '700',
-                                                  cursor: 'pointer',
-                                                  width: 'fit-content'
-                                                }}
-                                              >
-                                                <LucideCamera size={12} /> Check-Out Photo
-                                              </button>
-                                            )}
-                                          </div>
-                                        </div>
-                                      </td>
-                                      <td>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
-                                          {isWorking && (
-                                            <span className="badge-pill badge-green" style={{ fontSize: '0.72rem', fontWeight: '700' }}>
-                                              Working
-                                            </span>
-                                          )}
-                                          {isNotWorking && (
-                                            <span className="badge-pill badge-amber" style={{ fontSize: '0.72rem', fontWeight: '700', background: '#fef2f2', color: '#b91c1c', borderColor: '#fecaca' }}>
-                                              Not Working
-                                            </span>
-                                          )}
-                                          {!isWorking && !isNotWorking && (
-                                            <span className="badge-pill badge-amber" style={{ fontSize: '0.72rem', fontWeight: '700' }}>
-                                              Not marked
-                                            </span>
-                                          )}
-                                          {attStatus && attStatus !== 'NOT_MARKED' && (
-                                            <span style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: 600 }}>
-                                              Attendance: {attStatus.replace(/_/g, ' ')}
-                                            </span>
-                                          )}
-                                        </div>
-                                      </td>
-                                      <td style={{ minWidth: 180, maxWidth: 280 }}>
-                                        {isNotWorking ? (
-                                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                                              <span
-                                                className="badge-pill"
-                                                style={{
-                                                  fontSize: '0.68rem',
-                                                  fontWeight: 700,
-                                                  background: issueKind === 'OEM' ? '#fff7ed' : '#eff6ff',
-                                                  color: issueKind === 'OEM' ? '#c2410c' : '#1d4ed8',
-                                                  border: `1px solid ${issueKind === 'OEM' ? '#fed7aa' : '#bfdbfe'}`,
-                                                }}
-                                              >
-                                                {issueKind === 'OEM' ? (
-                                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                                    <LucideWrench size={11} /> OEM Breakdown
-                                                  </span>
-                                                ) : (
-                                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                                                    <LucideAlertTriangle size={11} /> Ops Stop
-                                                  </span>
+                                          </td>
+                                          <td>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <span style={{ fontSize: '0.78rem', fontWeight: '600', color: mac.check_in ? '#047857' : '#94a3b8' }}>
+                                                  In: {mac.check_in || '--:--'}
+                                                </span>
+                                                {!mac.check_in && !isNotWorking && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleCheckInMachine(mac)}
+                                                    style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
+                                                  >
+                                                    Check In
+                                                  </button>
                                                 )}
-                                              </span>
-                                              {issueTicket && (
-                                                <button
-                                                  type="button"
-                                                  onClick={() => navigate('/breakdown')}
-                                                  style={{
-                                                    border: 'none',
-                                                    background: 'transparent',
-                                                    color: '#0369a1',
-                                                    fontSize: '0.72rem',
-                                                    fontWeight: 700,
-                                                    cursor: 'pointer',
-                                                    padding: 0,
-                                                    display: 'inline-flex',
-                                                    alignItems: 'center',
-                                                    gap: 3,
-                                                  }}
-                                                >
-                                                  {issueTicket} <LucideExternalLink size={11} />
-                                                </button>
+                                              </div>
+
+                                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <span style={{ fontSize: '0.78rem', fontWeight: '600', color: mac.check_out ? '#1d4ed8' : '#94a3b8' }}>
+                                                  Out: {mac.check_out || '--:--'}
+                                                </span>
+                                                {mac.check_in && !mac.check_out && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleCheckOutMachine(mac)}
+                                                    style={{ padding: '2px 6px', fontSize: '0.7rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '4px', cursor: 'pointer', fontWeight: '700' }}
+                                                  >
+                                                    Check Out
+                                                  </button>
+                                                )}
+                                              </div>
+
+                                              {mac.total_working_hours && (
+                                                <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: '700' }}>
+                                                  ⏱ {mac.total_working_hours}
+                                                </span>
                                               )}
                                             </div>
-                                            <div style={{ fontSize: '0.78rem', color: '#334155', fontWeight: 600, lineHeight: 1.35 }}>
-                                              {issueReason || 'No reason provided'}
-                                            </div>
-                                            {mac.issue_severity && (
-                                              <div style={{ fontSize: '0.68rem', color: '#64748b' }}>
-                                                Severity: {String(mac.issue_severity).toUpperCase()}
+                                          </td>
+                                          <td>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                              {mac.check_in_latitude ? (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.72rem', color: '#047857', fontWeight: '600' }}>
+                                                  <LucideMapPin size={12} />
+                                                  <span>{Number(mac.check_in_latitude).toFixed(4)}, {Number(mac.check_in_longitude).toFixed(4)}</span>
+                                                  {mac.check_in_accuracy && <span style={{ color: '#64748b', fontSize: '0.68rem' }}>(±{mac.check_in_accuracy}m)</span>}
+                                                </div>
+                                              ) : (
+                                                <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS log</span>
+                                              )}
+
+                                              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => openPhotoModal(mac.check_in_photo, 'CHECK_IN')}
+                                                  style={{
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '4px',
+                                                    padding: '3px 8px',
+                                                    background: mac.check_in_photo ? '#f0fdf4' : '#f8fafc',
+                                                    color: mac.check_in_photo ? '#166534' : '#64748b',
+                                                    border: `1px solid ${mac.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
+                                                    borderRadius: '6px',
+                                                    fontSize: '0.7rem',
+                                                    fontWeight: '700',
+                                                    cursor: 'pointer',
+                                                    width: 'fit-content'
+                                                  }}
+                                                >
+                                                  <LucideCamera size={12} /> Check-In Photo
+                                                </button>
+
+                                                {mac.check_out_photo && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => openPhotoModal(mac.check_out_photo, 'CHECK_OUT')}
+                                                    style={{
+                                                      display: 'inline-flex',
+                                                      alignItems: 'center',
+                                                      gap: '4px',
+                                                      padding: '3px 8px',
+                                                      background: '#eff6ff',
+                                                      color: '#1d4ed8',
+                                                      border: '1px solid #bfdbfe',
+                                                      borderRadius: '6px',
+                                                      fontSize: '0.7rem',
+                                                      fontWeight: '700',
+                                                      cursor: 'pointer',
+                                                      width: 'fit-content'
+                                                    }}
+                                                  >
+                                                    <LucideCamera size={12} /> Check-Out Photo
+                                                  </button>
+                                                )}
                                               </div>
+                                            </div>
+                                          </td>
+                                          <td>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
+                                              {isWorking && (
+                                                <span className="badge-pill badge-green" style={{ fontSize: '0.72rem', fontWeight: '700' }}>
+                                                  Working
+                                                </span>
+                                              )}
+                                              {isNotWorking && (
+                                                <span className="badge-pill badge-amber" style={{ fontSize: '0.72rem', fontWeight: '700', background: '#fef2f2', color: '#b91c1c', borderColor: '#fecaca' }}>
+                                                  Not Working
+                                                </span>
+                                              )}
+                                              {!isWorking && !isNotWorking && (
+                                                <span className="badge-pill badge-amber" style={{ fontSize: '0.72rem', fontWeight: '700' }}>
+                                                  Not marked
+                                                </span>
+                                              )}
+                                              {attStatus && attStatus !== 'NOT_MARKED' && (
+                                                <span style={{ fontSize: '0.68rem', color: '#64748b', fontWeight: 600 }}>
+                                                  Attendance: {attStatus.replace(/_/g, ' ')}
+                                                </span>
+                                              )}
+                                            </div>
+                                          </td>
+                                          <td style={{ minWidth: 180, maxWidth: 280 }}>
+                                            {isNotWorking ? (
+                                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                  <span
+                                                    className="badge-pill"
+                                                    style={{
+                                                      fontSize: '0.68rem',
+                                                      fontWeight: 700,
+                                                      background: issueKind === 'OEM' ? '#fff7ed' : '#eff6ff',
+                                                      color: issueKind === 'OEM' ? '#c2410c' : '#1d4ed8',
+                                                      border: `1px solid ${issueKind === 'OEM' ? '#fed7aa' : '#bfdbfe'}`,
+                                                    }}
+                                                  >
+                                                    {issueKind === 'OEM' ? (
+                                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                        <LucideWrench size={11} /> OEM Breakdown
+                                                      </span>
+                                                    ) : (
+                                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                        <LucideAlertTriangle size={11} /> Ops Stop
+                                                      </span>
+                                                    )}
+                                                  </span>
+                                                  {issueTicket && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => navigate('/breakdown')}
+                                                      style={{
+                                                        border: 'none',
+                                                        background: 'transparent',
+                                                        color: '#0369a1',
+                                                        fontSize: '0.72rem',
+                                                        fontWeight: 700,
+                                                        cursor: 'pointer',
+                                                        padding: 0,
+                                                        display: 'inline-flex',
+                                                        alignItems: 'center',
+                                                        gap: 3,
+                                                      }}
+                                                    >
+                                                      {issueTicket} <LucideExternalLink size={11} />
+                                                    </button>
+                                                  )}
+                                                </div>
+                                                <div style={{ fontSize: '0.78rem', color: '#334155', fontWeight: 600, lineHeight: 1.35 }}>
+                                                  {issueReason || 'No reason provided'}
+                                                </div>
+                                                {mac.issue_severity && (
+                                                  <div style={{ fontSize: '0.68rem', color: '#64748b' }}>
+                                                    Severity: {String(mac.issue_severity).toUpperCase()}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            ) : isWorking ? (
+                                              <span style={{ fontSize: '0.75rem', color: '#047857', fontWeight: 600 }}>
+                                                Machine attendance marked
+                                              </span>
+                                            ) : (
+                                              <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                                                No attendance or open issue
+                                              </span>
                                             )}
-                                          </div>
-                                        ) : isWorking ? (
-                                          <span style={{ fontSize: '0.75rem', color: '#047857', fontWeight: 600 }}>
-                                            Machine attendance marked
-                                          </span>
-                                        ) : (
-                                          <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
-                                            No attendance or open issue
-                                          </span>
-                                        )}
-                                      </td>
-                                    </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
                             </div>
-                          </div>
                           );
                         })()}
                       </>

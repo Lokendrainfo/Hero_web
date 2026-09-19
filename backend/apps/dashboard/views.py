@@ -506,26 +506,33 @@ class DashboardSummaryView(APIView):
         today_recs = list(
             AttendanceRecord.objects.filter(date=att_date)
             .exclude(attendance_type='MACHINE')
-            .select_related('user')
+            .select_related('user', 'vendor')
         )
         by_external = {}
-        by_username = {}
-        by_email = {}
-        by_phone = {}
+        by_vendor_phone = {}
+        by_vendor_email = {}
+        by_vendor_username = {}
         for r in today_recs:
             u = r.user
             if not u:
                 continue
-            if u.external_user_id:
-                by_external[str(u.external_user_id).strip()] = r
-            if u.username:
-                by_username[str(u.username).strip()] = r
-            if u.employee_id:
-                by_username[str(u.employee_id).strip()] = r
-            if u.email and not str(u.email).lower().startswith('user@'):
-                by_email[str(u.email).strip().lower()] = r
-            if u.phone_number:
-                by_phone[str(u.phone_number).strip()] = r
+            ext_id = getattr(u, 'external_user_id', None) or getattr(r, 'external_user_id_snapshot', None)
+            if ext_id:
+                by_external[str(ext_id).strip()] = r
+            v_ids = set()
+            if r.vendor_id:
+                v_ids.add(r.vendor_id)
+            if getattr(u, 'vendor_id', None):
+                v_ids.add(u.vendor_id)
+            for v_id in v_ids:
+                if u.phone_number:
+                    by_vendor_phone[(v_id, str(u.phone_number).strip())] = r
+                if u.email and not str(u.email).lower().startswith('user@'):
+                    by_vendor_email[(v_id, str(u.email).strip().lower())] = r
+                if u.username:
+                    by_vendor_username[(v_id, str(u.username).strip())] = r
+                if u.employee_id:
+                    by_vendor_username[(v_id, str(u.employee_id).strip())] = r
 
         total_team_members = 0
         present_count = 0
@@ -555,17 +562,24 @@ class DashboardSummaryView(APIView):
                 name = str(u_info.get('name') or u_info.get('contactName') or 'Team Member').strip()
                 designation = str(u_info.get('designation') or u_info.get('role') or 'OPERATOR').strip()
                 u_role = normalize_attendance_role(designation)
-                synthetic_id = f"ILYNC-{name.replace(' ', '_')}_{mobile}" if (name or mobile) else None
 
                 rec = None
                 if ext_u_id:
-                    rec = by_external.get(ext_u_id) or by_username.get(ext_u_id)
-                if not rec and synthetic_id:
-                    rec = by_external.get(synthetic_id) or by_username.get(synthetic_id)
-                if not rec and email and not email.lower().startswith('user@'):
-                    rec = by_email.get(email.lower())
-                if not rec and mobile:
-                    rec = by_phone.get(mobile) or by_username.get(mobile)
+                    rec = by_external.get(ext_u_id)
+
+                # Secondary fallback ONLY within this vendor, and only if candidate record has no conflicting external_user_id
+                if not rec and _v_obj:
+                    v_id = _v_obj.id
+                    cand_rec = (
+                        (by_vendor_email.get((v_id, email.lower())) if (email and not email.lower().startswith('user@')) else None)
+                        or (by_vendor_phone.get((v_id, mobile)) if mobile else None)
+                        or (by_vendor_username.get((v_id, mobile)) if mobile else None)
+                    )
+                    if cand_rec:
+                        cand_u = cand_rec.user
+                        cand_ext = getattr(cand_u, 'external_user_id', None) or getattr(cand_rec, 'external_user_id_snapshot', None)
+                        if not cand_ext or cand_ext == ext_u_id:
+                            rec = cand_rec
 
                 st = (rec.status if rec else 'NOT_MARKED').upper().replace(' ', '_')
                 if st in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT']:

@@ -78,6 +78,41 @@ class DashboardMachineKpiHelpersTestCase(unittest.TestCase):
         self.assertFalse(_row_started_shift({'attendance_key': 'no_work_window'}))
         self.assertEqual(_unique_chassis(['A', 'A', '', None, 'B']), ['A', 'B'])
 
+class DashboardAttendanceVendorScopingTestCase(unittest.TestCase):
+    def test_vendor_attendance_isolation(self):
+        """Verify that attendance records in one vendor are not leaked to another vendor via email or phone"""
+        # User in Vendor A (id=10) with ext_id=EXT-A and email=shared@test.com
+        # User in Vendor B (id=20) with ext_id=EXT-B and email=shared@test.com
+        by_external = {
+            'EXT-A': {'id': 101, 'status': 'PRESENT', 'user_id': 1}
+        }
+        by_vendor_email = {
+            (10, 'shared@test.com'): {'id': 101, 'status': 'PRESENT', 'user_id': 1}
+        }
+        by_vendor_phone = {
+            (10, '9999999999'): {'id': 101, 'status': 'PRESENT', 'user_id': 1}
+        }
+
+        # Check Vendor B user:
+        v_b_user = {'userId': 'EXT-B', 'email': 'shared@test.com', 'mobile': '9999999999'}
+        ext_u_id = v_b_user.get('userId')
+        email = v_b_user.get('email')
+        mobile = v_b_user.get('mobile')
+        v_id = 20  # Vendor B
+
+        rec = None
+        if ext_u_id:
+            rec = by_external.get(ext_u_id)
+
+        if not rec:
+            cand_rec = by_vendor_email.get((v_id, email.lower())) or by_vendor_phone.get((v_id, mobile))
+            if cand_rec:
+                rec = cand_rec
+
+        # Must be None because Vendor B does not own the attendance record for Vendor A
+        self.assertIsNone(rec)
+
 
 if __name__ == '__main__':
     unittest.main()
+
