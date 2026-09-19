@@ -528,6 +528,7 @@ export const Attendance = () => {
     try {
       const recordsToSave = teamMembers.map(item => ({
         user_id: item.user_id,
+        external_user_id: item.external_user_id || null,
         status: item.status === 'NOT_MARKED' ? 'PRESENT' : item.status,
         notes: item.notes || '',
         phone_number: item.phone_number || '',

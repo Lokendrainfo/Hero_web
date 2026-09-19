@@ -293,22 +293,30 @@ def resolve_target_user(user_id_param, request_user=None, external_user_id=None,
 
     # 1. Primary: Search by explicit external_user_id
     ext_id = str(external_user_id).strip() if external_user_id else None
-    if ext_id and ext_id.lower() not in ('none', 'null', 'undefined', ''):
+    if ext_id and ext_id.lower() in ('none', 'null', 'undefined', ''):
+        ext_id = None
+
+    param_str = str(user_id_param).strip() if user_id_param else ''
+    if param_str and param_str.lower() in ('none', 'null', 'undefined', ''):
+        param_str = ''
+
+    # If param_str looks like a 24-char ObjectId token and ext_id was not provided, treat param_str as ext_id
+    if not ext_id and len(param_str) == 24 and not param_str.isdigit():
+        ext_id = param_str
+
+    if ext_id:
         u = User.objects.filter(external_user_id=ext_id).first()
         if u:
             return u
 
-    param_str = str(user_id_param).strip() if user_id_param else ''
-    if not param_str or param_str.lower() in ('none', 'null', 'undefined'):
-        return None
-
-    # 1b. Search if param_str itself is an external_user_id
-    u = User.objects.filter(external_user_id=param_str).first()
-    if u:
-        return u
+    # 1b. Search if param_str itself matches an external_user_id
+    if param_str:
+        u = User.objects.filter(external_user_id=param_str).first()
+        if u:
+            return u
 
     # 1c. Search if param_str is digit matching local User ID primary key
-    if param_str.isdigit():
+    if param_str and param_str.isdigit():
         u = User.objects.filter(id=int(param_str)).first()
         if u:
             return u
@@ -317,43 +325,84 @@ def resolve_target_user(user_id_param, request_user=None, external_user_id=None,
     if request_user:
         target_vendor = getattr(request_user, 'vendor', None) or get_user_vendor(request_user, allow_network=False)
 
-    # 2. Search by employee_id, username, phone_number, email (scoped to target_vendor if known)
-    cand_qs = User.objects.filter(vendor=target_vendor) if target_vendor else User.objects.all()
-    u = cand_qs.filter(
-        Q(employee_id=param_str) |
-        Q(username=param_str) |
-        Q(phone_number=param_str) |
-        Q(email__iexact=param_str)
-    ).first()
-    if u:
-        if u.external_user_id and u.external_user_id != param_str:
-            return None
-        return u
+    # 2. Check authorizing vendor's iLync team roster for this member
+    if target_vendor and (ext_id or param_str):
+        v_data = get_vendor_ilync_detail(target_vendor)
+        if v_data and isinstance(v_data, dict):
+            raw_users = v_data.get('users') or []
+            lookup_token = ext_id or param_str
+            for u_info in raw_users:
+                if not isinstance(u_info, dict):
+                    continue
+                m_uid = str(u_info.get('userId') or u_info.get('id') or '').strip()
+                m_emp = str(u_info.get('empId') or '').strip()
+                m_phone = str(u_info.get('mobile') or u_info.get('phone') or '').strip()
+                m_name = str(u_info.get('name') or u_info.get('contactName') or '').strip()
+                if (lookup_token and (lookup_token in (m_uid, m_emp, m_phone) or lookup_token.lower() == m_name.lower())):
+                    if m_uid:
+                        u = User.objects.filter(external_user_id=m_uid).first()
+                        if u:
+                            return u
+                        # If user exists by phone or empId in DB, enrich with m_uid
+                        if m_phone:
+                            u = User.objects.filter(Q(phone_number=m_phone) | Q(username=m_phone)).first()
+                            if u:
+                                if not u.external_user_id:
+                                    u.external_user_id = m_uid
+                                    u.save(update_fields=['external_user_id'])
+                                return u
+                        # Create shell user for this iLync team member
+                        clean_u = clean_username(m_name.replace(' ', '_') if m_name else m_uid)
+                        if User.objects.filter(username=clean_u).exists():
+                            clean_u = f"{clean_u}_{int(timezone.now().timestamp())}"
+                        u, _ = User.objects.get_or_create(
+                            username=clean_u,
+                            defaults={
+                                'external_user_id': m_uid,
+                                'first_name': m_name.split()[0] if m_name else '',
+                                'last_name': ' '.join(m_name.split()[1:]) if len(m_name.split()) > 1 else '',
+                                'vendor': target_vendor,
+                                'phone_number': m_phone or None,
+                                'employee_id': m_emp or None,
+                                'role': normalize_attendance_role(u_info.get('designation') or u_info.get('role')),
+                                'is_active': True
+                            }
+                        )
+                        return u
 
-    # 2b. Search with common vendor/employee prefixes stripped (e.g. VND-9000000010, EMP-9000000010)
-    for prefix in ('VND-', 'EMP-', 'VND_', 'EMP_'):
-        if param_str.upper().startswith(prefix):
-            clean_token = param_str[len(prefix):].split('-')[0].strip()
-            if clean_token:
-                u = cand_qs.filter(
-                    Q(username=clean_token) |
-                    Q(phone_number=clean_token) |
-                    Q(employee_id__icontains=clean_token)
-                ).first()
-                if u:
-                    if u.external_user_id and u.external_user_id != param_str:
-                        return None
-                    return u
+    # 3. Search by employee_id, username, phone_number, email (search globally across Hero DB)
+    if param_str:
+        u = User.objects.filter(
+            Q(employee_id=param_str) |
+            Q(username=param_str) |
+            Q(phone_number=param_str) |
+            Q(email__iexact=param_str)
+        ).first()
+        if u:
+            return u
 
-    # 3b. If still not found and request_user has a vendor with external_vendor_id, sync live vendor users to resolve (only if sync_live=True)
-    if sync_live and target_vendor and getattr(target_vendor, 'external_vendor_id', None):
+        # 3b. Search with common vendor/employee prefixes stripped (e.g. VND-9000000010, EMP-9000000010)
+        for prefix in ('VND-', 'EMP-', 'VND_', 'EMP_'):
+            if param_str.upper().startswith(prefix):
+                clean_token = param_str[len(prefix):].split('-')[0].strip()
+                if clean_token:
+                    u = User.objects.filter(
+                        Q(username=clean_token) |
+                        Q(phone_number=clean_token) |
+                        Q(employee_id__icontains=clean_token)
+                    ).first()
+                    if u:
+                        return u
+
+    # 4. If still not found and request_user has a vendor with external_vendor_id, sync live vendor users to resolve (only if sync_live=True)
+    if sync_live and target_vendor and getattr(target_vendor, 'external_vendor_id', None) and param_str:
         try:
             from apps.vendors.services import sync_vendor_detail_links
             sync_vendor_detail_links(target_vendor, target_vendor.external_vendor_id)
-            u = User.objects.filter(external_user_id=param_str, vendor=target_vendor).first()
+            u = User.objects.filter(external_user_id=param_str).first()
             if u:
                 return u
-            u = User.objects.filter(vendor=target_vendor).filter(
+            u = User.objects.filter(
                 Q(employee_id=param_str) |
                 Q(username=param_str) |
                 Q(phone_number=param_str)
@@ -363,8 +412,8 @@ def resolve_target_user(user_id_param, request_user=None, external_user_id=None,
         except Exception:
             pass
 
-    # 4. If still not found and param looks like an external id token (not pure numeric), create lightweight shell user
-    if len(param_str) > 10 and not param_str.isdigit():
+    # 5. If still not found and param looks like an external id token (not pure numeric), create lightweight shell user
+    if param_str and len(param_str) > 10 and not param_str.isdigit():
         base_name = param_str.split('@')[0] if '@' in param_str else param_str
         clean_u = clean_username(base_name)
         if User.objects.filter(username=clean_u).exists():
@@ -591,19 +640,41 @@ def validate_employee_attendance_access(request_user, target_user, vendor_obj=No
     if not allowed_vendor_ids:
         raise PermissionDenied("You do not have permission to manage attendance for this employee.")
 
-    # 1. Determine the authorizing vendor
-    authorizing_vendor = vendor_obj
+    from apps.vendors.models import Vendor
+
+    # 1. Determine the authorizing vendor from allowed vendors of request_user
+    authorizing_vendor = None
+    if vendor_obj and vendor_obj.id in allowed_vendor_ids:
+        authorizing_vendor = vendor_obj
+
+    # If vendor_obj was not provided or was not in request_user's allowed vendors
+    # (e.g. client passed target_user.vendor_id), resolve from request_user's authorized vendors:
     if not authorizing_vendor:
-        authorizing_vendor = getattr(request_user, 'vendor', None) or get_user_vendor(request_user, allow_network=False)
+        user_ven = getattr(request_user, 'vendor', None) or get_user_vendor(request_user, allow_network=False)
+        if user_ven and user_ven.id in allowed_vendor_ids:
+            authorizing_vendor = user_ven
+
     if not authorizing_vendor and allowed_vendor_ids:
-        from apps.vendors.models import Vendor
-        authorizing_vendor = Vendor.objects.filter(id=allowed_vendor_ids[0]).first()
+        target_ext_uid = getattr(target_user, 'external_user_id', None)
+        cand_vendors = list(Vendor.objects.filter(id__in=allowed_vendor_ids))
+        if target_ext_uid and len(cand_vendors) > 1:
+            for cv in cand_vendors:
+                cv_data = get_vendor_ilync_detail(cv)
+                if cv_data and isinstance(cv_data, dict):
+                    cv_users = cv_data.get('users') or []
+                    cv_uids = {
+                        str(u.get('userId') or u.get('id')).strip()
+                        for u in cv_users
+                        if isinstance(u, dict) and u.get('active') is True and (u.get('userId') or u.get('id'))
+                    }
+                    if target_ext_uid in cv_uids:
+                        authorizing_vendor = cv
+                        break
+        if not authorizing_vendor and cand_vendors:
+            authorizing_vendor = cand_vendors[0]
 
     if not authorizing_vendor:
         raise PermissionDenied("You do not have permission to manage attendance for this employee.")
-
-    if allowed_vendor_ids is not None and authorizing_vendor.id not in allowed_vendor_ids:
-        raise PermissionDenied(f"You do not have permission to manage attendance for vendor '{authorizing_vendor.name}'.")
 
     # 2. Check if authorizing_vendor has an iLync external_vendor_id
     ext_v_id = getattr(authorizing_vendor, 'external_vendor_id', None)
@@ -626,6 +697,23 @@ def validate_employee_attendance_access(request_user, target_user, vendor_obj=No
                 for u in raw_users
                 if isinstance(u, dict) and u.get('active') is True and (u.get('userId') or u.get('id'))
             }
+
+            # If target_user has no external_user_id, attempt to match by phone or empId from vendor roster
+            if not target_ext_uid:
+                tgt_phone = getattr(target_user, 'phone_number', None) or target_user.username
+                tgt_emp = getattr(target_user, 'employee_id', None)
+                for u_item in raw_users:
+                    if isinstance(u_item, dict) and u_item.get('active') is True:
+                        m_phone = str(u_item.get('mobile') or u_item.get('phone') or '').strip()
+                        m_emp = str(u_item.get('empId') or '').strip()
+                        if (tgt_phone and m_phone == tgt_phone) or (tgt_emp and m_emp == tgt_emp):
+                            target_ext_uid = str(u_item.get('userId') or u_item.get('id')).strip()
+                            target_user.external_user_id = target_ext_uid
+                            try:
+                                target_user.save(update_fields=['external_user_id'])
+                            except Exception:
+                                pass
+                            break
 
             if not target_ext_uid:
                 from rest_framework.exceptions import ValidationError
@@ -833,9 +921,26 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         t_global_start = time.perf_counter()
         print(f"[AttendanceCheckInTiming] START | request_user_id={getattr(request.user, 'id', None)}")
 
-        ext_user_id = request.data.get('external_user_id')
-        target_user_id = request.data.get('user_id') or request.data.get('marked_for_user_id') or request.data.get('user')
-        req_vendor_id = request.data.get('vendor_id') or request.data.get('vendor')
+        ext_user_id = (
+            request.data.get('external_user_id') or
+            request.data.get('externalUserId') or
+            request.data.get('ext_user_id') or
+            request.data.get('externalId')
+        )
+        target_user_id = (
+            request.data.get('user_id') or
+            request.data.get('marked_for_user_id') or
+            request.data.get('user') or
+            request.data.get('userId') or
+            request.data.get('id') or
+            request.data.get('employee_id') or
+            request.data.get('employeeId') or
+            request.data.get('empId')
+        )
+        req_vendor_id = request.data.get('vendor_id') or request.data.get('vendor') or request.data.get('vendorId')
+
+        if target_user_id and not ext_user_id and len(str(target_user_id).strip()) == 24 and not str(target_user_id).strip().isdigit():
+            ext_user_id = str(target_user_id).strip()
 
         user = request.user
         target_requested = bool(ext_user_id or target_user_id)
@@ -857,26 +962,30 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         # 2. AUTHORIZATION & VENDOR RESOLUTION
         t_auth_start = time.perf_counter()
+        allowed_v_ids = get_user_vendor_ids(request.user)
 
         authorizing_vendor = None
         if req_vendor_id:
             from apps.vendors.models import Vendor
             req_v_str = str(req_vendor_id).strip()
+            cand_v = None
             if req_v_str.isdigit():
-                authorizing_vendor = Vendor.objects.filter(id=int(req_v_str)).first()
-            if not authorizing_vendor:
-                authorizing_vendor = Vendor.objects.filter(external_vendor_id=req_v_str).first()
-            if not authorizing_vendor:
-                authorizing_vendor = Vendor.objects.filter(name__iexact=req_v_str).first()
+                cand_v = Vendor.objects.filter(id=int(req_v_str)).first()
+            if not cand_v:
+                cand_v = Vendor.objects.filter(external_vendor_id=req_v_str).first()
+            if not cand_v:
+                cand_v = Vendor.objects.filter(name__iexact=req_v_str).first()
+            if cand_v and (allowed_v_ids is None or cand_v.id in allowed_v_ids):
+                authorizing_vendor = cand_v
 
         if not authorizing_vendor:
-            authorizing_vendor = getattr(request.user, 'vendor', None) or get_user_vendor(request.user, allow_network=False)
+            user_ven = getattr(request.user, 'vendor', None) or get_user_vendor(request.user, allow_network=False)
+            if user_ven and (allowed_v_ids is None or user_ven.id in allowed_v_ids):
+                authorizing_vendor = user_ven
 
-        if not authorizing_vendor:
-            allowed_v_ids = get_user_vendor_ids(request.user)
-            if allowed_v_ids:
-                from apps.vendors.models import Vendor
-                authorizing_vendor = Vendor.objects.filter(id=allowed_v_ids[0]).first()
+        if not authorizing_vendor and allowed_v_ids:
+            from apps.vendors.models import Vendor
+            authorizing_vendor = Vendor.objects.filter(id__in=allowed_v_ids).first()
 
         # Validate logged-in user's authorization for that vendor and target team member via iLync roster
         validate_employee_attendance_access(request.user, user, vendor_obj=authorizing_vendor)
@@ -929,6 +1038,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if acc is not None and str(acc).strip() != '': existing.check_in_accuracy = float(acc)
             if loc_source: existing.location_source = loc_source
             existing.updated_by = request.user
+            if target_vendor and (not existing.vendor_id or existing.vendor_id != target_vendor.id):
+                existing.vendor = target_vendor
+                existing.vendor_name_snapshot = v_name_snap
+                existing.vendor_external_id_snapshot = v_ext_id_snap
 
             # Populate snapshot fields
             if not existing.external_user_id_snapshot: existing.external_user_id_snapshot = ext_uid_snap
@@ -1044,8 +1157,25 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     # 4.3 Employee Self Check-Out
     @action(detail=False, methods=['post'], url_path='check-out')
     def check_out(self, request):
-        ext_user_id = request.data.get('external_user_id')
-        target_user_id = request.data.get('user_id') or request.data.get('marked_for_user_id') or request.data.get('user')
+        ext_user_id = (
+            request.data.get('external_user_id') or
+            request.data.get('externalUserId') or
+            request.data.get('ext_user_id') or
+            request.data.get('externalId')
+        )
+        target_user_id = (
+            request.data.get('user_id') or
+            request.data.get('marked_for_user_id') or
+            request.data.get('user') or
+            request.data.get('userId') or
+            request.data.get('id') or
+            request.data.get('employee_id') or
+            request.data.get('employeeId') or
+            request.data.get('empId')
+        )
+        if target_user_id and not ext_user_id and len(str(target_user_id).strip()) == 24 and not str(target_user_id).strip().isdigit():
+            ext_user_id = str(target_user_id).strip()
+
         user = request.user
         target_requested = bool(ext_user_id or target_user_id)
 
@@ -1056,15 +1186,30 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     message=f"Target employee not found for identifier '{ext_user_id or target_user_id}'.",
                     status_code=status.HTTP_404_NOT_FOUND
                 )
-            req_v = request.data.get('vendor_id') or request.data.get('vendor')
+            req_v = request.data.get('vendor_id') or request.data.get('vendor') or request.data.get('vendorId')
+            allowed_v_ids = get_user_vendor_ids(request.user)
             authorizing_vendor = None
             if req_v:
                 from apps.vendors.models import Vendor
                 req_v_str = str(req_v).strip()
+                cand_v = None
                 if req_v_str.isdigit():
-                    authorizing_vendor = Vendor.objects.filter(id=int(req_v_str)).first()
+                    cand_v = Vendor.objects.filter(id=int(req_v_str)).first()
+                if not cand_v:
+                    cand_v = Vendor.objects.filter(external_vendor_id=req_v_str).first()
+                if not cand_v:
+                    cand_v = Vendor.objects.filter(name__iexact=req_v_str).first()
+                if cand_v and (allowed_v_ids is None or cand_v.id in allowed_v_ids):
+                    authorizing_vendor = cand_v
+
             if not authorizing_vendor:
-                authorizing_vendor = getattr(request.user, 'vendor', None) or get_user_vendor(request.user, allow_network=False)
+                user_ven = getattr(request.user, 'vendor', None) or get_user_vendor(request.user, allow_network=False)
+                if user_ven and (allowed_v_ids is None or user_ven.id in allowed_v_ids):
+                    authorizing_vendor = user_ven
+
+            if not authorizing_vendor and allowed_v_ids:
+                from apps.vendors.models import Vendor
+                authorizing_vendor = Vendor.objects.filter(id__in=allowed_v_ids).first()
 
             validate_employee_attendance_access(request.user, target_user, vendor_obj=authorizing_vendor)
             user = target_user
@@ -1115,8 +1260,25 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     # 4.4 Team Member Check-In (Supervisor Marking Team)
     @action(detail=False, methods=['post'], url_path='team-check-in')
     def team_check_in(self, request):
-        ext_user_id = request.data.get('external_user_id')
-        target_user_id = request.data.get('marked_for_user_id') or request.data.get('user_id')
+        ext_user_id = (
+            request.data.get('external_user_id') or
+            request.data.get('externalUserId') or
+            request.data.get('ext_user_id') or
+            request.data.get('externalId')
+        )
+        target_user_id = (
+            request.data.get('marked_for_user_id') or
+            request.data.get('user_id') or
+            request.data.get('user') or
+            request.data.get('userId') or
+            request.data.get('id') or
+            request.data.get('employee_id') or
+            request.data.get('employeeId') or
+            request.data.get('empId')
+        )
+        if target_user_id and not ext_user_id and len(str(target_user_id).strip()) == 24 and not str(target_user_id).strip().isdigit():
+            ext_user_id = str(target_user_id).strip()
+
         if not target_user_id and not ext_user_id:
             return error_response(message="marked_for_user_id or external_user_id is required.", status_code=status.HTTP_400_BAD_REQUEST)
 
@@ -1124,26 +1286,30 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if not target_user:
             return error_response(message="Target team member not found.", status_code=status.HTTP_404_NOT_FOUND)
 
-        req_v = request.data.get('vendor_id') or request.data.get('vendor')
+        req_v = request.data.get('vendor_id') or request.data.get('vendor') or request.data.get('vendorId')
+        allowed_v_ids = get_user_vendor_ids(request.user)
         authorizing_vendor = None
         if req_v:
             from apps.vendors.models import Vendor
             req_v_str = str(req_v).strip()
+            cand_v = None
             if req_v_str.isdigit():
-                authorizing_vendor = Vendor.objects.filter(id=int(req_v_str)).first()
-            if not authorizing_vendor:
-                authorizing_vendor = Vendor.objects.filter(external_vendor_id=req_v_str).first()
-            if not authorizing_vendor:
-                authorizing_vendor = Vendor.objects.filter(name__iexact=req_v_str).first()
+                cand_v = Vendor.objects.filter(id=int(req_v_str)).first()
+            if not cand_v:
+                cand_v = Vendor.objects.filter(external_vendor_id=req_v_str).first()
+            if not cand_v:
+                cand_v = Vendor.objects.filter(name__iexact=req_v_str).first()
+            if cand_v and (allowed_v_ids is None or cand_v.id in allowed_v_ids):
+                authorizing_vendor = cand_v
 
         if not authorizing_vendor:
-            authorizing_vendor = getattr(request.user, 'vendor', None) or get_user_vendor(request.user, allow_network=False)
+            user_ven = getattr(request.user, 'vendor', None) or get_user_vendor(request.user, allow_network=False)
+            if user_ven and (allowed_v_ids is None or user_ven.id in allowed_v_ids):
+                authorizing_vendor = user_ven
 
-        if not authorizing_vendor:
-            allowed_v_ids = get_user_vendor_ids(request.user)
-            if allowed_v_ids:
-                from apps.vendors.models import Vendor
-                authorizing_vendor = Vendor.objects.filter(id=allowed_v_ids[0]).first()
+        if not authorizing_vendor and allowed_v_ids:
+            from apps.vendors.models import Vendor
+            authorizing_vendor = Vendor.objects.filter(id__in=allowed_v_ids).first()
 
         validate_employee_attendance_access(request.user, target_user, vendor_obj=authorizing_vendor)
         today = timezone.localdate()
@@ -1174,6 +1340,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if lng is not None and str(lng).strip() != '': existing.check_in_longitude = float(lng)
             if acc is not None and str(acc).strip() != '': existing.check_in_accuracy = float(acc)
             existing.updated_by = request.user
+            if target_vendor and (not existing.vendor_id or existing.vendor_id != target_vendor.id):
+                existing.vendor = target_vendor
+                existing.vendor_name_snapshot = v_name_snap
+                existing.vendor_external_id_snapshot = v_ext_id_snap
 
             # Populate snapshot fields
             if not existing.external_user_id_snapshot: existing.external_user_id_snapshot = ext_uid_snap
@@ -2233,6 +2403,32 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     return None
             return None
 
+        # Determine default authorizing vendor for bulk marking
+        allowed_v_ids = get_user_vendor_ids(request.user)
+        req_v = request.data.get('vendor_id') or request.data.get('vendor') or request.data.get('vendorId')
+        default_authorizing_vendor = None
+        if req_v:
+            from apps.vendors.models import Vendor
+            req_v_str = str(req_v).strip()
+            cand_v = None
+            if req_v_str.isdigit():
+                cand_v = Vendor.objects.filter(id=int(req_v_str)).first()
+            if not cand_v:
+                cand_v = Vendor.objects.filter(external_vendor_id=req_v_str).first()
+            if not cand_v:
+                cand_v = Vendor.objects.filter(name__iexact=req_v_str).first()
+            if cand_v and (allowed_v_ids is None or cand_v.id in allowed_v_ids):
+                default_authorizing_vendor = cand_v
+
+        if not default_authorizing_vendor:
+            user_ven = getattr(request.user, 'vendor', None) or get_user_vendor(request.user, allow_network=False)
+            if user_ven and (allowed_v_ids is None or user_ven.id in allowed_v_ids):
+                default_authorizing_vendor = user_ven
+
+        if not default_authorizing_vendor and allowed_v_ids:
+            from apps.vendors.models import Vendor
+            default_authorizing_vendor = Vendor.objects.filter(id__in=allowed_v_ids).first()
+
         saved_records = []
         skipped = 0
         for item in records_data:
@@ -2240,13 +2436,39 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 skipped += 1
                 continue
 
-            u_id = item.get('user_id') or item.get('user') or item.get('employee_id')
-            if not u_id:
+            u_id = item.get('user_id') or item.get('user') or item.get('userId') or item.get('id') or item.get('employee_id') or item.get('employeeId')
+            ext_u_id = item.get('external_user_id') or item.get('externalUserId')
+            if u_id and not ext_u_id and len(str(u_id).strip()) == 24 and not str(u_id).strip().isdigit():
+                ext_u_id = str(u_id).strip()
+
+            if not u_id and not ext_u_id:
                 skipped += 1
                 continue
 
-            target_user = resolve_target_user(u_id, request.user)
+            target_user = resolve_target_user(u_id, request_user=request.user, external_user_id=ext_u_id)
             if not target_user:
+                skipped += 1
+                continue
+
+            # Determine item authorizing vendor
+            item_vendor_id = item.get('vendor_id') or item.get('vendor') or item.get('vendorId')
+            item_authorizing_vendor = default_authorizing_vendor
+            if item_vendor_id:
+                from apps.vendors.models import Vendor
+                iv_str = str(item_vendor_id).strip()
+                cand_v = None
+                if iv_str.isdigit():
+                    cand_v = Vendor.objects.filter(id=int(iv_str)).first()
+                if not cand_v:
+                    cand_v = Vendor.objects.filter(external_vendor_id=iv_str).first()
+                if not cand_v:
+                    cand_v = Vendor.objects.filter(name__iexact=iv_str).first()
+                if cand_v and (allowed_v_ids is None or cand_v.id in allowed_v_ids):
+                    item_authorizing_vendor = cand_v
+
+            try:
+                validate_employee_attendance_access(request.user, target_user, vendor_obj=item_authorizing_vendor)
+            except PermissionDenied:
                 skipped += 1
                 continue
 
@@ -2287,12 +2509,6 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 except Exception as e:
                     print(f"[BulkMark] Failed enriching user {u_id}: {e}")
 
-            try:
-                validate_employee_attendance_access(request.user, target_user)
-            except PermissionDenied:
-                skipped += 1
-                continue
-
             st_val = (item.get('status') or 'PRESENT').upper().replace(' ', '_')
             if st_val in ('NOT_MARKED', 'NOT_CHECKED_IN', ''):
                 # Leave unmarked rows out of DB unless explicitly requested
@@ -2307,7 +2523,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             acc_val = item.get('check_in_accuracy') or item.get('accuracy')
             loc_source = item.get('location_source') or 'GPS'
 
-            target_vendor = target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
+            target_vendor = item_authorizing_vendor or target_user.vendor or get_user_vendor(target_user) or get_user_vendor(request.user)
             reporting_mgr = resolve_reporting_manager(
                 target_user, marked_by_user=request.user, vendor=target_vendor
             )
@@ -2376,8 +2592,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 if f_acc is not None:
                     record.check_in_accuracy = f_acc
                 record.updated_by = request.user
-                if target_vendor and not record.vendor:
+                if target_vendor and (not record.vendor_id or record.vendor_id != target_vendor.id):
                     record.vendor = target_vendor
+                    record.vendor_name_snapshot = v_name_val
+                    record.vendor_external_id_snapshot = v_ext_id_val
                 if reporting_mgr and not record.reporting_manager:
                     record.reporting_manager = reporting_mgr
                 # Only enrich empty snapshot fields (never overwrite existing historical identity)

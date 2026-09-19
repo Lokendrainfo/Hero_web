@@ -879,5 +879,64 @@ class VendorMultiMappingAttendanceTestCase(TestCase):
         self.assertEqual(old_rec.vendor_name_snapshot, "Vikas kumar")
         self.assertEqual(old_rec.vendor_external_id_snapshot, "6a95092f544bdedf53d4ec0a")
 
+    def test_vendor_475_can_check_in_team_member_with_foreign_vendor_id_in_payload(self):
+        """
+        When frontend or mobile sends vendor_id of the team member (e.g. Vikas kumar / 21)
+        instead of the logged-in vendor's ID, the check-in MUST succeed and be authorized under Premium.
+        """
+        from rest_framework.test import force_authenticate
+        request = self.factory.post('/api/v1/attendance/check-in/', {
+            'user_id': self.user_541.id,
+            'external_user_id': self.user_541.external_user_id,
+            'vendor_id': self.vendor_vikas.id,  # Foreign vendor ID passed in body
+            'latitude': 28.5355,
+            'longitude': 77.3910
+        })
+        force_authenticate(request, user=self.user_475)
+        response = self.view(request)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data.get('success'))
+        data = response.data.get('data')
+        self.assertEqual(data['user_id'], self.user_541.id)
+        self.assertEqual(data['vendor_name_snapshot'], "Premium infra solutions")
+        self.assertEqual(data['vendor_external_id_snapshot'], "6aa540a512381cfcdf6a1ed5")
+
+    def test_vendor_475_can_team_check_in_user_541(self):
+        """Verify team-check-in endpoint succeeds when marked by vendor 475."""
+        from rest_framework.test import force_authenticate
+        from apps.attendance.views import AttendanceViewSet
+        view_team = AttendanceViewSet.as_view({'post': 'team_check_in'})
+        request = self.factory.post('/api/v1/attendance/team-check-in/', {
+            'marked_for_user_id': self.user_541.id,
+            'external_user_id': self.user_541.external_user_id,
+            'vendor_id': self.vendor_vikas.id
+        })
+        force_authenticate(request, user=self.user_475)
+        response = view_team(request)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_vendor_475_can_bulk_mark_team_members(self):
+        """Verify bulk-mark endpoint succeeds when marked by vendor 475."""
+        from rest_framework.test import force_authenticate
+        from apps.attendance.views import AttendanceViewSet
+        view_bulk = AttendanceViewSet.as_view({'post': 'bulk_mark'})
+        request = self.factory.post('/api/v1/attendance/bulk-mark/', {
+            'date': '2026-09-19',
+            'records': [
+                {
+                    'user_id': self.user_541.id,
+                    'external_user_id': self.user_541.external_user_id,
+                    'vendor_id': self.vendor_vikas.id,
+                    'status': 'PRESENT'
+                }
+            ]
+        }, format='json')
+        force_authenticate(request, user=self.user_475)
+        response = view_bulk(request)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data.get('success'))
+
+
 
 

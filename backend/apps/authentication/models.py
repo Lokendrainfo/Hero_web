@@ -137,9 +137,22 @@ class User(AbstractUser):
                 "name": a.vendor.name,
                 "code": a.vendor.code or ""
             })
+
+        # Include direct vendor FK fallback if not already in result
+        if getattr(self, 'vendor', None) and getattr(self.vendor, 'is_active', True):
+            if not any(r['id'] == self.vendor.id for r in result):
+                result.append({
+                    "id": self.vendor.id,
+                    "external_vendor_id": self.vendor.external_vendor_id or str(self.vendor.id),
+                    "name": self.vendor.name,
+                    "code": self.vendor.code or ""
+                })
         return result
 
     def get_assigned_vendor_ids(self):
         if self.is_superuser or 'ADMIN' in self.get_role_list():
             return None # None means ALL vendors (no restriction)
-        return list(self.hero_vendor_assignments.filter(is_active=True).values_list('vendor_id', flat=True))
+        v_ids = list(self.hero_vendor_assignments.filter(is_active=True).values_list('vendor_id', flat=True))
+        if self.vendor_id and self.vendor_id not in v_ids:
+            v_ids.append(self.vendor_id)
+        return v_ids
