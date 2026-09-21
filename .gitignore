@@ -40,10 +40,5 @@ Thumbs.db
 # Database dumps
 *.sql
 frontend/.env.tunnel
-
-frontend/vite.config.js
-docker-compose.yml
 frontend/nginx.conf
-docker-compose.yml
-frontend/vite.config.js
 docker-compose.yml
