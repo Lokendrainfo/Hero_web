@@ -150,82 +150,99 @@ class UserViewSet(viewsets.ModelViewSet):
             "results": serializer.data
         })
 
+    def _handle_view_exception(self, e, action_name="update"):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        from django.db import IntegrityError
+
+        if isinstance(e, (DjangoValidationError, DRFValidationError)):
+            err_dict = getattr(e, 'detail', None)
+            if not err_dict and hasattr(e, 'message_dict'):
+                err_dict = e.message_dict
+
+            msg = None
+            if isinstance(err_dict, dict):
+                first_key = next(iter(err_dict.keys()), None)
+                if first_key:
+                    err_val = err_dict[first_key]
+                    first_item = err_val[0] if isinstance(err_val, (list, tuple)) and err_val else err_val
+                    msg = f"{first_key}: {first_item}"
+            elif isinstance(err_dict, (list, tuple)) and err_dict:
+                msg = str(err_dict[0])
+
+            if not msg:
+                msg = e.messages[0] if hasattr(e, 'messages') and e.messages else str(e)
+
+            return error_response(message=msg, errors=err_dict, status_code=status.HTTP_400_BAD_REQUEST)
+
+        elif isinstance(e, IntegrityError):
+            err_msg = str(e)
+            if 'unique' in err_msg.lower() or 'UNIQUE' in err_msg:
+                return error_response(message="A user with this username, email, phone number, or external ID already exists.", status_code=status.HTTP_400_BAD_REQUEST)
+            return error_response(message=f"Database constraint error: {err_msg}", status_code=status.HTTP_400_BAD_REQUEST)
+
+        return error_response(message=f"Failed to {action_name} user: {str(e)}", status_code=status.HTTP_400_BAD_REQUEST)
+
     def create(self, request, *args, **kwargs):
         try:
             return super().create(request, *args, **kwargs)
         except Exception as e:
-            from django.core.exceptions import ValidationError as DjangoValidationError
-            from rest_framework.exceptions import ValidationError as DRFValidationError
-            from django.db import IntegrityError
-            if isinstance(e, (DjangoValidationError, DRFValidationError)):
-                err_dict = getattr(e, 'detail', None)
-                if not err_dict and hasattr(e, 'message_dict'):
-                    err_dict = e.message_dict
-                msg = e.messages[0] if hasattr(e, 'messages') and e.messages else str(e)
-                return error_response(message=msg, errors=err_dict, status_code=status.HTTP_400_BAD_REQUEST)
-            elif isinstance(e, IntegrityError):
-                err_msg = str(e)
-                if 'unique' in err_msg.lower() or 'UNIQUE' in err_msg:
-                    return error_response(message="A user with this username, email, or external ID already exists.", status_code=status.HTTP_400_BAD_REQUEST)
-                return error_response(message=f"Database constraint error: {err_msg}", status_code=status.HTTP_400_BAD_REQUEST)
-            return error_response(message=f"Failed to create user: {str(e)}", status_code=status.HTTP_400_BAD_REQUEST)
+            return self._handle_view_exception(e, "create")
 
     def update(self, request, *args, **kwargs):
         try:
             return super().update(request, *args, **kwargs)
         except Exception as e:
-            from django.core.exceptions import ValidationError as DjangoValidationError
-            from rest_framework.exceptions import ValidationError as DRFValidationError
-            if isinstance(e, (DjangoValidationError, DRFValidationError)):
-                msg = e.messages[0] if hasattr(e, 'messages') and e.messages else str(e)
-                return error_response(message=msg, status_code=status.HTTP_400_BAD_REQUEST)
-            raise e
+            return self._handle_view_exception(e, "update")
 
     def partial_update(self, request, *args, **kwargs):
         try:
             return super().partial_update(request, *args, **kwargs)
         except Exception as e:
-            from django.core.exceptions import ValidationError as DjangoValidationError
-            from rest_framework.exceptions import ValidationError as DRFValidationError
-            if isinstance(e, (DjangoValidationError, DRFValidationError)):
-                msg = e.messages[0] if hasattr(e, 'messages') and e.messages else str(e)
-                return error_response(message=msg, status_code=status.HTTP_400_BAD_REQUEST)
-            raise e
+            return self._handle_view_exception(e, "update")
 
     @action(detail=True, methods=['patch', 'post'], url_path='role')
     def update_role(self, request, pk=None):
-        user = self.get_object()
-        role_name = request.data.get('role') or request.data.get('role_name')
-        roles_list = request.data.get('roles', [])
-        is_active = request.data.get('is_active')
+        try:
+            user = self.get_object()
+            role_name = request.data.get('role') or request.data.get('role_name')
+            roles_list = request.data.get('roles', [])
+            is_active = request.data.get('is_active')
 
-        if is_active is not None:
-            user.is_active = bool(is_active)
+            if is_active is not None:
+                user.is_active = bool(is_active)
 
-        if role_name:
-            user.role = role_name
-            role_obj = Role.objects.filter(name__iexact=role_name).first()
-            if role_obj:
-                user.roles.set([role_obj])
+            if role_name:
+                user.role = role_name
+                role_obj = Role.objects.filter(name__iexact=role_name).first()
+                if not role_obj:
+                    role_obj, _ = Role.objects.get_or_create(
+                        name=role_name,
+                        defaults={'code': role_name.upper(), 'description': f"Role: {role_name}"}
+                    )
+                if role_obj:
+                    user.roles.set([role_obj])
 
-        if roles_list and isinstance(roles_list, list):
-            role_objs = Role.objects.filter(name__in=roles_list)
-            if role_objs.exists():
-                user.roles.set(role_objs)
-                user.role = role_objs.first().name
+            if roles_list and isinstance(roles_list, list):
+                role_objs = Role.objects.filter(name__in=roles_list)
+                if role_objs.exists():
+                    user.roles.set(role_objs)
+                    user.role = role_objs.first().name
 
-        user.save()
+            user.save()
 
-        # If updated role is VENDOR, immediately resolve vendor assignment
-        user_roles = [str(r).upper() for r in user.get_role_list()]
-        if 'VENDOR' in user_roles or (user.role and 'VENDOR' in str(user.role).upper()):
-            from apps.common.vendor_scope import get_user_vendor
-            get_user_vendor(user, resolve_fallback=True)
+            # If updated role is VENDOR, immediately resolve vendor assignment
+            user_roles = [str(r).upper() for r in user.get_role_list()]
+            if 'VENDOR' in user_roles or (user.role and 'VENDOR' in str(user.role).upper()):
+                from apps.common.vendor_scope import get_user_vendor
+                get_user_vendor(user, resolve_fallback=True)
 
-        return success_response(
-            data=UserSerializer(user).data,
-            message=f"User {user.username} role updated successfully to {user.get_role_list()}"
-        )
+            return success_response(
+                data=UserSerializer(user).data,
+                message=f"User {user.username} role updated successfully to {user.get_role_list()}"
+            )
+        except Exception as e:
+            return self._handle_view_exception(e, "update role")
 
     @action(detail=True, methods=['get', 'post', 'delete'], url_path='vendors')
     def manage_vendors(self, request, pk=None):

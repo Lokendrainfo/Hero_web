@@ -312,14 +312,22 @@ export const Users = () => {
     const dId = u.selected_district ? (u.selected_district.id || u.selected_district) : (u.selected_district_id || '');
     const bId = u.selected_block ? (u.selected_block.id || u.selected_block) : (u.selected_block_id || '');
 
+    let firstName = u.first_name || '';
+    let lastName = u.last_name || '';
+    if (!firstName && !lastName && u.name) {
+      const parts = u.name.trim().split(/\s+/);
+      firstName = parts[0] || '';
+      lastName = parts.slice(1).join(' ') || '';
+    }
+
     setEditForm({
-      first_name: u.first_name || u.name || '',
-      last_name: u.last_name || '',
+      first_name: firstName,
+      last_name: lastName,
       email: u.email || '',
       phone_number: u.phone_number || '',
       external_user_id: u.external_user_id || u.employee_id || '',
       role: currentRole,
-      reporting_manager_id: u.reporting_manager_id || u.reporting_manager || '',
+      reporting_manager_id: u.reporting_manager_id || (u.reporting_manager && (u.reporting_manager.id || u.reporting_manager)) || '',
       vendor_id: firstAssignedVendorId || '',
       user_type: uType,
       advance_scope_type: scopeType,
@@ -340,13 +348,15 @@ export const Users = () => {
   const handleSaveEditUser = async () => {
     if (!editUser) return;
     try {
+      const extId = editForm.external_user_id ? editForm.external_user_id.trim() : '';
       const payload = {
-        first_name: editForm.first_name,
-        email: editForm.email,
-        phone_number: editForm.phone_number,
-        external_user_id: editForm.external_user_id,
-        role: editForm.role,
-        is_active: editForm.is_active,
+        first_name: editForm.first_name ? editForm.first_name.trim() : '',
+        last_name: editForm.last_name ? editForm.last_name.trim() : '',
+        email: editForm.email && editForm.email.trim() ? editForm.email.trim() : '',
+        phone_number: editForm.phone_number && editForm.phone_number.trim() ? editForm.phone_number.trim() : '',
+        external_user_id: extId && !['none', 'null', '—', 'n/a', '-'].includes(extId.toLowerCase()) ? extId : null,
+        role: editForm.role || 'VIEWER',
+        is_active: editForm.is_active !== undefined ? editForm.is_active : true,
         reporting_manager_id: editForm.reporting_manager_id ? Number(editForm.reporting_manager_id) : null,
         vendor_id: editForm.vendor_id ? editForm.vendor_id : null,
         user_type: editForm.user_type || 'NORMAL',
@@ -360,7 +370,7 @@ export const Users = () => {
       
       // Update role & status if changed
       if (editForm.role || editForm.is_active !== undefined) {
-        await userService.updateRole(editUser.id, { role: editForm.role, is_active: editForm.is_active });
+        await userService.updateRole(editUser.id, { role: editForm.role, is_active: editForm.is_active }).catch(() => {});
       }
 
       // If vendor_id is specified, assign vendor scope as well
@@ -373,7 +383,31 @@ export const Users = () => {
       setEditUser(null);
     } catch (err) {
       console.error("Failed to update user:", err);
-      setStatusMessage({ type: 'error', text: 'Failed to save user updates.' });
+      let errMsg = 'Failed to save user updates.';
+      if (err.response?.data) {
+        const d = err.response.data;
+        if (d.message) {
+          errMsg = d.message;
+          if (d.errors && typeof d.errors === 'object' && Object.keys(d.errors).length > 0) {
+            const fieldErrs = Object.entries(d.errors)
+              .map(([f, msgs]) => `${f}: ${Array.isArray(msgs) ? msgs.join(', ') : msgs}`)
+              .join('; ');
+            if (fieldErrs && !errMsg.includes(fieldErrs)) {
+              errMsg += ` (${fieldErrs})`;
+            }
+          }
+        } else if (d.detail) {
+          errMsg = d.detail;
+        } else if (typeof d === 'object') {
+          const fieldErrs = Object.entries(d)
+            .map(([f, msgs]) => `${f}: ${Array.isArray(msgs) ? msgs.join(', ') : msgs}`)
+            .join('; ');
+          if (fieldErrs) errMsg = fieldErrs;
+        }
+      } else if (err.message) {
+        errMsg = err.message;
+      }
+      setStatusMessage({ type: 'error', text: errMsg });
     }
   };
 
@@ -1220,14 +1254,25 @@ export const Users = () => {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '0.85rem' }}>
-              <div>
-                <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>Full Name:</label>
-                <input
-                  type="text"
-                  value={editForm.first_name}
-                  onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none' }}
-                />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>First Name:</label>
+                  <input
+                    type="text"
+                    value={editForm.first_name}
+                    onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>Last Name:</label>
+                  <input
+                    type="text"
+                    value={editForm.last_name}
+                    onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none' }}
+                  />
+                </div>
               </div>
 
               <div>

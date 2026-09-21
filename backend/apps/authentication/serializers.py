@@ -23,7 +23,7 @@ class UserSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True
     )
-    vendor_id = serializers.CharField(required=False, allow_null=True, write_only=True)
+    vendor_id = serializers.CharField(required=False, allow_null=True, allow_blank=True, write_only=True)
     password = serializers.CharField(required=False, allow_blank=True, write_only=True)
 
     selected_circle_id = serializers.PrimaryKeyRelatedField(
@@ -141,6 +141,14 @@ class UserSerializer(serializers.ModelSerializer):
             return cleaned
         return value
 
+    def validate_external_user_id(self, value):
+        if value is not None:
+            val_str = str(value).strip()
+            if not val_str or val_str.lower() in ('none', 'null', '—', 'n/a'):
+                return None
+            return val_str
+        return None
+
     def _resolve_geography(self, data):
         c_val = data.pop('selected_circle_id', None)
         if c_val is None:
@@ -231,10 +239,17 @@ class UserSerializer(serializers.ModelSerializer):
         # Check if advance scope or geography fields are present in payload
         initial = getattr(self, 'initial_data', {})
         if any(k in initial for k in ['user_type', 'advance_scope_type', 'selected_circle', 'selected_circle_id', 'selected_district', 'selected_district_id', 'selected_block', 'selected_block_id']):
-            circle_obj, district_obj, block_obj = self._resolve_geography(validated_data)
-            validated_data['selected_circle'] = circle_obj
-            validated_data['selected_district'] = district_obj
-            validated_data['selected_block'] = block_obj
+            u_type = validated_data.get('user_type', instance.user_type)
+            if u_type == 'NORMAL':
+                validated_data['advance_scope_type'] = None
+                validated_data['selected_circle'] = None
+                validated_data['selected_district'] = None
+                validated_data['selected_block'] = None
+            else:
+                circle_obj, district_obj, block_obj = self._resolve_geography(validated_data)
+                validated_data['selected_circle'] = circle_obj
+                validated_data['selected_district'] = district_obj
+                validated_data['selected_block'] = block_obj
 
         if role_name:
             from apps.roles.models import Role
@@ -248,12 +263,14 @@ class UserSerializer(serializers.ModelSerializer):
             if role_obj:
                 instance.roles.set([role_obj])
 
-        if vendor_id is not None:
+        if vendor_id is not None or 'vendor_id' in initial:
+            raw_v = vendor_id if vendor_id is not None else initial.get('vendor_id')
             from apps.vendors.models import Vendor, HeroVendorAssignment
             from django.db.models import Q
-            v_str = str(vendor_id).strip()
-            if v_str in ('0', '', 'none', 'null'):
+            v_str = str(raw_v or '').strip()
+            if not v_str or v_str in ('0', '', 'none', 'null'):
                 instance.vendor = None
+                HeroVendorAssignment.objects.filter(user=instance).delete()
             else:
                 v_obj = Vendor.objects.filter(
                     Q(id=int(v_str) if v_str.isdigit() else None) |
