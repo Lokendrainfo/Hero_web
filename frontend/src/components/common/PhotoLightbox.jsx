@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { LucideX, LucideChevronLeft, LucideChevronRight, LucideDownload, LucideCalendar, LucideMapPin, LucideRuler, LucideRefreshCw } from 'lucide-react';
+import { LucideX, LucideChevronLeft, LucideChevronRight, LucideDownload, LucideCalendar, LucideMapPin, LucideRuler, LucideRefreshCw, LucideFileText } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 
 export const formatImageUrl = (url) => {
@@ -8,7 +8,9 @@ export const formatImageUrl = (url) => {
   return `https://ilync.tech/${url.replace(/^\/+/, '')}`;
 };
 
-export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose }) => {
+export const isMongoHexId = (val) => typeof val === 'string' && /^[0-9a-fA-F]{24}$/.test(val.trim());
+
+export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId = '', taskCode = '', taskName = '', onNavigate }) => {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [resolvedUrls, setResolvedUrls] = useState({});
   const [loadingMedia, setLoadingMedia] = useState(false);
@@ -16,6 +18,24 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose }) => {
   if (!photos || photos.length === 0) return null;
 
   const currentPhoto = photos[currentIndex] || {};
+
+  // Candidate task codes in priority order: NEVER show a 24-char hex mongo id
+  const candidateCodes = [
+    currentPhoto.taskCode,
+    taskCode,
+    currentPhoto.taskId,
+    taskId,
+    currentPhoto.task_id,
+    currentPhoto.task_code,
+  ];
+  const activeTaskId = candidateCodes.find(c => c && typeof c === 'string' && !isMongoHexId(c)) || '';
+
+  const candidateNames = [
+    currentPhoto.taskName,
+    taskName,
+    currentPhoto.task_name,
+  ];
+  const activeTaskName = candidateNames.find(n => n && typeof n === 'string' && !isMongoHexId(n)) || '';
   const rawUrl = currentPhoto.photoUrl || currentPhoto.url || currentPhoto.src || currentPhoto.key || '';
 
   const isAbsolute = rawUrl.startsWith('http://') || rawUrl.startsWith('https://');
@@ -55,14 +75,28 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose }) => {
     return () => { isMounted = false; };
   }, [currentIndex, rawUrl, isAbsolute, activeUrl]);
 
+  useEffect(() => {
+    if (initialIndex !== undefined && initialIndex >= 0 && initialIndex < photos.length) {
+      setCurrentIndex(initialIndex);
+    }
+  }, [initialIndex, photos.length]);
+
   const handlePrev = (e) => {
     e.stopPropagation();
-    setCurrentIndex((prev) => (prev > 0 ? prev - 1 : photos.length - 1));
+    setCurrentIndex((prev) => {
+      const nextIdx = prev > 0 ? prev - 1 : photos.length - 1;
+      if (onNavigate) onNavigate(nextIdx);
+      return nextIdx;
+    });
   };
 
   const handleNext = (e) => {
     e.stopPropagation();
-    setCurrentIndex((prev) => (prev < photos.length - 1 ? prev + 1 : 0));
+    setCurrentIndex((prev) => {
+      const nextIdx = prev < photos.length - 1 ? prev + 1 : 0;
+      if (onNavigate) onNavigate(nextIdx);
+      return nextIdx;
+    });
   };
 
   let formattedTime = null;
@@ -124,11 +158,52 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose }) => {
         }}
       >
         <div style={{ flex: 1, minWidth: 0, paddingRight: '12px' }}>
-          <div style={{ fontWeight: '700', fontSize: '0.95rem', color: '#f8fafc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {currentPhoto.label || currentPhoto.title || `Media ${currentIndex + 1}`}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: '700', fontSize: '0.95rem', color: '#f8fafc' }}>
+              {currentPhoto.label || currentPhoto.title || `Media ${currentIndex + 1}`}
+            </span>
+            {activeTaskId && (
+              <span style={{
+                background: 'rgba(59, 130, 246, 0.22)',
+                border: '1px solid rgba(96, 165, 250, 0.45)',
+                color: '#93c5fd',
+                fontSize: '0.72rem',
+                fontWeight: '700',
+                padding: '2px 8px',
+                borderRadius: '6px',
+                letterSpacing: '0.02em',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}>
+                <LucideFileText size={11} /> {activeTaskId.startsWith('TASK-') ? activeTaskId : `Task: ${activeTaskId}`}
+              </span>
+            )}
+            {activeTaskName && activeTaskName !== activeTaskId && (
+              <span style={{
+                background: 'rgba(16, 185, 129, 0.2)',
+                border: '1px solid rgba(52, 211, 153, 0.4)',
+                color: '#6ee7b7',
+                fontSize: '0.72rem',
+                fontWeight: '600',
+                padding: '2px 8px',
+                borderRadius: '6px',
+                maxWidth: '260px',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis'
+              }} title={activeTaskName}>
+                {activeTaskName}
+              </span>
+            )}
           </div>
-          <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+          <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '3px' }}>
             {isVideo ? 'Video' : 'Photo'} {currentIndex + 1} of {photos.length}
+            {(activeTaskId || activeTaskName) && (
+              <span style={{ marginLeft: '8px', color: '#cbd5e1' }}>
+                · <span style={{ color: '#60a5fa', fontWeight: '600' }}>Task:</span> {activeTaskId}{activeTaskName && activeTaskName !== activeTaskId ? ` (${activeTaskName})` : ''}
+              </span>
+            )}
           </div>
         </div>
 
@@ -331,6 +406,13 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose }) => {
           boxSizing: 'border-box'
         }}
       >
+        {(activeTaskId || activeTaskName) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#e2e8f0', fontSize: '0.8rem' }}>
+            <LucideFileText size={14} color="#60a5fa" />
+            <span>Task: <strong style={{ color: '#93c5fd' }}>{activeTaskId}</strong>{activeTaskName && activeTaskName !== activeTaskId ? ` · ${activeTaskName}` : ''}</span>
+          </div>
+        )}
+
         {currentPhoto.depth !== undefined && currentPhoto.depth !== null && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#60a5fa', fontWeight: '800', fontSize: '0.85rem' }}>
             <LucideRuler size={14} />

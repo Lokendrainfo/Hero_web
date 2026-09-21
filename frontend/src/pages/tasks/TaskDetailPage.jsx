@@ -643,7 +643,11 @@ export const TaskDetailPage = () => {
         <PhotoLightbox
           photos={lightboxPhotos}
           initialIndex={lightboxIndex}
+          taskId={code}
+          taskCode={task.taskCode || code}
+          taskName={name}
           onClose={() => setLightboxPhotos(null)}
+          onNavigate={(newIdx) => setLightboxIndex(newIdx)}
         />
       )}
       <DetailModal

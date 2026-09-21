@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 import { useAuth } from '../../hooks/useAuth';
-import { mapHddExecutionResponse, filterHddExecutionByDate, parseDateToYMD, parseAnyDate } from '../../utils/mapHddExecutionResponse';
+import { mapHddExecutionResponse, filterHddExecutionByDate, parseDateToYMD, parseAnyDate, isMongoHexId } from '../../utils/mapHddExecutionResponse';
 import { PhotoLightbox, formatImageUrl } from '../../components/common/PhotoLightbox';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -163,6 +163,25 @@ export const HddExecutionMapPage = () => {
 
       const taskData = taskRes?.data?.data || taskRes?.data || null;
       if (!taskData) return null;
+
+      // Ensure taskData has a valid human-readable taskCode (e.g. TASK-2026-XXXXX), fallback to my-tasks if missing
+      if (!taskData.taskCode || isMongoHexId(taskData.taskCode)) {
+        try {
+          const myTasksRes = await taskService.getMyTasks();
+          const list = myTasksRes?.data?.data?.results || myTasksRes?.data?.results || myTasksRes?.data?.data || myTasksRes?.data || [];
+          const matched = Array.isArray(list) && list.find(t => 
+            String(t.id || t._id) === String(targetId) || 
+            String(t.id || t._id).startsWith(String(targetId)) ||
+            String(t.taskCode) === String(targetId)
+          );
+          if (matched && matched.taskCode && !isMongoHexId(matched.taskCode)) {
+            taskData.taskCode = matched.taskCode;
+            if (!taskData.displayName || isMongoHexId(taskData.displayName)) {
+              taskData.displayName = matched.displayName || matched.name;
+            }
+          }
+        } catch (e) { /* ignore fallback error */ }
+      }
 
       const execData = execRes?.data?.data || execRes?.data || null;
       let normalized = mapHddExecutionResponse(taskData, execData);
@@ -401,12 +420,18 @@ export const HddExecutionMapPage = () => {
     const allBounds = [];
     const frameBounds = [];
 
+    const taskCodeForMedia = [executionData.taskCode, executionData.taskId].find(v => v && !isMongoHexId(v)) || '';
+    const taskNameForMedia = [executionData.displayName, executionData.taskName].find(v => v && !isMongoHexId(v)) || '';
+
     // Build complete list of all depth photos for sequential lightbox navigation
     const allDepthPhotos = (executionData.depthPoints || []).map((dp, idx) => {
       const dpPhotos = dp.photos || [];
       const photoObj = dpPhotos[0] || {};
       const imgUrl = photoObj.photoUrl || (dp.photo && (dp.photo.photoUrl || dp.photo.url)) || photoObj.key || null;
       const dpId = dp.id || `ASH-DPT${String(dp.pointNo || idx + 1).padStart(8, '0')}`;
+
+      const photoCode = (dp.taskCode && !isMongoHexId(dp.taskCode)) ? dp.taskCode : taskCodeForMedia;
+      const photoName = (dp.taskName && !isMongoHexId(dp.taskName)) ? dp.taskName : taskNameForMedia;
 
       return {
         id: dpId,
@@ -416,6 +441,9 @@ export const HddExecutionMapPage = () => {
         src: imgUrl,
         label: `Depth Point ${dpId}`,
         title: `Depth Point ${dpId}`,
+        taskId: photoCode,
+        taskCode: photoCode,
+        taskName: photoName,
         depth: dp.depth,
         capturedAt: dp.capturedAt,
         latitude: dp.lat,
@@ -446,7 +474,20 @@ export const HddExecutionMapPage = () => {
       const cleanShotId = String(shot.id || `shot_${sIdx}`).replace(/[^a-zA-Z0-9]/g, '_');
       window[`__openTrenchLightbox_${cleanShotId}`] = () => {
         if (shot.photos && shot.photos.length > 0) {
-          openLightbox(shot.photos, 0);
+          const enrichedShotPhotos = shot.photos.map(ph => {
+            const photoCode = (ph.taskCode && !isMongoHexId(ph.taskCode)) ? ph.taskCode : taskCodeForMedia;
+            const photoName = (ph.taskName && !isMongoHexId(ph.taskName)) ? ph.taskName : taskNameForMedia;
+            return {
+              ...ph,
+              label: ph.label || `Trench Shot ${shot.name || shot.id}`,
+              title: ph.title || `Trench Shot ${shot.name || shot.id}`,
+              taskId: photoCode,
+              taskCode: photoCode,
+              taskName: photoName,
+              depth: shot.depth
+            };
+          });
+          openLightbox(enrichedShotPhotos, 0);
         }
       };
 
@@ -505,7 +546,21 @@ export const HddExecutionMapPage = () => {
       allBounds.push(pt);
       frameBounds.push(pt);
 
-      const pitPhotosList = (pit.photos && pit.photos.length > 0) ? pit.photos : [];
+      const pitPhotosList = (pit.photos && pit.photos.length > 0) ? pit.photos.map(ph => {
+        const photoCode = (ph.taskCode && !isMongoHexId(ph.taskCode)) ? ph.taskCode : taskCodeForMedia;
+        const photoName = (ph.taskName && !isMongoHexId(ph.taskName)) ? ph.taskName : taskNameForMedia;
+        return {
+          ...ph,
+          label: ph.label || `Pit ${pit.name || pit.id}`,
+          title: ph.title || `Pit ${pit.name || pit.id}`,
+          taskId: photoCode,
+          taskCode: photoCode,
+          taskName: photoName,
+          depth: pit.depth,
+          latitude: pit.lat,
+          longitude: pit.lng
+        };
+      }) : [];
       const pitName = pit.name || pit.id || 'Pit';
       const depthStr = pit.depth != null ? formatDepthM(pit.depth) : '';
 
@@ -765,6 +820,9 @@ export const HddExecutionMapPage = () => {
     (executionData.pits && executionData.pits.length > 0) ||
     (executionData.depthPoints && executionData.depthPoints.length > 0);
 
+  const activeTaskCode = [executionData?.taskCode, executionData?.taskId].find(v => v && !isMongoHexId(v)) || '';
+  const activeTaskName = [executionData?.displayName, executionData?.taskName].find(v => v && !isMongoHexId(v)) || '';
+
   return (
     <div className="map-viewer-page">
 
@@ -772,7 +830,11 @@ export const HddExecutionMapPage = () => {
         <PhotoLightbox
           photos={lightboxPhotos}
           initialIndex={lightboxIndex}
+          taskId={activeTaskCode}
+          taskCode={activeTaskCode}
+          taskName={activeTaskName}
           onClose={() => setLightboxPhotos(null)}
+          onNavigate={(newIdx) => setLightboxIndex(newIdx)}
         />
       )}
 

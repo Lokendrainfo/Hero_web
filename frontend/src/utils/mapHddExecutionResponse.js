@@ -167,6 +167,8 @@ export const filterHddExecutionByDate = (data, selectedDate) => {
   };
 };
 
+export const isMongoHexId = (val) => typeof val === 'string' && /^[0-9a-fA-F]{24}$/.test(val.trim());
+
 export const mapHddExecutionResponse = (task, execution = null) => {
   if (!task) return null;
 
@@ -174,6 +176,28 @@ export const mapHddExecutionResponse = (task, execution = null) => {
   const execData = task?.taskExecution || execution?.data || execution || null;
   const fieldData = execData?.fieldData || execData?.trenching || execData || {};
   const trenching = fieldData?.trenching || execData?.trenching || fieldData || {};
+
+  // Find human-readable task code (e.g. TASK-2026-54398, TASK-2026-55844), NEVER a 24-character Mongo hex ID
+  const rawCodes = [
+    task.taskCode,
+    task.task_code,
+    task.code,
+    task.title,
+    task.name,
+    task.externalTaskId,
+    task.id,
+    task._id
+  ];
+  const readableTaskCode = rawCodes.find(c => c && typeof c === 'string' && !isMongoHexId(c)) || '';
+
+  const taskDisplayName = String(
+    task.displayName ||
+    task.taskName ||
+    (task.title && task.title !== readableTaskCode && !isMongoHexId(task.title) ? task.title : '') ||
+    (task.name && task.name !== readableTaskCode && !isMongoHexId(task.name) ? task.name : '') ||
+    loc.locationName ||
+    ''
+  );
 
   const createMediaItem = (rawMedia, defaultLabel = 'Photo', isVidFallback = false) => {
     if (!rawMedia) return null;
@@ -184,6 +208,9 @@ export const mapHddExecutionResponse = (task, execution = null) => {
       ? Boolean(rawMedia.isVideo || (rawMedia.label || '').toLowerCase().includes('video'))
       : (isVidFallback || urlKey.includes('video'));
 
+    const mediaCode = (rawMedia && (rawMedia.taskCode || rawMedia.taskId || rawMedia.task_id)) || readableTaskCode;
+    const cleanMediaCode = isMongoHexId(mediaCode) ? readableTaskCode : mediaCode;
+
     return {
       id: (rawMedia && rawMedia.id) || urlKey,
       key: urlKey,
@@ -191,6 +218,9 @@ export const mapHddExecutionResponse = (task, execution = null) => {
       url: urlKey,
       src: urlKey,
       label: (rawMedia && rawMedia.label) || defaultLabel,
+      taskId: cleanMediaCode || '',
+      taskCode: cleanMediaCode || '',
+      taskName: (rawMedia && (rawMedia.taskName || rawMedia.task_name)) || taskDisplayName,
       capturedAt: (rawMedia && rawMedia.capturedAt) || null,
       latitude: rawMedia && rawMedia.latitude ? Number(rawMedia.latitude) : null,
       longitude: rawMedia && rawMedia.longitude ? Number(rawMedia.longitude) : null,
@@ -310,6 +340,9 @@ export const mapHddExecutionResponse = (task, execution = null) => {
       return {
         id: dp.id || dp.depthPointId || `DPT-${shotId}-${dIdx + 1}`,
         pointNo: dIdx + 1,
+        taskId: readableTaskCode,
+        taskCode: readableTaskCode,
+        taskName: taskDisplayName,
         depth: dVal,
         temp: dp.temperature,
         offset: dp.offsetFromCenterOfRoad,
@@ -428,10 +461,12 @@ export const mapHddExecutionResponse = (task, execution = null) => {
   const finalDate = latestDateObj ? latestDateObj.toISOString().split('T')[0] : (task.updatedAt ? new Date(task.updatedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
 
   return {
-    id: String(task.id),
-    taskId: String(task.id || task.taskCode || ''),
-    taskCode: task.taskCode || task.id,
-    displayName: task.displayName || loc.locationName || 'HDD Execution Task',
+    id: String(task.id || task._id || ''),
+    mongoId: String(task.id || task._id || ''),
+    taskId: readableTaskCode,
+    taskCode: readableTaskCode,
+    displayName: taskDisplayName || loc.locationName || 'HDD Execution Task',
+    taskName: taskDisplayName,
     state: loc.circle || 'RAJASTHAN',
     district: loc.district || 'GANGANAGAR',
     block: loc.blockName || loc.block || 'KARANPUR',

@@ -1131,7 +1131,10 @@ export const ChartViewPage = () => {
       {lightboxPhotos && (
         <PhotoLightbox
           photos={lightboxPhotos}
-          currentIndex={lightboxIndex}
+          initialIndex={lightboxIndex}
+          taskId={currentExecution?.taskCode || currentExecution?.taskId || ''}
+          taskCode={currentExecution?.taskCode || ''}
+          taskName={currentExecution?.displayName || currentExecution?.taskName || ''}
           onClose={() => setLightboxPhotos(null)}
           onNavigate={(newIdx) => setLightboxIndex(newIdx)}
         />
