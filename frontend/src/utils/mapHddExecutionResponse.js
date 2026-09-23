@@ -15,8 +15,16 @@ export const parseAnyDate = (val) => {
     const ddmmyyyy = s.match(/^(\d{2})[-/](\d{2})[-/](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
     if (ddmmyyyy) {
       const [, dd, mm, yyyy, h = '0', m = '0', sec = '0'] = ddmmyyyy;
-      const d = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(h), Number(m), Number(sec));
+      // In Indian telecommunications / HDD apps, naive DD-MM-YYYY timestamps are strictly Asia/Kolkata (IST: UTC+05:30)
+      const isoStr = `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}+05:30`;
+      const d = new Date(isoStr);
       return isNaN(d.getTime()) ? null : d;
+    }
+    // If naive ISO format like YYYY-MM-DDTHH:mm:ss without timezone, treat as IST (+05:30)
+    if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/.test(s) && !s.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(s)) {
+      const clean = s.replace(' ', 'T');
+      const d = new Date(`${clean}+05:30`);
+      if (!isNaN(d.getTime())) return d;
     }
     const d = new Date(s);
     return isNaN(d.getTime()) ? null : d;
@@ -457,7 +465,7 @@ export const mapHddExecutionResponse = (task, execution = null) => {
   });
 
   const finalUpdatedAt = latestDateObj ? latestDateObj.toISOString() : (task.updatedAt || null);
-  const finalLastModified = latestDateObj ? latestDateObj.toLocaleString() : (task.updatedAt ? new Date(task.updatedAt).toLocaleString() : 'N/A');
+  const finalLastModified = latestDateObj ? latestDateObj.toISOString() : (task.updatedAt || null);
   const finalDate = latestDateObj ? latestDateObj.toISOString().split('T')[0] : (task.updatedAt ? new Date(task.updatedAt).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
 
   return {

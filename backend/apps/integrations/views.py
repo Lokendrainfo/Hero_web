@@ -505,64 +505,141 @@ class IlyncTaskExecutionView(IlyncBaseView):
         except Exception as te:
             print(f"[IlyncTaskExecutionView] Task type check skipped for {task_id}: {te}")
 
-        # 1. Check direct execution endpoint
+        # 1. Fetch direct execution
+        direct_exec = None
         try:
             res = client.get_task_execution(clean_id)
             if res and isinstance(res, dict) and res.get('data'):
-                e_data = res.get('data')
-                fd = e_data.get('fieldData', {}) if isinstance(e_data, dict) else {}
-                tr = fd.get('trenching', {}) if isinstance(fd, dict) else {}
-                if tr.get('hddShot') or tr.get('pitDetails') or fd.get('hddShot') or fd.get('pitDetails'):
-                    return success_response(data=e_data, message="Task execution details fetched successfully")
+                direct_exec = res.get('data')
         except Exception as e:
-            print(f"[IlyncTaskExecutionView] Error fetching execution endpoint for {task_id}: {e}")
+            print(f"[IlyncTaskExecutionView] Error fetching direct execution for {task_id}: {e}")
 
-        # 2. Check task detail endpoint
+        # 2. Fetch task detail to inspect parentTaskId and hierarchy
+        task_detail = None
         try:
             t_res = client.get_task_detail(clean_id)
             if t_res and isinstance(t_res, dict):
-                t_data = t_res.get('data') or t_res
-                if isinstance(t_data, dict) and t_data.get('taskExecution'):
-                    e_obj = t_data.get('taskExecution')
-                    fd = e_obj.get('fieldData', {}) if isinstance(e_obj, dict) else {}
-                    tr = fd.get('trenching', {}) if isinstance(fd, dict) else {}
-                    if tr.get('hddShot') or tr.get('pitDetails') or fd.get('hddShot') or fd.get('pitDetails'):
-                        return success_response(data=e_obj, message="Task execution fetched from task detail")
+                task_detail = t_res.get('data') or t_res
         except Exception as fallback_e:
-            print(f"[IlyncTaskExecutionView] Fallback detail check failed for {task_id}: {fallback_e}")
+            print(f"[IlyncTaskExecutionView] Detail lookup failed for {task_id}: {fallback_e}")
 
-        # 3. Check child tasks recursively if parent has no direct execution
-        def find_child_execution(tid, depth=0):
-            if depth > 3:
-                return None
+        if not direct_exec and isinstance(task_detail, dict) and task_detail.get('taskExecution'):
+            direct_exec = task_detail.get('taskExecution')
+
+        # 3. Collect related segment task IDs (sibling segments under same parent route, and child tasks)
+        related_task_ids = []
+        if isinstance(task_detail, dict):
+            parent_id = task_detail.get('parentTaskId')
+            if parent_id:
+                try:
+                    c_res = client.get_task_children(parent_id)
+                    children = c_res.get('data', []) if isinstance(c_res, dict) else []
+                    if isinstance(children, list):
+                        for c in children:
+                            cid = c.get('id') or c.get('_id')
+                            if cid and cid != clean_id and cid not in related_task_ids:
+                                related_task_ids.append(cid)
+                except Exception as pe:
+                    print(f"[IlyncTaskExecutionView] Error checking sibling segments for {task_id}: {pe}")
+
+            # Check direct children if clean_id is a route or project
             try:
-                c_res = client.get_task_children(tid)
+                c_res = client.get_task_children(clean_id)
                 children = c_res.get('data', []) if isinstance(c_res, dict) else []
-                for c in children:
-                    cid = c.get('id') or c.get('_id')
-                    if not cid:
-                        continue
-                    # Check child detail
-                    cd_res = client.get_task_detail(cid)
-                    if cd_res and isinstance(cd_res, dict):
-                        cd_data = cd_res.get('data') or cd_res
-                        if isinstance(cd_data, dict) and cd_data.get('taskExecution'):
-                            e_obj = cd_data.get('taskExecution')
-                            fd = e_obj.get('fieldData', {}) if isinstance(e_obj, dict) else {}
-                            tr = fd.get('trenching', {}) if isinstance(fd, dict) else {}
-                            if tr.get('hddShot') or tr.get('pitDetails') or fd.get('hddShot') or fd.get('pitDetails'):
-                                return e_obj
-                    # Deep check
-                    deep_exec = find_child_execution(cid, depth + 1)
-                    if deep_exec:
-                        return deep_exec
+                if isinstance(children, list):
+                    for c in children:
+                        cid = c.get('id') or c.get('_id')
+                        if cid and cid not in related_task_ids:
+                            related_task_ids.append(cid)
+                            try:
+                                sub_res = client.get_task_children(cid)
+                                sub_c = sub_res.get('data', []) if isinstance(sub_res, dict) else []
+                                if isinstance(sub_c, list):
+                                    for sc in sub_c:
+                                        scid = sc.get('id') or sc.get('_id')
+                                        if scid and scid not in related_task_ids:
+                                            related_task_ids.append(scid)
+                            except Exception:
+                                pass
             except Exception as ce:
-                print(f"[IlyncTaskExecutionView] Error checking children for {tid}: {ce}")
-            return None
+                print(f"[IlyncTaskExecutionView] Error checking children for {task_id}: {ce}")
 
-        child_exec = find_child_execution(clean_id)
-        if child_exec:
-            return success_response(data=child_exec, message="Task execution fetched from child segment task")
+        # Fetch executions for related segments
+        exec_list = []
+        if direct_exec:
+            exec_list.append(direct_exec)
+
+        for rid in related_task_ids:
+            try:
+                r_res = client.get_task_execution(rid)
+                if r_res and isinstance(r_res, dict) and r_res.get('data'):
+                    r_exec = r_res.get('data')
+                    r_fd = r_exec.get('fieldData', {}) if isinstance(r_exec, dict) else {}
+                    r_tr = r_fd.get('trenching', {}) if isinstance(r_fd, dict) else {}
+                    if r_tr.get('hddShot') or r_tr.get('pitDetails') or r_fd.get('hddShot') or r_fd.get('pitDetails'):
+                        exec_list.append(r_exec)
+                        continue
+            except Exception:
+                pass
+
+            # Fallback to task detail check for child/sibling
+            try:
+                rd_res = client.get_task_detail(rid)
+                if rd_res and isinstance(rd_res, dict):
+                    rd_data = rd_res.get('data') or rd_res
+                    if isinstance(rd_data, dict) and rd_data.get('taskExecution'):
+                        re_obj = rd_data.get('taskExecution')
+                        r_fd = re_obj.get('fieldData', {}) if isinstance(re_obj, dict) else {}
+                        r_tr = r_fd.get('trenching', {}) if isinstance(r_fd, dict) else {}
+                        if r_tr.get('hddShot') or r_tr.get('pitDetails') or r_fd.get('hddShot') or r_fd.get('pitDetails'):
+                            exec_list.append(re_obj)
+            except Exception:
+                pass
+
+        if exec_list:
+            base = dict(direct_exec or exec_list[0])
+            base_fd = dict(base.get('fieldData') or {})
+            base_tr = dict(base_fd.get('trenching') or {})
+
+            merged_shots = []
+            merged_pits = []
+            seen_shots = set()
+            seen_pits = set()
+
+            for item in exec_list:
+                if not isinstance(item, dict):
+                    continue
+                ifd = item.get('fieldData') or {}
+                itr = ifd.get('trenching') or {}
+                ishots = itr.get('hddShot') or ifd.get('hddShot') or item.get('shots') or []
+                ipits = itr.get('pitDetails') or ifd.get('pitDetails') or item.get('pits') or []
+
+                for s in ishots:
+                    if isinstance(s, dict):
+                        s_name = s.get('hddShotSerialNo') or s.get('hddShotName') or s.get('id') or ''
+                        s_time = s.get('hddStartTime') or s.get('hddEndTime') or ''
+                        k = f"{s_name}_{s_time}"
+                        if k not in seen_shots:
+                            seen_shots.add(k)
+                            merged_shots.append(s)
+
+                for p in ipits:
+                    if isinstance(p, dict):
+                        p_name = p.get('pitSerialNo') or p.get('pitName') or p.get('id') or ''
+                        p_time = p.get('pitDiggingTime') or p.get('createdAt') or ''
+                        k = f"{p_name}_{p_time}"
+                        if k not in seen_pits:
+                            seen_pits.add(k)
+                            merged_pits.append(p)
+
+            base_tr['hddShot'] = merged_shots
+            base_tr['pitDetails'] = merged_pits
+            base_fd['trenching'] = base_tr
+            base['fieldData'] = base_fd
+            return success_response(data=base, message="Task execution details fetched successfully")
+
+        if not task_detail and not direct_exec and not exec_list:
+            return Response({"success": False, "message": "Task not found or unauthorized"}, status=status.HTTP_404_NOT_FOUND)
 
         return success_response(data=None, message="Execution details not yet started for task")
 

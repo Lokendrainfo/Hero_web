@@ -187,11 +187,6 @@ export const HddExecutionMapPage = () => {
       let normalized = mapHddExecutionResponse(taskData, execData);
       if (!normalized) return null;
 
-      // If root task already has pits or trenches, return it immediately
-      if ((normalized.shots && normalized.shots.length > 0) || (normalized.pits && normalized.pits.length > 0)) {
-        return normalized;
-      }
-
       // Check if child tasks under this task have telemetry, and aggregate them into THIS user's task
       try {
         let children = taskData.children;
@@ -211,13 +206,40 @@ export const HddExecutionMapPage = () => {
           // Merge any valid child shots, pits, and depth points into execution object
           childResults.filter(Boolean).forEach(childNorm => {
             if (childNorm.shots && childNorm.shots.length > 0) {
-              normalized.shots = [...(normalized.shots || []), ...childNorm.shots];
+              const mergedShots = [...(normalized.shots || [])];
+              const seenShotKeys = new Set(mergedShots.map(s => `${s.serialNo || s.name || ''}_${s.startTime || ''}`));
+              childNorm.shots.forEach(s => {
+                const k = `${s.serialNo || s.name || ''}_${s.startTime || ''}`;
+                if (!seenShotKeys.has(k)) {
+                  seenShotKeys.add(k);
+                  mergedShots.push(s);
+                }
+              });
+              normalized.shots = mergedShots;
             }
             if (childNorm.pits && childNorm.pits.length > 0) {
-              normalized.pits = [...(normalized.pits || []), ...childNorm.pits];
+              const mergedPits = [...(normalized.pits || [])];
+              const seenPitKeys = new Set(mergedPits.map(p => `${p.serialNo || p.name || ''}_${p.diggingTime || ''}`));
+              childNorm.pits.forEach(p => {
+                const k = `${p.serialNo || p.name || ''}_${p.diggingTime || ''}`;
+                if (!seenPitKeys.has(k)) {
+                  seenPitKeys.add(k);
+                  mergedPits.push(p);
+                }
+              });
+              normalized.pits = mergedPits;
             }
             if (childNorm.depthPoints && childNorm.depthPoints.length > 0) {
-              normalized.depthPoints = [...(normalized.depthPoints || []), ...childNorm.depthPoints];
+              const mergedDps = [...(normalized.depthPoints || [])];
+              const seenDpKeys = new Set(mergedDps.map(dp => `${dp.id || ''}_${dp.lat}_${dp.lng}_${dp.capturedAt || ''}`));
+              childNorm.depthPoints.forEach(dp => {
+                const k = `${dp.id || ''}_${dp.lat}_${dp.lng}_${dp.capturedAt || ''}`;
+                if (!seenDpKeys.has(k)) {
+                  seenDpKeys.add(k);
+                  mergedDps.push(dp);
+                }
+              });
+              normalized.depthPoints = mergedDps;
             }
             if (childNorm.availableDates && childNorm.availableDates.length > 0) {
               const mergedDates = new Set([...(normalized.availableDates || []), ...childNorm.availableDates]);
@@ -237,6 +259,68 @@ export const HddExecutionMapPage = () => {
         }
       } catch (childErr) {
         console.log(`[HddExecutionMapPage] getTaskChildren error for ${targetId}:`, childErr);
+      }
+
+      // If this task has a parentTaskId (e.g. route segment), resolve sibling segments to ensure full route telemetry
+      if (taskData.parentTaskId && maxDepth > 1) {
+        try {
+          const parentChildrenRes = await taskService.getTaskChildren(taskData.parentTaskId);
+          const siblings = parentChildrenRes?.data?.data || parentChildrenRes?.data || [];
+          if (Array.isArray(siblings) && siblings.length > 1) {
+            const siblingTasks = siblings.filter(s => (s.id || s._id) && String(s.id || s._id) !== String(targetId));
+            const siblingResults = await Promise.all(
+              siblingTasks.map(sib => {
+                const sibId = sib.id || sib._id;
+                return sibId ? resolveExecutionData(sibId, 1) : Promise.resolve(null);
+              })
+            );
+
+            siblingResults.filter(Boolean).forEach(sibNorm => {
+              if (sibNorm.shots && sibNorm.shots.length > 0) {
+                const mergedShots = [...(normalized.shots || [])];
+                const seenShotKeys = new Set(mergedShots.map(s => `${s.serialNo || s.name || ''}_${s.startTime || ''}`));
+                sibNorm.shots.forEach(s => {
+                  const k = `${s.serialNo || s.name || ''}_${s.startTime || ''}`;
+                  if (!seenShotKeys.has(k)) {
+                    seenShotKeys.add(k);
+                    mergedShots.push(s);
+                  }
+                });
+                normalized.shots = mergedShots;
+              }
+              if (sibNorm.pits && sibNorm.pits.length > 0) {
+                const mergedPits = [...(normalized.pits || [])];
+                const seenPitKeys = new Set(mergedPits.map(p => `${p.serialNo || p.name || ''}_${p.diggingTime || ''}`));
+                sibNorm.pits.forEach(p => {
+                  const k = `${p.serialNo || p.name || ''}_${p.diggingTime || ''}`;
+                  if (!seenPitKeys.has(k)) {
+                    seenPitKeys.add(k);
+                    mergedPits.push(p);
+                  }
+                });
+                normalized.pits = mergedPits;
+              }
+              if (sibNorm.depthPoints && sibNorm.depthPoints.length > 0) {
+                const mergedDps = [...(normalized.depthPoints || [])];
+                const seenDpKeys = new Set(mergedDps.map(dp => `${dp.id || ''}_${dp.lat}_${dp.lng}_${dp.capturedAt || ''}`));
+                sibNorm.depthPoints.forEach(dp => {
+                  const k = `${dp.id || ''}_${dp.lat}_${dp.lng}_${dp.capturedAt || ''}`;
+                  if (!seenDpKeys.has(k)) {
+                    seenDpKeys.add(k);
+                    mergedDps.push(dp);
+                  }
+                });
+                normalized.depthPoints = mergedDps;
+              }
+              if (sibNorm.availableDates && sibNorm.availableDates.length > 0) {
+                const mergedDates = new Set([...(normalized.availableDates || []), ...sibNorm.availableDates]);
+                normalized.availableDates = Array.from(mergedDates).sort();
+              }
+            });
+          }
+        } catch (sibErr) {
+          console.log(`[HddExecutionMapPage] Sibling resolution error for ${targetId}:`, sibErr);
+        }
       }
 
       return normalized;
@@ -287,6 +371,30 @@ export const HddExecutionMapPage = () => {
       const dateFiltered = filterHddExecutionByDate(rawResult, activeDate);
       const fullyResolved = await resolvePhotoUrlsForExecution(dateFiltered);
       setExecutionData(fullyResolved);
+
+      console.log('[HddExecutionMapPage Debug]', {
+        executionId: cleanId,
+        requestedDate: activeDate,
+        apiUrl: `/api/v1/integrations/tasks/${cleanId}/execution/`,
+        apiResponse: rawResult,
+        matchedExecutionId: rawResult.id,
+        matchedExecutionDate: rawResult.date,
+        userId: rawResult.user,
+        block: rawResult.block,
+        district: rawResult.district,
+        numberOfTrenches: (fullyResolved?.shots || []).length,
+        numberOfPits: (fullyResolved?.pits || []).length,
+        numberOfDepthPoints: (fullyResolved?.depthPoints || []).length,
+      });
+
+      console.log('[Execution Timestamp Debug]', {
+        execution_id: executionId,
+        raw_timestamp_from_api: fullyResolved?.updatedAt || fullyResolved?.lastModified,
+        timestamp_field_name: fullyResolved?.updatedAt ? 'updatedAt' : 'lastModified',
+        parsed_timestamp: fullyResolved?.updatedAt,
+        final_display_timestamp: fullyResolved?.lastModified,
+        timezone: 'Asia/Kolkata (IST, UTC+05:30)'
+      });
 
       const now = new Date();
       setLastUpdated(now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }).toLowerCase());
@@ -681,16 +789,23 @@ export const HddExecutionMapPage = () => {
         let dateStr = '';
         if (dp.capturedAt) {
           try {
-            const d = new Date(dp.capturedAt);
-            if (!isNaN(d.getTime())) {
-              const day = d.getDate();
-              const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'];
-              const monthName = months[d.getMonth()];
-              let hours = d.getHours();
-              const minutes = String(d.getMinutes()).padStart(2, '0');
-              const ampm = hours >= 12 ? 'pm' : 'am';
-              hours = hours % 12 || 12;
-              dateStr = `${day} ${monthName}, ${hours}:${minutes} ${ampm}`;
+            const d = parseAnyDate(dp.capturedAt) || new Date(dp.capturedAt);
+            if (d && !isNaN(d.getTime())) {
+              const parts = new Intl.DateTimeFormat('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                day: 'numeric',
+                month: 'short',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+              }).formatToParts(d);
+              const day = parts.find(p => p.type === 'day')?.value || '';
+              let month = parts.find(p => p.type === 'month')?.value || '';
+              if (month === 'Sep') month = 'Sept';
+              const hour = parts.find(p => p.type === 'hour')?.value || '';
+              const minute = parts.find(p => p.type === 'minute')?.value || '';
+              const dayPeriod = (parts.find(p => p.type === 'dayPeriod')?.value || '').toLowerCase();
+              dateStr = `${day} ${month}, ${hour}:${minute} ${dayPeriod}`;
             }
           } catch (e) { /* ignore */ }
         }

@@ -1,9 +1,11 @@
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from apps.integrations.ilync_client import IlyncClient
 from apps.common.vendor_scope import get_user_vendor_ids, check_vendor_access
 from apps.vendors.models import Vendor
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 def parse_iso_epoch(val):
     if not val:
@@ -11,7 +13,7 @@ def parse_iso_epoch(val):
     if isinstance(val, (int, float)):
         return float(val / 1000.0 if val > 1e11 else val)
     val_str = str(val).strip()
-    if not val_str or val_str == 'N/A' or val_str == '—':
+    if not val_str or val_str in ['N/A', '—']:
         return None
     if val_str.isdigit():
         num = float(val_str)
@@ -20,13 +22,17 @@ def parse_iso_epoch(val):
     if m:
         dd, mm, yyyy, h, mnt, sec = m.groups()
         try:
-            dt = datetime(int(yyyy), int(mm), int(dd), int(h or 0), int(mnt or 0), int(sec or 0), tzinfo=timezone.utc)
+            # Field device and survey timestamps from India are in Asia/Kolkata (IST: UTC+05:30)
+            dt = datetime(int(yyyy), int(mm), int(dd), int(h or 0), int(mnt or 0), int(sec or 0), tzinfo=IST)
             return dt.timestamp()
         except Exception:
             pass
     try:
         clean_iso = val_str.replace('Z', '+00:00')
         dt = datetime.fromisoformat(clean_iso)
+        if dt.tzinfo is None:
+            # Naive ISO without timezone from Indian services is in IST
+            dt = dt.replace(tzinfo=IST)
         return dt.timestamp()
     except Exception:
         pass
@@ -58,7 +64,14 @@ def resolve_latest_task_timestamp(task_obj, exec_data=None):
                         if isinstance(dps, list):
                             for dp in dps:
                                 if isinstance(dp, dict):
-                                    candidates.extend([dp.get('capturedAt'), dp.get('createdAt'), dp.get('timestamp')])
+                                    candidates.extend([
+                                        dp.get('capturedAt'),
+                                        dp.get('depthCaptureStartTime'),
+                                        dp.get('depthCaptureEndTime'),
+                                        (dp.get('depthoMeterImage') or {}).get('capturedAt'),
+                                        dp.get('createdAt'),
+                                        dp.get('timestamp')
+                                    ])
             if isinstance(pits, list):
                 for p in pits:
                     if isinstance(p, dict):

@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 import { useAuth } from '../../hooks/useAuth';
-import { mapHddExecutionResponse, parseAnyDate } from '../../utils/mapHddExecutionResponse';
+import { mapHddExecutionResponse, parseAnyDate, parseDateToYMD } from '../../utils/mapHddExecutionResponse';
 import { getAvailableStates, getAvailableDistricts } from '../../utils/geographyMaster';
 import { PageHeader } from '../../components/common/PageHeader';
 import { SearchableSelect } from '../../components/common/Select';
@@ -16,16 +16,41 @@ import { EmptyState } from '../../components/common/EmptyState';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { DateField } from '../../components/common/DateField';
 
-const compactWhen = (value) => {
+export const compactWhen = (value, executionId = null, fieldName = 'updatedAt') => {
   if (!value || value === 'N/A' || value === '—') return '—';
   const parsed = parseAnyDate(value) || new Date(value);
   if (!parsed || Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString('en-IN', {
+
+  const parts = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
     day: 'numeric',
     month: 'short',
     hour: 'numeric',
     minute: '2-digit',
-  });
+    hour12: true,
+  }).formatToParts(parsed);
+
+  const day = parts.find(p => p.type === 'day')?.value || '';
+  let month = parts.find(p => p.type === 'month')?.value || '';
+  if (month === 'Sep') month = 'Sept';
+  const hour = parts.find(p => p.type === 'hour')?.value || '';
+  const minute = parts.find(p => p.type === 'minute')?.value || '';
+  const dayPeriod = (parts.find(p => p.type === 'dayPeriod')?.value || '').toLowerCase();
+
+  const formatted = `${day} ${month}, ${hour}:${minute} ${dayPeriod}`;
+
+  if (executionId) {
+    console.log('[TrenchingMapView Timestamp Debug]', {
+      execution_id: executionId,
+      raw_timestamp_from_api: value,
+      timestamp_field_name: fieldName,
+      parsed_timestamp: parsed.toISOString(),
+      final_display_timestamp: formatted,
+      timezone: 'Asia/Kolkata (IST, UTC+05:30)'
+    });
+  }
+
+  return formatted;
 };
 
 export const TrenchingMapViewPage = () => {
@@ -41,6 +66,8 @@ export const TrenchingMapViewPage = () => {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [rawTasksList, setRawTasksList] = useState([]);
+  const [fetchedChildrenTaskIds, setFetchedChildrenTaskIds] = useState(() => new Set());
   const [normalizedExecutions, setNormalizedExecutions] = useState([]);
 
   // Filters State
@@ -90,13 +117,62 @@ export const TrenchingMapViewPage = () => {
         const latestUpdatedAt = latestTime > 0 ? new Date(latestTime).toISOString() : (existing.updatedAt || ex.updatedAt);
         const latestLastModified = latestTime > 0 ? new Date(latestTime).toLocaleString() : (existing.lastModified || ex.lastModified);
 
-        // Prefer the execution with richer telemetry (shots/pits/depthPoints), or if equal, the newer one
-        const preferCurrent = currentDataScore > existingDataScore || (currentDataScore === existingDataScore && tCurrent >= tExisting);
+        // Check if either task specifically has execution or activity on selectedDate
+        const targetDateYMD = parseDateToYMD(selectedDate) || selectedDate;
+        const currentHasSelectedDate = Boolean(targetDateYMD && (
+          (ex.availableDates || []).includes(targetDateYMD) ||
+          parseDateToYMD(ex.updatedAt) === targetDateYMD ||
+          parseDateToYMD(ex.lastModified) === targetDateYMD ||
+          parseDateToYMD(ex.date) === targetDateYMD
+        ));
+        const existingHasSelectedDate = Boolean(targetDateYMD && (
+          (existing.availableDates || []).includes(targetDateYMD) ||
+          parseDateToYMD(existing.updatedAt) === targetDateYMD ||
+          parseDateToYMD(existing.lastModified) === targetDateYMD ||
+          parseDateToYMD(existing.date) === targetDateYMD
+        ));
+
+        let preferCurrent = false;
+        if (currentHasSelectedDate && !existingHasSelectedDate) {
+          preferCurrent = true;
+        } else if (existingHasSelectedDate && !currentHasSelectedDate) {
+          preferCurrent = false;
+        } else if (tCurrent !== tExisting) {
+          // Prefer the newer active task
+          preferCurrent = tCurrent > tExisting;
+        } else {
+          // If equal timestamps, prefer the one with richer telemetry
+          preferCurrent = currentDataScore >= existingDataScore;
+        }
+
         const primary = preferCurrent ? ex : existing;
         const secondary = preferCurrent ? existing : ex;
 
-        // Use the ID of the task that actually contains telemetry so clicking Open Map works directly
-        const targetId = (primary.shots?.length || primary.pits?.length)
+        // Merge telemetry without duplicate shots/pits
+        const mergedShots = [...(existing.shots || [])];
+        const seenShotKeys = new Set(mergedShots.map(s => `${s.serialNo || s.name || ''}_${s.startTime || ''}`));
+        (ex.shots || []).forEach(s => {
+          const k = `${s.serialNo || s.name || ''}_${s.startTime || ''}`;
+          if (!seenShotKeys.has(k)) {
+            seenShotKeys.add(k);
+            mergedShots.push(s);
+          }
+        });
+
+        const mergedPits = [...(existing.pits || [])];
+        const seenPitKeys = new Set(mergedPits.map(p => `${p.serialNo || p.name || ''}_${p.diggingTime || ''}`));
+        (ex.pits || []).forEach(p => {
+          const k = `${p.serialNo || p.name || ''}_${p.diggingTime || ''}`;
+          if (!seenPitKeys.has(k)) {
+            seenPitKeys.add(k);
+            mergedPits.push(p);
+          }
+        });
+
+        const mergedDates = Array.from(new Set([...(existing.availableDates || []), ...(ex.availableDates || [])])).sort();
+
+        // Use the ID of the primary task matching the selected date / active execution
+        const targetId = (primary.shots?.length || primary.pits?.length || currentHasSelectedDate || existingHasSelectedDate)
           ? primary.id
           : ((secondary.shots?.length || secondary.pits?.length) ? secondary.id : primary.id);
 
@@ -106,12 +182,15 @@ export const TrenchingMapViewPage = () => {
           user: existing.user || ex.user,
           updatedAt: latestUpdatedAt,
           lastModified: latestLastModified,
+          shots: mergedShots,
+          pits: mergedPits,
+          availableDates: mergedDates,
         });
       }
     });
 
     setNormalizedExecutions(Array.from(userExecMap.values()));
-  }, []);
+  }, [selectedDate]);
 
   const fetchHddData = useCallback(async () => {
     setLoading(true);
@@ -149,20 +228,12 @@ export const TrenchingMapViewPage = () => {
     fetchHddData();
   }, [fetchHddData]);
 
-  if (isVendorAccount) {
-    return (
-      <div className="screen-container">
-        <EmptyState
-          title="Map view is not available"
-          subtitle="This module is not available on vendor accounts."
-        >
-          <button type="button" className="btn-primary" onClick={() => navigate('/tasks')}>
-            Back to tasks
-          </button>
-        </EmptyState>
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (rawTasksList && rawTasksList.length > 0) {
+      processAndSetExecutions(rawTasksList);
+    }
+  }, [selectedDate, processAndSetExecutions, rawTasksList]);
+
 
   // Memoized available states dynamically
   const availableStates = useMemo(() => {
@@ -219,9 +290,6 @@ export const TrenchingMapViewPage = () => {
     };
   }, [filteredExecutions]);
 
-  // Raw Tasks & On-Demand Children Fetching State
-  const [rawTasksList, setRawTasksList] = useState([]);
-  const [fetchedChildrenTaskIds, setFetchedChildrenTaskIds] = useState(new Set());
 
   const fetchChildrenForTasks = async (targetTasks) => {
     if (!targetTasks || targetTasks.length === 0) return;
@@ -285,6 +353,21 @@ export const TrenchingMapViewPage = () => {
     }
   };
 
+
+  if (isVendorAccount) {
+    return (
+      <div className="screen-container">
+        <EmptyState
+          title="Map view is not available"
+          subtitle="This module is not available on vendor accounts."
+        >
+          <button type="button" className="btn-primary" onClick={() => navigate('/tasks')}>
+            Back to tasks
+          </button>
+        </EmptyState>
+      </div>
+    );
+  }
 
   return (
     <div className="screen-container">
@@ -465,7 +548,7 @@ export const TrenchingMapViewPage = () => {
                                           )}
                                         </td>
                                         <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                                          {compactWhen(ex.updatedAt || ex.lastModified)}
+                                          {compactWhen(ex.updatedAt || ex.lastModified, ex.id, ex.updatedAt ? 'updatedAt' : 'lastModified')}
                                         </td>
                                         <td style={{ textAlign: 'right' }}>
                                           <a
