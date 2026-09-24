@@ -18,6 +18,7 @@ class IlyncClientTestCase(TestCase):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
+            "success": True,
             "content": [{"id": "v101", "name": "Apex Vendor"}],
             "totalElements": 1,
             "totalPages": 1

@@ -7,6 +7,19 @@ from apps.integrations.ilync_client import IlyncClient
 
 logger = logging.getLogger(__name__)
 
+def map_ilync_role(role_key, designation=None):
+    rk = str(role_key or '').upper()
+    des = str(designation or '').upper()
+    if 'ADMIN' in rk or 'ADMIN' in des:
+        return 'ADMIN'
+    if 'PROJECT MANAGER' in des or 'MANAGER' in des or rk in ('L4_USER', 'L4'):
+        return 'MANAGER'
+    if 'SUPERVISOR' in des or rk in ('L2_USER', 'L2'):
+        return 'SUPERVISOR'
+    if 'SURVEYOR' in des or 'OPERATOR' in des or rk in ('L1_USER', 'L1'):
+        return 'OPERATOR'
+    return 'VIEWER'
+
 def sync_ilync_user_to_django(ilync_user_data, set_password_if_new=None, default_role_name="VIEWER"):
     """
     Sync an ILYNC user dictionary into Django User model.
@@ -76,6 +89,12 @@ def sync_ilync_user_to_django(ilync_user_data, set_password_if_new=None, default
         parts = name.rsplit(' ', 1)
         first_name, last_name = parts[0], parts[1]
 
+    assigned_role = default_role_name
+    if default_role_name == "VIEWER":
+        mapped = map_ilync_role(ilync_user_data.get('roleKey'), ilync_user_data.get('designation'))
+        if mapped and mapped != "VIEWER":
+            assigned_role = mapped
+
     if not user:
         # Create NEW user with configurable default HERO role (default: VIEWER)
         user = User.objects.create(
@@ -86,7 +105,7 @@ def sync_ilync_user_to_django(ilync_user_data, set_password_if_new=None, default
             email=email,
             first_name=first_name,
             last_name=last_name,
-            role=default_role_name,
+            role=assigned_role,
             vendor=vendor_obj,
             is_active=is_active
         )

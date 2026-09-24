@@ -11,21 +11,16 @@ class IlyncClient:
         except Exception:
             pass
 
-        base_env = os.environ.get('ILYNC_BASE_URL', 'https://ilync.tech')
+        from apps.integrations.ilync_auth import IlyncAuthManager
+        base_env = IlyncAuthManager.get_base_url()
         base_env = base_env.rstrip('/')
         if not base_env.endswith('/api'):
             base_env = f"{base_env}/api"
         self.base_url = base_env
-        self.api_key = os.environ.get('ILYNC_API_TOKEN') or os.environ.get('ILYNC_API_KEY', '')
 
     def _get_headers(self):
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
+        from apps.integrations.ilync_auth import IlyncAuthManager
+        return IlyncAuthManager.apply_auth_headers()
 
     def get_vendors(self, page=0, size=10):
         url = f"{self.base_url}/vendor?page={page}&size={size}"

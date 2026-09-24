@@ -10,11 +10,15 @@ class IlyncUserSyncTestCase(TestCase):
         self.assertEqual(map_ilync_role('L1_USER', 'Field-Surveyor'), 'OPERATOR')
 
     def test_sync_ilync_user_creates_and_updates_user(self):
+        from apps.vendors.models import Vendor
+        Vendor.objects.get_or_create(name="Telecrats")
+        User.objects.filter(username="8764129290").delete()
         ilync_data = {
             "id": "6a9b9374dc6b416504ddcf9e",
             "phoneNumber": "8764129290",
             "name": "Kulwinder Singh",
             "email": None,
+            "vendorName": "Telecrats",
             "roleKey": "L1_USER",
             "roleName": "L1-user",
             "designation": "Field-Surveyor",

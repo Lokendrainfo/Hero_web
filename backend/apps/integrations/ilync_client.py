@@ -20,7 +20,7 @@ class IlyncClient:
         self.session = requests.Session()
         self.request = request
 
-    def _request(self, method, endpoint, params=None, data=None, json=None, headers=None):
+    def _request(self, method, endpoint, params=None, data=None, json=None, headers=None, _is_retry=False):
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         req_headers = IlyncAuthManager.apply_auth_headers(headers)
 
@@ -39,6 +39,25 @@ class IlyncClient:
             
             # SAFE LOGGING: NEVER LOG AUTHORIZATION HEADERS OR TOKENS
             logger.info("ILYNC API request %s %s -> %s (%sms)", method.upper(), endpoint, response.status_code, duration)
+
+            if response.status_code == 401 and not _is_retry:
+                logger.warning("[ILYNC_AUTH] Received 401, refreshing token and retrying")
+                IlyncAuthManager.invalidate()
+                try:
+                    IlyncAuthManager.get_valid_token(force_refresh=True)
+                except Exception as auth_err:
+                    logger.error("[ILYNC_AUTH] Authentication failed: %s", type(auth_err).__name__)
+                    raise IlyncAuthException(message="Authentication token renewal failed after 401")
+
+                return self._request(
+                    method=method,
+                    endpoint=endpoint,
+                    params=params,
+                    data=data,
+                    json=json,
+                    headers=headers,
+                    _is_retry=True
+                )
 
             return self._handle_response(response, endpoint)
 
