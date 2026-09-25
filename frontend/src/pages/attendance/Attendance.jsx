@@ -105,12 +105,18 @@ export const Attendance = () => {
   // Sync with global header vendor selector
   useEffect(() => {
     if (selectedVendorId && selectedVendorId !== 'all') {
-      const found = (vendors || []).find(v => String(v.id) === String(selectedVendorId));
+      const found = (vendors || []).find(v =>
+        String(v.id) === String(selectedVendorId) ||
+        String(v.external_vendor_id) === String(selectedVendorId) ||
+        String(v.code) === String(selectedVendorId)
+      );
       if (found) {
         setSelectedVendorFilter(found.name || found.partnerName || found.id);
       } else {
         setSelectedVendorFilter(selectedVendorId);
       }
+    } else if (selectedVendorId === 'all') {
+      setSelectedVendorFilter('ALL');
     }
   }, [selectedVendorId, vendors]);
 
@@ -263,10 +269,15 @@ export const Attendance = () => {
 
   const activeVendorName = useMemo(() => {
     if (selectedVendorFilter && selectedVendorFilter !== 'ALL') {
-      return selectedVendorFilter;
+      const found = (vendors || []).find(v =>
+        String(v.id) === String(selectedVendorFilter) ||
+        String(v.external_vendor_id) === String(selectedVendorFilter) ||
+        v.name === selectedVendorFilter ||
+        v.partnerName === selectedVendorFilter
+      );
+      return found?.partnerName || found?.name || selectedVendorFilter;
     }
     if (user?.vendor?.name) return user.vendor.name;
-    if (vendors && vendors.length > 0) return vendors[0].name || vendors[0].partnerName;
     return 'All Vendor Teams';
   }, [selectedVendorFilter, user, vendors]);
 
@@ -808,7 +819,9 @@ export const Attendance = () => {
         <div>
           <h1 className="page-title">Attendance</h1>
           <p className="page-subtitle">
-            Daily roster, GPS check-in, and approvals for {activeVendorName}
+            {selectedVendorFilter === 'ALL'
+              ? 'Daily roster, GPS check-in, and approvals across all vendor teams'
+              : `Daily roster, GPS check-in, and approvals for ${activeVendorName}`}
           </p>
         </div>
 

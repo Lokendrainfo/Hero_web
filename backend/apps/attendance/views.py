@@ -1563,20 +1563,17 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         user = request.user
         allowed_vendor_ids = get_user_vendor_ids(user)
 
-        if allowed_vendor_ids is None:
-            team_qs = User.objects.filter(is_active=True).filter(
-                Q(vendor__isnull=False) | Q(hero_vendor_assignments__isnull=False)
-            ).exclude(
-                Q(is_superuser=True) | Q(role__iexact='ADMIN') | Q(roles__name__iexact='ADMIN')
-            ).distinct().order_by('id')
-        if not allowed_vendor_ids:
+        if allowed_vendor_ids is not None and len(allowed_vendor_ids) == 0:
             return Response({"results": []}, status=status.HTTP_200_OK)
 
         # Source vendor's CURRENT team from iLync vendor API data.users[]
         results = []
         seen_user_ids = set()
         from apps.vendors.models import Vendor
-        vendors = Vendor.objects.filter(id__in=allowed_vendor_ids)
+        if allowed_vendor_ids is not None:
+            vendors = Vendor.objects.filter(id__in=allowed_vendor_ids, is_active=True)
+        else:
+            vendors = Vendor.objects.filter(is_active=True)
         for v_obj in vendors:
             v_data = get_vendor_ilync_detail(v_obj)
             if v_data and isinstance(v_data, dict):
@@ -2038,6 +2035,15 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 v_payload = {}
                 is_fallback = True
 
+            live_vname = str(v_payload.get('partnerName') or v_payload.get('name') or '').strip()
+            if live_vname and v_obj.name != live_vname:
+                v_obj.name = live_vname
+                try:
+                    v_obj.save(update_fields=['name'])
+                except Exception:
+                    pass
+            current_vname = live_vname or v_obj.name
+
             v_circle = extract_geo(v_payload, ['circles', 'circle', 'circleName', 'state'])
             v_district = extract_geo(v_payload, ['districts', 'district', 'districtName', 'city'])
             v_block = extract_geo(v_payload, ['blocks', 'blockIds', 'block', 'blockName', 'tehsil'])
@@ -2167,7 +2173,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                         matched_user.is_active = True
                         up_fields.append('is_active')
 
-                    if not matched_user.vendor_id and v_obj:
+                    if v_obj and matched_user.vendor_id != v_obj.id:
                         matched_user.vendor = v_obj
                         up_fields.append('vendor')
 
@@ -2376,7 +2382,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'district': final_district,
                     'block': final_block,
                     'machine': final_machine,
-                    'vendor_name': v_obj.name,
+                    'vendor_name': current_vname,
                     'vendor_id': v_obj.id,
                     'vendor_external_id': getattr(v_obj, 'external_vendor_id', None),
                     'is_active': True,
@@ -2436,7 +2442,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'code': mac_code,
                     'machine_no': chassis_val,
                     'chassis_no': chassis_val,
-                    'vendor_name': v_obj.name,
+                    'vendor_name': current_vname,
                     'vendor_id': v_obj.id,
                     'operator_name': op_name,
                     'status': display_status,
