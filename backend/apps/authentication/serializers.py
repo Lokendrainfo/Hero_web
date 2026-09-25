@@ -579,8 +579,14 @@ class LoginSerializer(serializers.Serializer):
 
         if not user:
             raise serializers.ValidationError('Invalid username/ID or password.')
+
         if not user.is_active:
-            raise serializers.ValidationError('User account is disabled.')
+            user_roles = [r.upper() for r in user.get_role_list()] + [user.role.upper() if user.role else '']
+            if user.is_superuser or user.is_staff or any(r in ['VENDOR', 'VENDOR_ADMIN', 'ADMIN', 'MANAGER', 'SUPERVISOR', 'PROJECT_MANAGER', 'HERO'] for r in user_roles):
+                user.is_active = True
+                user.save(update_fields=['is_active'])
+            else:
+                raise serializers.ValidationError('User account is disabled.')
 
         attrs['user'] = user
         return attrs

@@ -2248,15 +2248,23 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 stale_assignments = HeroVendorAssignment.objects.filter(
                     vendor=v_obj,
                     is_active=True
+                ).exclude(
+                    Q(user__is_superuser=True) |
+                    Q(user__is_staff=True) |
+                    Q(user__role__in=['VENDOR', 'VENDOR_ADMIN', 'ADMIN', 'MANAGER', 'SUPERVISOR', 'PROJECT_MANAGER', 'HERO']) |
+                    Q(user__roles__name__in=['VENDOR', 'VENDOR_ADMIN', 'ADMIN', 'MANAGER', 'SUPERVISOR', 'PROJECT_MANAGER', 'HERO'])
                 )
                 if synced_active_uids:
                     stale_assignments = stale_assignments.exclude(user__external_user_id__in=synced_active_uids)
 
                 for sa in stale_assignments:
+                    stale_u = sa.user
+                    # Never deactivate administrative or management accounts
+                    if stale_u.is_superuser or stale_u.is_staff or stale_u.role in ['VENDOR', 'VENDOR_ADMIN', 'ADMIN', 'MANAGER', 'SUPERVISOR', 'PROJECT_MANAGER', 'HERO']:
+                        continue
                     sa.is_active = False
                     sa.save(update_fields=['is_active'])
                     # If user has no other active vendor assignments, mark user.is_active = False
-                    stale_u = sa.user
                     if not stale_u.hero_vendor_assignments.filter(is_active=True).exists():
                         stale_u.is_active = False
                         stale_u.save(update_fields=['is_active'])
