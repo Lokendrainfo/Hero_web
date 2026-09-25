@@ -4,6 +4,7 @@ from apps.vendors.models import Vendor
 
 ATTENDANCE_STATUS_CHOICES = (
     ('NOT_CHECKED_IN', 'Not Checked In'),
+    ('NOT_MARKED', 'Not Marked'),
     ('CHECKED_IN', 'Checked In'),
     ('CHECKED_OUT', 'Checked Out'),
     ('PRESENT', 'Present'),

@@ -13,7 +13,7 @@ from apps.common.responses import success_response, error_response
 from apps.common.vendor_scope import get_user_vendor_ids, get_user_vendor, check_vendor_access, filter_queryset_by_vendor
 from django.conf import settings
 from apps.notifications.models import Notification
-from .services import auto_checkout_overnight_records
+from .services import auto_checkout_overnight_records, auto_store_unmarked_records
 from apps.common.reporting_scope import get_reporting_scope
 
 import base64
@@ -1801,6 +1801,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         oem_by_chassis, ops_by_chassis = _index_open_machine_issues()
 
         if not is_today:
+            # Auto-ensure NOT_MARKED records exist for this past date if missing
+            if not AttendanceRecord.objects.filter(date=req_date).exists():
+                try:
+                    auto_store_unmarked_records(target_date=req_date)
+                except Exception as ex:
+                    print(f"[AttendanceRoster] Auto-store past unmarked records warning for {req_date}: {ex}")
+
             # ------------------------------------------------------------------
             # HISTORICAL ROSTER (PAST DATES)
             # Source of truth: AttendanceRecord snapshot stored in Hero DB.
