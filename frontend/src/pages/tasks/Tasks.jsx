@@ -107,14 +107,14 @@ export const Tasks = () => {
   const getVendorName = (vendorId, taskObj = null) => {
     // 1. Direct task execution vendor name
     const execVendorName = taskObj?.taskExecution?.fieldData?.trenching?.trenchingMachineDetails?.vendorName;
-    if (execVendorName && String(execVendorName).trim() && String(execVendorName).trim() !== 'Telecrats' && String(execVendorName).trim() !== 'HERO INFRASTRUCTURE') {
+    if (execVendorName && String(execVendorName).trim()) {
       return String(execVendorName).trim();
     }
 
     // 2. Direct task object snapshot
     if (taskObj?.vendorSnapshot?.partnerName) return taskObj.vendorSnapshot.partnerName;
     if (taskObj?.vendorSnapshot?.name) return taskObj.vendorSnapshot.name;
-    if (taskObj?.vendorName && String(taskObj.vendorName).trim() && taskObj.vendorName !== 'Assigned Vendor' && taskObj.vendorName !== 'Unassigned Vendor' && taskObj.vendorName !== 'Telecrats' && taskObj.vendorName !== 'HERO INFRASTRUCTURE') {
+    if (taskObj?.vendorName && String(taskObj.vendorName).trim() && taskObj.vendorName !== 'Assigned Vendor' && taskObj.vendorName !== 'Unassigned Vendor') {
       return String(taskObj.vendorName).trim();
     }
 
@@ -132,7 +132,7 @@ export const Tasks = () => {
     if (user?.vendor) {
       const uVId = String(user.vendor.id || user.vendor.external_vendor_id || '').toLowerCase();
       if (uVId && (uVId === cleanId || cleanId.includes(uVId) || uVId.includes(cleanId))) {
-        return user.vendor.partnerName || user.vendor.name || 'Gurukripa Enterprises';
+        return user.vendor.partnerName || user.vendor.name || 'Vendor';
       }
     }
 
@@ -152,33 +152,11 @@ export const Tasks = () => {
       );
     });
 
-    if (matched && matched.name !== 'Telecrats') {
+    if (matched) {
       return matched.partnerName || matched.name;
     }
 
-    const knownVendors = {
-      '6a7c8c07d004240bf680bd6f': 'TEST PARTNER',
-      '6a95092f544bdedf53d4ec0a': 'Vikas kumar',
-      '6a9550b4544bdedf53d4ec0b': 'Naveen Chouhan',
-      '6a852f2600cd99ac6337f4a9': 'HARPAL INFRA DEVELOPMENT',
-      '6a7c2b4f8e16e804697f18b0': 'Gurukripa Enterprises',
-      '6a8bdb93b8fd1ac215ebfeed': 'KHALSA TELECOM',
-      '6a7e941d4312cab2fd6d36cc': 'Hero Infrastructure',
-      '6a8a77d5b8fd1ac215ebfeeb': 'Naveen Telecom',
-      '6a8badb1b8fd1ac215ebfeec': 'Naveen Telecom Network',
-      '6a97b260544bdedf53d4ec0c': 'Naveen Telecom Network 1',
-      '6a9d22c43fe4e1b061d189a9': 'Naveen Telecom Network 2',
-      '6a82e6f24312cab2fd6d36cd': 'Pranjal Enterprises',
-      '6a8fc284544bdedf53d4ec09': 'Raj Enterprises'
-    };
-    if (knownVendors[cleanId]) {
-      return knownVendors[cleanId];
-    }
-    for (const [k, v] of Object.entries(knownVendors)) {
-      if (cleanId.includes(k) || k.includes(cleanId)) return v;
-    }
-
-    return typeof vendorId === 'string' ? `Vendor (${vendorId.substring(0, 8)})` : 'Vendor';
+    return typeof vendorId === 'string' && vendorId.length > 8 ? `Vendor (${vendorId.substring(0, 8)})` : (vendorId || 'Vendor');
   };
 
   const fetchMyTasks = async (pageToFetch = page) => {
@@ -813,7 +791,7 @@ export const Tasks = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 500, color: '#111827', background: '#fff', padding: '6px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}>
               <LucideBuilding2 size={16} color="#059669" />
-              <span>Vendor: {user?.vendor?.partnerName || user?.vendor?.name || user?.partnerName || user?.vendor_name || (userVendorId ? getVendorName(userVendorId) : 'Gurukripa Enterprises')}</span>
+              <span>Vendor: {user?.vendor?.partnerName || user?.vendor?.name || user?.partnerName || user?.vendor_name || (userVendorId ? getVendorName(userVendorId) : '—')}</span>
             </div>
             {user?.name && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', fontWeight: '600', color: '#374151', background: '#f3f4f6', padding: '6px 12px', borderRadius: '8px', border: '1px solid #e5e7eb' }}>
@@ -1565,7 +1543,7 @@ export const Tasks = () => {
                     <span>Location & Network Attributes</span>
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#334155', lineHeight: 1.5 }}>
-                    🏢 Company: <strong>{activeModalTask.locationSnapshot?.company || activeModalTask.location?.company || 'Telecrats'}</strong><br />
+                    🏢 Company: <strong>{activeModalTask.locationSnapshot?.company || activeModalTask.location?.company || '—'}</strong><br />
                     📍 Location: <strong>{activeModalTask.locationSnapshot?.block || activeModalTask.location?.blockName || 'KARANPUR'}, {activeModalTask.locationSnapshot?.district || activeModalTask.location?.district || 'GANGANAGAR'}</strong><br />
                     🌐 OLT IP: <strong>{activeModalTask.locationSnapshot?.oltIp || activeModalTask.location?.oltIp || '10.0.186.218'}</strong><br />
                     ⚡ Phase & BA: <strong>{activeModalTask.locationSnapshot?.projectPhase || 'PHASE_1'} • {activeModalTask.locationSnapshot?.baCmp || 'Bikaner'}</strong>
@@ -1587,7 +1565,7 @@ export const Tasks = () => {
                   {/* Machine & Operator Specs */}
                   {activeModalTask.taskExecution.fieldData.trenching.trenchingMachineDetails && (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px', fontSize: '0.78rem', color: '#713f12', marginBottom: '10px' }}>
-                      <div>🏢 Vendor: <strong>{activeModalTask.taskExecution.fieldData.trenching.trenchingMachineDetails.vendorName || 'KHALSA TELECOM'}</strong></div>
+                      <div>🏢 Vendor: <strong>{activeModalTask.taskExecution.fieldData.trenching.trenchingMachineDetails.vendorName || '—'}</strong></div>
                       <div>🚜 Machine: <strong>{activeModalTask.taskExecution.fieldData.trenching.trenchingMachineDetails.machineName || '600202608399'}</strong></div>
                       <div>👤 Operator: <strong>{activeModalTask.taskExecution.fieldData.trenching.operatorDetails?.name || 'Rahul'}</strong></div>
                       <div>🧭 Pilot Locator: <strong>{activeModalTask.taskExecution.fieldData.trenching.locatorPilotDetails?.name || 'Kulwant Singh'}</strong></div>

@@ -437,7 +437,7 @@ export const Stock = () => {
                     <td style={{ padding: '12px 16px', fontWeight: '600', color: '#111827' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <LucideBuilding2 size={13} color="#6b7280" />
-                        {it.issueeName || 'Gurukripa Enterprises'}
+                        {it.issueeName || '—'}
                       </div>
                     </td>
                   </tr>

@@ -54,19 +54,6 @@ const statusBadgeClass = (value) => {
   return 'badge-neutral';
 };
 
-const KNOWN_VENDOR_MAP = {
-  '6a852f2600cd99ac6337f4a9': 'HARPAL INFRA DEVELOPMENT',
-  '6a7c2b4f8e16e804697f18b0': 'Gurukripa Enterprises',
-  '6a8bdb93b8fd1ac215ebfeed': 'KHALSA TELECOM',
-  '6a7e941d4312cab2fd6d36cc': 'Hero Infrastructure',
-  '6a8a77d5b8fd1ac215ebfeeb': 'Naveen Telecom',
-  '6a8badb1b8fd1ac215ebfeec': 'Naveen Telecom Network',
-  '6a97b260544bdedf53d4ec0c': 'Naveen Telecom Network 1',
-  '6a9d22c43fe4e1b061d189a9': 'Naveen Telecom Network 2',
-  '6a82e6f24312cab2fd6d36cd': 'Pranjal Enterprises',
-  '6a8fc284544bdedf53d4ec09': 'Raj Enterprises'
-};
-
 const DepthPointsTable = ({ points, onOpenPhoto }) => (
   <div className="table-container">
     <table className="data-table">
@@ -155,7 +142,7 @@ export const TaskDetailPage = () => {
   const [embeddedChartTab, setEmbeddedChartTab] = useState('preview');
 
   const [jobMeta, setJobMeta] = useState({
-    companyName: 'Telecrats Infra',
+    companyName: '',
     firstRodLength: 3.0,
     defaultRodLength: 3.0,
     pitchUnit: '%',
@@ -527,7 +514,7 @@ export const TaskDetailPage = () => {
 
   // Location Snapshot details
   const loc = task.locationSnapshot || task.location || {};
-  const locCompany = loc.company || 'Telecrats';
+  const locCompany = loc.company || '';
   const locCircle = loc.circle || 'RAJASTHAN';
   const locDistrict = loc.district || 'GANGANAGAR';
   const locBlock = loc.blockName || loc.block || 'KARANPUR';

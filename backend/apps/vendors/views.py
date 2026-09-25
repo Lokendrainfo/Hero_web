@@ -106,9 +106,10 @@ class VendorViewSet(viewsets.ModelViewSet):
         user = request.user
         vendor_ids = get_user_vendor_ids(user)
         if vendor_ids is None or (isinstance(vendor_ids, list) and not vendor_ids):
-            # Admin or user without specific vendor assignment
-            v_first = Vendor.objects.first()
-            target_pk = v_first.external_vendor_id or v_first.id if v_first else '6a7c2b4f8e16e804697f18b0'
+            v_first = Vendor.objects.filter(is_active=True).first() or Vendor.objects.first()
+            if not v_first:
+                return error_response(message="No vendor available", status_code=status.HTTP_404_NOT_FOUND)
+            target_pk = v_first.external_vendor_id or v_first.id
         else:
             target_pk = vendor_ids[0]
         return self.retrieve(request, pk=target_pk)

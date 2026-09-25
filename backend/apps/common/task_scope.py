@@ -294,16 +294,8 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
                     task_obj['coveredLengthKm'] = round(tot_m / 1000.0, 3)
 
     known_map = {
-        '6a852f2600cd99ac6337f4a9': 'HARPAL INFRA DEVELOPMENT',
-        '6a7c2b4f8e16e804697f18b0': 'Gurukripa Enterprises',
-        '6a8bdb93b8fd1ac215ebfeed': 'KHALSA TELECOM',
-        '6a7e941d4312cab2fd6d36cc': 'Hero Infrastructure',
-        '6a8a77d5b8fd1ac215ebfeeb': 'Naveen Telecom',
-        '6a8badb1b8fd1ac215ebfeec': 'Naveen Telecom Network',
-        '6a97b260544bdedf53d4ec0c': 'Naveen Telecom Network 1',
-        '6a9d22c43fe4e1b061d189a9': 'Naveen Telecom Network 2',
-        '6a82e6f24312cab2fd6d36cd': 'Pranjal Enterprises',
-        '6a8fc284544bdedf53d4ec09': 'Raj Enterprises'
+        str(ext_id).lower(): name
+        for ext_id, name in Vendor.objects.exclude(external_vendor_id__isnull=True).exclude(external_vendor_id='').values_list('external_vendor_id', 'name')
     }
 
     expanded_results = []
@@ -341,7 +333,7 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
 
         eff_vid = vid if vid else (parent_vid or '')
 
-        if raw_vname and str(raw_vname).strip() and str(raw_vname).strip() != 'Telecrats':
+        if raw_vname and str(raw_vname).strip():
             eff_vname = str(raw_vname).strip()
         elif parent_vname:
             eff_vname = parent_vname
@@ -473,8 +465,8 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
                     target_match_ids.add(v_obj.code.lower())
                 target_match_names.add(v_obj.name.lower())
 
-        # If assigned vendor is parent company Telecrats, do not filter out sub-vendor execution tasks
-        if any(name in ['telecrats', 'telecrats site project', 'hero web'] for name in target_match_names) or '17' in target_match_ids:
+        # If assigned vendor is parent company / principal contractor, do not filter out sub-vendor execution tasks
+        if any(name in ['telecrats', 'telecrats site project', 'hero web', 'hero infrastructure'] for name in target_match_names):
             target_match_ids.clear()
             target_match_names.clear()
 
