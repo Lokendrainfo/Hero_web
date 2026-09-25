@@ -21,14 +21,16 @@ from django.core.files.base import ContentFile
 from django.core.cache import cache
 from apps.integrations.ilync_client import IlyncClient
 
-def get_vendor_ilync_detail(vendor_obj_or_ext_id, use_cache=True, ttl=120):
+def get_vendor_ilync_detail(vendor_obj_or_ext_id, use_cache=True, ttl=45, force_refresh=False, return_status=False):
     """
     Fetches vendor detail from iLync GET /api/vendor/{external_vendor_id}.
     Returns data dictionary (or None if unavailable/error).
-    Caches briefly (default 120s) to avoid redundant requests within the same operations.
+    - Caches with short TTL (default 45s) to ensure data is always fresh.
+    - Preserves last known good cache across outages to prevent catastrophic user deletion during temporary API failures.
+    - If return_status is True, returns tuple: (v_data, is_fallback).
     """
     if not vendor_obj_or_ext_id:
-        return None
+        return (None, False) if return_status else None
 
     if hasattr(vendor_obj_or_ext_id, 'external_vendor_id'):
         ext_v_id = getattr(vendor_obj_or_ext_id, 'external_vendor_id', None)
@@ -36,13 +38,15 @@ def get_vendor_ilync_detail(vendor_obj_or_ext_id, use_cache=True, ttl=120):
         ext_v_id = str(vendor_obj_or_ext_id).strip()
 
     if not ext_v_id:
-        return None
+        return (None, False) if return_status else None
 
     cache_key = f"ilync_vendor_detail_{ext_v_id}"
-    if use_cache:
+    last_good_key = f"ilync_vendor_detail_last_good_{ext_v_id}"
+
+    if use_cache and not force_refresh:
         cached = cache.get(cache_key)
-        if cached is not None:
-            return cached
+        if cached is not None and isinstance(cached, dict):
+            return (cached, False) if return_status else cached
 
     client = IlyncClient()
     try:
@@ -50,14 +54,23 @@ def get_vendor_ilync_detail(vendor_obj_or_ext_id, use_cache=True, ttl=120):
         if res and isinstance(res, dict) and res.get('success'):
             v_data = res.get('data') if 'data' in res and isinstance(res.get('data'), dict) else res
             if isinstance(v_data, dict):
+                v_data.pop('_is_fallback', None)
                 cache.set(cache_key, v_data, timeout=ttl)
-                return v_data
+                cache.set(last_good_key, v_data, timeout=86400)
+                return (v_data, False) if return_status else v_data
         elif isinstance(res, dict) and not res.get('success'):
-            print(f"[iLyncVendorDetail] Vendor {ext_v_id} lookup failed: {res.get('message')}")
+            print(f"[AttendanceRosterSync] Vendor {ext_v_id} lookup failed from iLync: {res.get('message')}. Preserving last known roster.")
     except Exception as err:
-        print(f"[iLyncVendorDetail] Exception fetching vendor {ext_v_id}: {err}")
+        print(f"[AttendanceRosterSync] Exception fetching vendor {ext_v_id} from iLync: {err}. Preserving last known roster.")
 
-    return None
+    # Fallback to last known good cache if iLync fails (timeout, 500, network error)
+    last_good = cache.get(last_good_key)
+    if last_good is not None and isinstance(last_good, dict):
+        last_good = dict(last_good)
+        last_good['_is_fallback'] = True
+        return (last_good, True) if return_status else last_good
+
+    return (None, False) if return_status else None
 
 def process_attendance_photo(request_or_data, photo_type='checkin', user_id=None):
     """
@@ -1644,7 +1657,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         subordinate_ids = get_reporting_scope(user)
         subordinate_ids = [uid for uid in subordinate_ids if uid != user.id]
 
-        base_pending_filter = Q(approval_status='PENDING') & ~Q(status__in=['NOT_MARKED', 'NOT_CHECKED_IN']) & Q(check_in__isnull=False)
+        base_pending_filter = Q(approval_status='PENDING') & ~Q(status__in=['NOT_MARKED', 'NOT_CHECKED_IN']) & (Q(check_in__isnull=False) | Q(status='CHECKED_IN'))
 
         if is_admin:
             qs = AttendanceRecord.objects.filter(base_pending_filter).exclude(user=user)
@@ -1752,6 +1765,14 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='team-attendance')
     def get_team_attendance(self, request):
+        try:
+            return self._get_team_attendance_impl(request)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise
+
+    def _get_team_attendance_impl(self, request):
         """
         Returns dynamic team member roster:
         - TODAY (or future): directly from LIVE iLync Vendor API, merged with today's saved records.
@@ -1995,16 +2016,27 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         # ------------------------------------------------------------------
         seen_record_ids = set()
 
+        # Controlled parallelism when multiple vendors are requested to avoid sequential blocking HTTP calls
+        vendor_payload_map = {}
+        if len(target_vendors) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            def fetch_v(v):
+                res, is_fb = get_vendor_ilync_detail(v, use_cache=True, ttl=45, return_status=True)
+                return v.id, res, is_fb
+
+            with ThreadPoolExecutor(max_workers=min(8, len(target_vendors))) as executor:
+                for vid, pl, is_fb in executor.map(fetch_v, target_vendors):
+                    vendor_payload_map[vid] = (pl, is_fb)
+
         for v_obj in target_vendors:
-            v_payload = get_vendor_ilync_detail(v_obj)
+            if v_obj.id in vendor_payload_map:
+                v_payload, is_fallback = vendor_payload_map[v_obj.id]
+            else:
+                v_payload, is_fallback = get_vendor_ilync_detail(v_obj, use_cache=True, ttl=45, return_status=True)
+
             if not v_payload or not isinstance(v_payload, dict):
-                ext_v_id = str(v_obj.external_vendor_id or v_obj.id).strip()
-                try:
-                    live_res = client.get_vendor_by_id(ext_v_id)
-                    v_payload = live_res.get('data') if (isinstance(live_res, dict) and live_res.get('success')) else (live_res if isinstance(live_res, dict) else {})
-                except Exception as e:
-                    print(f"[AttendanceRoster] Error fetching live iLync vendor data for {v_obj.name}: {e}")
-                    v_payload = {}
+                v_payload = {}
+                is_fallback = True
 
             v_circle = extract_geo(v_payload, ['circles', 'circle', 'circleName', 'state'])
             v_district = extract_geo(v_payload, ['districts', 'district', 'districtName', 'city'])
@@ -2022,98 +2054,230 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                         v_mac_list.append(m_item.strip())
             v_vendor_machine = ', '.join(v_mac_list)
 
-            # 1. LIVE TEAM MEMBERS directly from iLync response (v_payload.get('users'))
             raw_users = v_payload.get('users') or []
             if not isinstance(raw_users, list):
                 raw_users = []
 
+            # If iLync failed/fallback and no cached users exist, preserve existing active DB users for this vendor
+            if is_fallback and not raw_users:
+                db_users = User.objects.filter(
+                    Q(vendor=v_obj) | Q(hero_vendor_assignments__vendor=v_obj, hero_vendor_assignments__is_active=True),
+                    is_active=True
+                ).distinct()
+                for db_u in db_users:
+                    raw_users.append({
+                        'userId': db_u.external_user_id or str(db_u.id),
+                        'id': db_u.external_user_id or str(db_u.id),
+                        'empId': db_u.employee_id,
+                        'name': db_u.get_full_name() or db_u.username,
+                        'mobile': db_u.phone_number,
+                        'email': db_u.email,
+                        'designation': getattr(db_u, 'designation', None) or getattr(db_u, 'role', 'OPERATOR'),
+                        'role': getattr(db_u, 'role', 'OPERATOR'),
+                        'active': True
+                    })
+
+            new_count = 0
+            updated_count = 0
+            removed_count = 0
+            active_users_for_roster = []
+            synced_active_uids = set()
+
             for u_info in raw_users:
                 if not isinstance(u_info, dict):
                     continue
+
+                # Respect active status: If active is False, exclude from current Attendance Roster
+                u_active = u_info.get('active')
+                if u_active is False:
+                    continue
+
                 ext_u_id = str(u_info.get('userId') or u_info.get('id') or '').strip()
                 if ext_u_id.lower() in ('none', 'null', ''):
                     ext_u_id = None
+
                 emp_id = u_info.get('empId')
                 emp_id_str = str(emp_id).strip() if emp_id and str(emp_id).lower() not in ('none', 'null') else ''
                 mobile = str(u_info.get('mobile') or u_info.get('phone') or u_info.get('phoneNumber') or '').strip()
                 email = str(u_info.get('email') or '').strip()
                 name = str(u_info.get('name') or u_info.get('contactName') or 'Team Member').strip()
                 designation = str(u_info.get('designation') or u_info.get('role') or 'OPERATOR').strip()
+                norm_role = normalize_attendance_role(designation)
 
-                # Canonical User Mapping:
-                matched_user = None
-                mapping_status = 'MISSING'
-
-                # 1. Primary: iLync userId -> Hero User.external_user_id
                 if ext_u_id:
-                    ext_matches = list(User.objects.filter(external_user_id=ext_u_id))
-                    if len(ext_matches) > 1:
-                        mapping_status = 'DUPLICATE_EXTERNAL_ID'
-                    elif len(ext_matches) == 1:
-                        cand = ext_matches[0]
-                        matched_user = cand
-                        mapping_status = 'CORRECT'
-                        from apps.vendors.models import HeroVendorAssignment
-                        assignment, _ = HeroVendorAssignment.objects.get_or_create(
-                            user=cand,
-                            vendor=v_obj,
-                            defaults={'is_active': True}
-                        )
-                        if not assignment.is_active:
-                            assignment.is_active = True
-                            assignment.save(update_fields=['is_active'])
+                    synced_active_uids.add(ext_u_id)
 
-                # 2. Secondary fallback matches ONLY within this vendor, and ONLY if user has no conflicting external_user_id
-                if not matched_user and mapping_status != 'CROSS_VENDOR_CONFLICT':
-                    cand_qs = User.objects.filter(vendor=v_obj)
-                    cand_user = None
+                # Match user primarily by external_user_id
+                matched_user = None
+                if ext_u_id:
+                    matched_user = User.objects.filter(external_user_id=ext_u_id).first()
+
+                # Secondary fallback if no external_user_id exists yet (only within this vendor, and only if user has no external_user_id)
+                if not matched_user and v_obj:
+                    cand_qs = User.objects.filter(vendor=v_obj, external_user_id__isnull=True)
                     if emp_id_str:
-                        cand_user = cand_qs.filter(Q(employee_id=emp_id_str) | Q(username=emp_id_str)).first()
-                        if not cand_user:
-                            for pref in ('VND-', 'EMP-', 'VND_', 'EMP_'):
-                                if emp_id_str.upper().startswith(pref):
-                                    cln = emp_id_str[len(pref):].split('-')[0].strip()
-                                    if cln:
-                                        cand_user = cand_qs.filter(Q(username=cln) | Q(phone_number=cln)).first()
-                                        if cand_user:
-                                            break
-                    if not cand_user and mobile:
-                        cand_user = cand_qs.filter(Q(phone_number=mobile) | Q(username=mobile)).first()
-                    if not cand_user and email and not email.lower().startswith('user@'):
-                        cand_user = cand_qs.filter(email__iexact=email).first()
+                        matched_user = cand_qs.filter(Q(employee_id=emp_id_str) | Q(username=emp_id_str)).first()
+                    if not matched_user and mobile:
+                        matched_user = cand_qs.filter(Q(phone_number=mobile) | Q(username=mobile)).first()
+                    if not matched_user and email and not email.lower().startswith('user@'):
+                        matched_user = cand_qs.filter(email__iexact=email).first()
 
-                    if cand_user:
-                        if cand_user.external_user_id and cand_user.external_user_id != ext_u_id:
-                            mapping_status = 'CROSS_VENDOR_CONFLICT'
-                            cand_user = None
-                        else:
-                            matched_user = cand_user
-                            mapping_status = 'CORRECT'
-
-                # Auto-enrich matched user external_user_id / employee_id / vendor without duplicate creation
                 if matched_user:
+                    # EXISTING / UPDATED iLYNC USER
+                    # Update current profile fields from iLync
+                    # DO NOT create duplicate Hero users for profile changes!
                     up_fields = []
-                    if ext_u_id and not matched_user.external_user_id:
+
+                    if ext_u_id and matched_user.external_user_id != ext_u_id:
                         matched_user.external_user_id = ext_u_id
                         up_fields.append('external_user_id')
-                    if emp_id_str and not matched_user.employee_id:
+
+                    if name:
+                        parts = name.split(None, 1)
+                        first = parts[0]
+                        last = parts[1] if len(parts) > 1 else ''
+                        if matched_user.first_name != first:
+                            matched_user.first_name = first
+                            up_fields.append('first_name')
+                        if matched_user.last_name != last:
+                            matched_user.last_name = last
+                            up_fields.append('last_name')
+
+                    if emp_id_str and matched_user.employee_id != emp_id_str:
                         matched_user.employee_id = emp_id_str
                         up_fields.append('employee_id')
+
+                    if mobile and matched_user.phone_number != mobile:
+                        matched_user.phone_number = mobile
+                        up_fields.append('phone_number')
+
+                    if email and not email.lower().startswith('user@') and matched_user.email != email:
+                        matched_user.email = email
+                        up_fields.append('email')
+
+                    if hasattr(User, 'designation') and designation and getattr(matched_user, 'designation', None) != designation:
+                        matched_user.designation = designation
+                        up_fields.append('designation')
+
+                    if norm_role and matched_user.role != norm_role:
+                        matched_user.role = norm_role
+                        up_fields.append('role')
+
+                    if not matched_user.is_active:
+                        matched_user.is_active = True
+                        up_fields.append('is_active')
+
                     if not matched_user.vendor_id and v_obj:
                         matched_user.vendor = v_obj
                         up_fields.append('vendor')
-                    norm_role = normalize_attendance_role(designation)
-                    if norm_role and matched_user.role in ('VIEWER', None, ''):
-                        matched_user.role = norm_role
-                        up_fields.append('role')
+
                     if up_fields:
                         try:
-                            matched_user.save(update_fields=up_fields)
+                            matched_user.save(update_fields=list(set(up_fields)))
+                            updated_count += 1
                         except Exception as e:
-                            print(f"[AttendanceRoster] Error enriching user {matched_user.id}: {e}")
+                            print(f"[AttendanceRosterSync] Error updating user {matched_user.id}: {e}")
+
+                    from apps.vendors.models import HeroVendorAssignment
+                    assignment, _ = HeroVendorAssignment.objects.get_or_create(
+                        user=matched_user,
+                        vendor=v_obj,
+                        defaults={'is_active': True}
+                    )
+                    if not assignment.is_active:
+                        assignment.is_active = True
+                        assignment.save(update_fields=['is_active'])
+
+                else:
+                    # NEW iLYNC USER
+                    # Create local Hero mapping
+                    base_usr = emp_id_str or mobile or (f"u_{ext_u_id[-8:]}" if ext_u_id else f"u_{v_obj.id}_{name.replace(' ', '')[:6]}")
+                    username_val = base_usr
+                    idx = 1
+                    while User.objects.filter(username=username_val).exists():
+                        username_val = f"{base_usr}_{idx}"
+                        idx += 1
+
+                    parts = name.split(None, 1) if name else [username_val, '']
+                    first = parts[0]
+                    last = parts[1] if len(parts) > 1 else ''
+
+                    user_create_kwargs = {
+                        'username': username_val,
+                        'external_user_id': ext_u_id or None,
+                        'employee_id': emp_id_str or None,
+                        'phone_number': mobile or '',
+                        'email': email or f"{username_val}@ilync.tech",
+                        'first_name': first,
+                        'last_name': last,
+                        'role': norm_role,
+                        'vendor': v_obj,
+                        'is_active': True
+                    }
+                    if hasattr(User, 'designation'):
+                        user_create_kwargs['designation'] = designation
+
+                    try:
+                        matched_user = User.objects.create(**user_create_kwargs)
+                        from apps.vendors.models import HeroVendorAssignment
+                        HeroVendorAssignment.objects.get_or_create(
+                            user=matched_user,
+                            vendor=v_obj,
+                            defaults={'is_active': True}
+                        )
+                        new_count += 1
+                    except Exception as e:
+                        print(f"[AttendanceRosterSync] Error creating user for iLync userId {ext_u_id}: {e}")
+
+                active_users_for_roster.append({
+                    'u_info': u_info,
+                    'matched_user': matched_user,
+                    'ext_u_id': ext_u_id,
+                    'emp_id_str': emp_id_str,
+                    'mobile': mobile,
+                    'email': email,
+                    'name': name,
+                    'designation': designation,
+                    'norm_role': norm_role
+                })
+
+            # Handle REMOVED / INACTIVE iLync users for this vendor:
+            # ONLY when we had a genuine successful response from iLync (NOT during fallback/error):
+            if not is_fallback and raw_users is not None:
+                from apps.vendors.models import HeroVendorAssignment
+                stale_assignments = HeroVendorAssignment.objects.filter(
+                    vendor=v_obj,
+                    is_active=True
+                )
+                if synced_active_uids:
+                    stale_assignments = stale_assignments.exclude(user__external_user_id__in=synced_active_uids)
+
+                for sa in stale_assignments:
+                    sa.is_active = False
+                    sa.save(update_fields=['is_active'])
+                    # If user has no other active vendor assignments, mark user.is_active = False
+                    stale_u = sa.user
+                    if not stale_u.hero_vendor_assignments.filter(is_active=True).exists():
+                        stale_u.is_active = False
+                        stale_u.save(update_fields=['is_active'])
+                    removed_count += 1
+
+            # Audit Log
+            print(f"[AttendanceRosterSync] vendor={getattr(v_obj, 'external_vendor_id', v_obj.id)} ({v_obj.name}) iLync_users={len(raw_users)} active={len(active_users_for_roster)} new={new_count} updated={updated_count} removed={removed_count}")
+
+            # Build rows for the current roster
+            for item in active_users_for_roster:
+                u_info = item['u_info']
+                matched_user = item['matched_user']
+                ext_u_id = item['ext_u_id']
+                emp_id_str = item['emp_id_str']
+                mobile = item['mobile']
+                email = item['email']
+                name = item['name']
+                designation = item['designation']
+                u_role = item['norm_role']
 
                 # Role filter check
-                u_role = normalize_attendance_role(designation)
                 if role_filter and role_filter.upper() != 'ALL':
                     if role_filter.upper() != u_role.upper():
                         continue
@@ -2131,27 +2295,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     rec = rec_qs.filter(user=matched_user).first()
                 if rec:
                     seen_record_ids.add(rec.id)
-                    # Enrich record snapshot if empty
-                    if not rec.user_name_snapshot:
-                        rec.external_user_id_snapshot = ext_u_id or getattr(matched_user, 'external_user_id', None)
-                        rec.employee_id_snapshot = emp_id_str or getattr(matched_user, 'employee_id', None) or f"EMP-{matched_user.id}"
-                        rec.user_name_snapshot = name or matched_user.get_full_name() or matched_user.username
-                        rec.phone_number_snapshot = mobile or getattr(matched_user, 'phone_number', None)
-                        rec.role_snapshot = designation
-                        rec.vendor_name_snapshot = v_obj.name
-                        try:
-                            rec.save(update_fields=[
-                                'external_user_id_snapshot', 'employee_id_snapshot',
-                                'user_name_snapshot', 'phone_number_snapshot',
-                                'role_snapshot', 'vendor_name_snapshot'
-                            ])
-                        except Exception:
-                            pass
 
                 st = (rec.status if rec else 'NOT_MARKED').upper()
                 counts['total'] += 1
 
-                if st == 'PRESENT' or st == 'CHECKED_IN' or st == 'CHECKED_OUT':
+                if st in ('PRESENT', 'CHECKED_IN', 'CHECKED_OUT'):
                     counts['present'] += 1
                 elif st == 'ABSENT':
                     counts['absent'] += 1
@@ -2244,91 +2392,6 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'total_working_hours': rec.total_working_hours if rec else None,
                     'notes': rec.notes if rec else '',
                     'marked_by_name': rec.marked_by.get_full_name() if (rec and rec.marked_by) else ''
-                })
-
-            # Check for any extra Hero attendance records for this vendor today not in live roster
-            extra_records = AttendanceRecord.objects.filter(date=req_date, vendor=v_obj).exclude(attendance_type='MACHINE').exclude(id__in=seen_record_ids)
-            for ex_rec in extra_records:
-                seen_record_ids.add(ex_rec.id)
-                u = ex_rec.user
-                ext_u_id = ex_rec.external_user_id_snapshot or (u.external_user_id if u else None)
-                emp_display = ex_rec.employee_id_snapshot or (u.employee_id if u else None) or (f"EMP-{u.id}" if u else f"EMP-{ex_rec.id}")
-                name = ex_rec.user_name_snapshot or (u.get_full_name() or u.username if u else 'Team Member')
-                mobile = ex_rec.phone_number_snapshot or (u.phone_number if u else '')
-                email = (u.email if u and u.email and not str(u.email).lower().startswith('user@') else '')
-                designation = ex_rec.role_snapshot or (u.designation or u.role if u else 'OPERATOR')
-                u_role = normalize_attendance_role(designation)
-
-                st = (ex_rec.status or 'NOT_MARKED').upper()
-                counts['total'] += 1
-                if st in ('PRESENT', 'CHECKED_IN', 'CHECKED_OUT'):
-                    counts['present'] += 1
-                elif st == 'ABSENT':
-                    counts['absent'] += 1
-                elif st in ['HALF_DAY', 'HALF DAY']:
-                    counts['half_day'] += 1
-                    st = 'HALF_DAY'
-                elif st == 'LEAVE':
-                    counts['leave'] += 1
-                elif st in ['WEEK_OFF', 'WEEK OFF']:
-                    counts['week_off'] += 1
-                    st = 'WEEK_OFF'
-                else:
-                    counts['not_marked'] += 1
-                    st = 'NOT_MARKED'
-
-                bump_scope_matrix(scope_matrix_map, u_role, st)
-
-                if role_filter and role_filter.upper() != 'ALL' and role_filter.upper() != u_role.upper():
-                    continue
-                if search_filter:
-                    sp = search_filter.strip().lower()
-                    if sp not in name.lower() and sp not in mobile and sp not in email.lower() and sp not in emp_display.lower():
-                        continue
-                if status_filter and status_filter.upper() != 'ALL' and status_filter.upper().replace(' ', '_') != st:
-                    continue
-
-                check_in_photo_url = build_secure_media_url(request, ex_rec.check_in_photo)
-                check_out_photo_url = build_secure_media_url(request, ex_rec.check_out_photo)
-                check_in_dt = (ex_rec.check_in or ex_rec.created_at) if ex_rec.status in ['PRESENT', 'CHECKED_IN', 'CHECKED_OUT', 'HALF_DAY'] else None
-                check_out_dt = ex_rec.check_out if ex_rec.check_out else None
-
-                result_list.append({
-                    'user_id': ext_u_id or (str(u.id) if u else f"HIST-{ex_rec.id}"),
-                    'external_user_id': ext_u_id,
-                    'employee_id': emp_display,
-                    'user_name': name,
-                    'phone_number': mobile,
-                    'email': email,
-                    'role': u_role,
-                    'designation': designation,
-                    'circle': u.selected_circle.name if (u and getattr(u, 'selected_circle', None)) else v_circle,
-                    'district': u.selected_district.name if (u and getattr(u, 'selected_district', None)) else v_district,
-                    'block': u.selected_block.name if (u and getattr(u, 'selected_block', None)) else v_block,
-                    'machine': ex_rec.machine_chassis_no or ex_rec.machine_id or v_vendor_machine,
-                    'vendor_name': v_obj.name,
-                    'vendor_id': v_obj.id,
-                    'is_active': True,
-                    'reporting_manager_name': ex_rec.reporting_manager.get_full_name() if ex_rec.reporting_manager else '',
-                    'attendance_id': ex_rec.id,
-                    'date': req_date,
-                    'status': st,
-                    'approval_status': ex_rec.approval_status,
-                    'rejection_reason': ex_rec.rejection_reason,
-                    'attendance_type': ex_rec.attendance_type,
-                    'machine_chassis_no': ex_rec.machine_chassis_no or None,
-                    'check_in': timezone.localtime(check_in_dt).strftime('%H:%M') if check_in_dt else None,
-                    'check_out': timezone.localtime(check_out_dt).strftime('%H:%M') if check_out_dt else None,
-                    'check_in_time': timezone.localtime(check_in_dt).isoformat() if check_in_dt else None,
-                    'check_out_time': timezone.localtime(check_out_dt).isoformat() if check_out_dt else None,
-                    'check_in_latitude': float(ex_rec.check_in_latitude) if ex_rec.check_in_latitude else None,
-                    'check_in_longitude': float(ex_rec.check_in_longitude) if ex_rec.check_in_longitude else None,
-                    'check_in_accuracy': ex_rec.check_in_accuracy if ex_rec.check_in_accuracy else None,
-                    'check_in_photo': check_in_photo_url,
-                    'check_out_photo': check_out_photo_url,
-                    'total_working_hours': ex_rec.total_working_hours,
-                    'notes': ex_rec.notes or '',
-                    'marked_by_name': ex_rec.marked_by.get_full_name() if ex_rec.marked_by else ''
                 })
 
             # 2. LIVE MACHINES directly from iLync response (v_payload.get('machines'))

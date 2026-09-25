@@ -547,7 +547,9 @@ class VendorMultiMappingAttendanceTestCase(TestCase):
         from rest_framework.test import APIRequestFactory
         from apps.attendance.views import AttendanceViewSet
         from apps.vendors.models import Vendor, HeroVendorAssignment
+        from django.core.cache import cache
 
+        cache.clear()
         self.factory = APIRequestFactory()
         self.view = AttendanceViewSet.as_view({'post': 'check_in'})
 
@@ -937,6 +939,525 @@ class VendorMultiMappingAttendanceTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data.get('success'))
 
+    def tearDown(self):
+        from django.core.cache import cache
+        cache.clear()
 
 
+class AttendanceRosterSyncTestCase(TestCase):
+    def setUp(self):
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from apps.attendance.views import AttendanceViewSet
+        from apps.vendors.models import Vendor, HeroVendorAssignment
+        from django.core.cache import cache
 
+        cache.clear()
+        self.factory = APIRequestFactory()
+        self.view_roster = AttendanceViewSet.as_view({'get': 'get_team_attendance'})
+        self.view_check_in = AttendanceViewSet.as_view({'post': 'check_in'})
+
+        self.vendor_raj = Vendor.objects.create(
+            name="Raj Enterprises Sync Test",
+            external_vendor_id="SYNC_RAJ_001",
+            is_active=True
+        )
+
+        self.vendor_premium = Vendor.objects.create(
+            name="Premium Sync Test",
+            external_vendor_id="SYNC_PREM_002",
+            is_active=True
+        )
+
+        self.vendor_vikas = Vendor.objects.create(
+            name="Vikas Sync Test",
+            external_vendor_id="SYNC_VIKAS_003",
+            is_active=True
+        )
+
+        self.admin = User.objects.create_user(
+            username="admin_sync",
+            email="admin_sync@example.com",
+            role="ADMIN",
+            is_superuser=True
+        )
+
+        self.raj_mgr = User.objects.create_user(
+            username="raj_mgr",
+            email="raj_mgr@example.com",
+            first_name="Raj",
+            last_name="Manager",
+            role="VENDOR",
+            vendor=self.vendor_raj,
+            is_active=True
+        )
+        HeroVendorAssignment.objects.create(user=self.raj_mgr, vendor=self.vendor_raj, is_active=True)
+
+        self.user_001 = User.objects.create_user(
+            username="user_001",
+            first_name="Old",
+            last_name="Name",
+            phone_number="9999999999",
+            employee_id="EMP-001",
+            external_user_id="USER_001",
+            vendor=self.vendor_raj,
+            role="OPERATOR",
+            is_active=True
+        )
+        HeroVendorAssignment.objects.create(user=self.user_001, vendor=self.vendor_raj, is_active=True)
+
+    def test_01_ilync_adds_user_appears_in_roster(self):
+        """1. New user added in iLync -> appears in Hero current roster and mapping created."""
+        from unittest.mock import patch
+        from rest_framework.test import force_authenticate
+        from apps.vendors.models import HeroVendorAssignment
+
+        mock_payload = {
+            "id": self.vendor_raj.external_vendor_id,
+            "partnerName": "Raj Enterprises",
+            "users": [
+                {
+                    "userId": "NEW_USER_999",
+                    "empId": "EMP-NEW-999",
+                    "name": "New Team Member",
+                    "mobile": "9876543210",
+                    "email": "new_team@example.com",
+                    "designation": "OPERATOR",
+                    "active": True
+                }
+            ]
+        }
+
+        with patch('apps.integrations.ilync_client.IlyncClient.get_vendor_by_id', return_value={'success': True, 'data': mock_payload}):
+            request = self.factory.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_raj.external_vendor_id}')
+            force_authenticate(request, user=self.admin)
+            response = self.view_roster(request)
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            team_members = response.data['data']['team_members']
+            uids = [m.get('external_user_id') for m in team_members]
+            self.assertIn("NEW_USER_999", uids)
+
+            member_row = next(m for m in team_members if m.get('external_user_id') == "NEW_USER_999")
+            self.assertEqual(member_row['user_name'], "New Team Member")
+            self.assertEqual(member_row['phone_number'], "9876543210")
+            self.assertEqual(member_row['employee_id'], "EMP-NEW-999")
+
+            # Verify local Hero user was created
+            created_u = User.objects.filter(external_user_id="NEW_USER_999").first()
+            self.assertIsNotNone(created_u)
+            self.assertEqual(created_u.first_name, "New")
+            self.assertEqual(created_u.last_name, "Team Member")
+            self.assertTrue(created_u.is_active)
+            self.assertTrue(HeroVendorAssignment.objects.filter(user=created_u, vendor=self.vendor_raj, is_active=True).exists())
+
+    def test_02_ilync_changes_name_shows_new_name(self):
+        """2. User changes name in iLync -> current roster shows new name without duplicate users."""
+        from unittest.mock import patch
+        from rest_framework.test import force_authenticate
+
+        user_count_before = User.objects.count()
+        mock_payload = {
+            "id": self.vendor_raj.external_vendor_id,
+            "partnerName": "Raj Enterprises",
+            "users": [
+                {
+                    "userId": "USER_001",
+                    "empId": "EMP-001",
+                    "name": "Updated Full Name",
+                    "mobile": "9999999999",
+                    "designation": "OPERATOR",
+                    "active": True
+                }
+            ]
+        }
+
+        with patch('apps.integrations.ilync_client.IlyncClient.get_vendor_by_id', return_value={'success': True, 'data': mock_payload}):
+            request = self.factory.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_raj.external_vendor_id}')
+            force_authenticate(request, user=self.admin)
+            response = self.view_roster(request)
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            team_members = response.data['data']['team_members']
+            member_row = next(m for m in team_members if m.get('external_user_id') == "USER_001")
+            self.assertEqual(member_row['user_name'], "Updated Full Name")
+
+            # No duplicate user created
+            self.assertEqual(User.objects.count(), user_count_before)
+            self.user_001.refresh_from_db()
+            self.assertEqual(self.user_001.first_name, "Updated")
+            self.assertEqual(self.user_001.last_name, "Full Name")
+
+    def test_03_ilync_changes_phone_shows_new_phone(self):
+        """3. User changes phone in iLync -> current roster shows new phone without duplicate users."""
+        from unittest.mock import patch
+        from rest_framework.test import force_authenticate
+
+        user_count_before = User.objects.count()
+        mock_payload = {
+            "id": self.vendor_raj.external_vendor_id,
+            "partnerName": "Raj Enterprises",
+            "users": [
+                {
+                    "userId": "USER_001",
+                    "empId": "EMP-001",
+                    "name": "Old Name",
+                    "mobile": "8888777766",
+                    "designation": "OPERATOR",
+                    "active": True
+                }
+            ]
+        }
+
+        with patch('apps.integrations.ilync_client.IlyncClient.get_vendor_by_id', return_value={'success': True, 'data': mock_payload}):
+            request = self.factory.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_raj.external_vendor_id}')
+            force_authenticate(request, user=self.admin)
+            response = self.view_roster(request)
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            team_members = response.data['data']['team_members']
+            member_row = next(m for m in team_members if m.get('external_user_id') == "USER_001")
+            self.assertEqual(member_row['phone_number'], "8888777766")
+
+            self.assertEqual(User.objects.count(), user_count_before)
+            self.user_001.refresh_from_db()
+            self.assertEqual(self.user_001.phone_number, "8888777766")
+
+    def test_04_ilync_deactivates_user_disappears_from_roster(self):
+        """4. User deactivated (active=False) in iLync -> disappears from current Hero roster."""
+        from unittest.mock import patch
+        from rest_framework.test import force_authenticate
+
+        mock_payload = {
+            "id": self.vendor_raj.external_vendor_id,
+            "partnerName": "Raj Enterprises",
+            "users": [
+                {
+                    "userId": "USER_001",
+                    "empId": "EMP-001",
+                    "name": "Old Name",
+                    "mobile": "9999999999",
+                    "designation": "OPERATOR",
+                    "active": False
+                }
+            ]
+        }
+
+        with patch('apps.integrations.ilync_client.IlyncClient.get_vendor_by_id', return_value={'success': True, 'data': mock_payload}):
+            request = self.factory.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_raj.external_vendor_id}')
+            force_authenticate(request, user=self.admin)
+            response = self.view_roster(request)
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            team_members = response.data['data']['team_members']
+            uids = [m.get('external_user_id') for m in team_members]
+            self.assertNotIn("USER_001", uids)
+
+            # User must NOT be physically deleted
+            self.assertTrue(User.objects.filter(external_user_id="USER_001").exists())
+
+    def test_05_ilync_removes_user_disappears_from_roster(self):
+        """5. User removed from iLync vendor users[] -> disappears from current Hero roster, not deleted physically."""
+        from unittest.mock import patch
+        from rest_framework.test import force_authenticate
+        from apps.vendors.models import HeroVendorAssignment
+
+        mock_payload = {
+            "id": self.vendor_raj.external_vendor_id,
+            "partnerName": "Raj Enterprises",
+            "users": [
+                {
+                    "userId": "OTHER_USER_123",
+                    "empId": "EMP-OTHER",
+                    "name": "Other Active User",
+                    "mobile": "9123456780",
+                    "designation": "OPERATOR",
+                    "active": True
+                }
+            ]
+        }
+
+        with patch('apps.integrations.ilync_client.IlyncClient.get_vendor_by_id', return_value={'success': True, 'data': mock_payload}):
+            request = self.factory.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_raj.external_vendor_id}')
+            force_authenticate(request, user=self.admin)
+            response = self.view_roster(request)
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            team_members = response.data['data']['team_members']
+            uids = [m.get('external_user_id') for m in team_members]
+            self.assertNotIn("USER_001", uids)
+            self.assertIn("OTHER_USER_123", uids)
+
+            # User_001 is NOT deleted physically, but marked inactive
+            self.assertTrue(User.objects.filter(external_user_id="USER_001").exists())
+            self.user_001.refresh_from_db()
+            self.assertFalse(self.user_001.is_active)
+            self.assertFalse(HeroVendorAssignment.objects.filter(user=self.user_001, vendor=self.vendor_raj, is_active=True).exists())
+
+    def test_06_historical_attendance_remains_unchanged_after_user_update(self):
+        """6. Historical AttendanceRecord snapshots remain intact after user profile updates in iLync."""
+        from unittest.mock import patch
+        from rest_framework.test import force_authenticate
+        from datetime import timedelta
+
+        today = timezone.localdate()
+        yesterday = today - timedelta(days=1)
+
+        # Yesterday attendance created with snapshot "MS Rekha Ram"
+        hist_rec = AttendanceRecord.objects.create(
+            user=self.user_001,
+            vendor=self.vendor_raj,
+            date=yesterday,
+            status='PRESENT',
+            attendance_type='TEAM',
+            user_name_snapshot='MS Rekha Ram',
+            employee_id_snapshot='EMP-001',
+            external_user_id_snapshot='USER_001',
+            vendor_name_snapshot='Raj Enterprises',
+            vendor_external_id_snapshot=self.vendor_raj.external_vendor_id
+        )
+
+        # Today iLync updates user profile to "Pranjal 2"
+        mock_payload = {
+            "id": self.vendor_raj.external_vendor_id,
+            "partnerName": "Raj Enterprises",
+            "users": [
+                {
+                    "userId": "USER_001",
+                    "empId": "EMP-001",
+                    "name": "Pranjal 2",
+                    "mobile": "9999999999",
+                    "designation": "OPERATOR",
+                    "active": True
+                }
+            ]
+        }
+
+        with patch('apps.integrations.ilync_client.IlyncClient.get_vendor_by_id', return_value={'success': True, 'data': mock_payload}):
+            # Today roster
+            req_today = self.factory.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_raj.external_vendor_id}&date={today}')
+            force_authenticate(req_today, user=self.admin)
+            res_today = self.view_roster(req_today)
+            self.assertEqual(res_today.status_code, status.HTTP_200_OK)
+            m_today = next(m for m in res_today.data['data']['team_members'] if m.get('external_user_id') == "USER_001")
+            self.assertEqual(m_today['user_name'], "Pranjal 2")
+
+            # Yesterday roster
+            req_yesterday = self.factory.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_raj.external_vendor_id}&date={yesterday}')
+            force_authenticate(req_yesterday, user=self.admin)
+            res_yesterday = self.view_roster(req_yesterday)
+            self.assertEqual(res_yesterday.status_code, status.HTTP_200_OK)
+            m_yesterday = next(m for m in res_yesterday.data['data']['team_members'] if m.get('external_user_id') == "USER_001")
+            self.assertEqual(m_yesterday['user_name'], "MS Rekha Ram")
+
+            # Historical record completely untouched in DB
+            hist_rec.refresh_from_db()
+            self.assertEqual(hist_rec.user_name_snapshot, "MS Rekha Ram")
+            self.assertEqual(hist_rec.external_user_id_snapshot, "USER_001")
+
+    def test_07_ilync_timeout_does_not_delete_or_deactivate_users(self):
+        """7. iLync timeout -> existing users are NOT deleted or deactivated."""
+        from unittest.mock import patch
+        from rest_framework.test import force_authenticate
+        from django.core.cache import cache
+        import requests
+
+        # Set last known good cache
+        last_good_key = f"ilync_vendor_detail_last_good_{self.vendor_raj.external_vendor_id}"
+        cache.set(last_good_key, {
+            "id": self.vendor_raj.external_vendor_id,
+            "partnerName": "Raj Enterprises",
+            "users": [
+                {
+                    "userId": "USER_001",
+                    "empId": "EMP-001",
+                    "name": "Old Name",
+                    "mobile": "9999999999",
+                    "designation": "OPERATOR",
+                    "active": True
+                }
+            ]
+        }, timeout=86400)
+
+        with patch('apps.integrations.ilync_client.IlyncClient.get_vendor_by_id', side_effect=requests.exceptions.Timeout("Connection timed out")):
+            request = self.factory.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_raj.external_vendor_id}')
+            force_authenticate(request, user=self.admin)
+            response = self.view_roster(request)
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            team_members = response.data['data']['team_members']
+            uids = [m.get('external_user_id') for m in team_members]
+            self.assertIn("USER_001", uids)
+
+            # Ensure user is not deactivated
+            self.user_001.refresh_from_db()
+            self.assertTrue(self.user_001.is_active)
+
+    def test_08_ilync_500_does_not_delete_or_deactivate_users(self):
+        """8. iLync 500 error -> existing users are NOT deleted or deactivated."""
+        from unittest.mock import patch
+        from rest_framework.test import force_authenticate
+        from django.core.cache import cache
+
+        # Set last known good cache
+        last_good_key = f"ilync_vendor_detail_last_good_{self.vendor_raj.external_vendor_id}"
+        cache.set(last_good_key, {
+            "id": self.vendor_raj.external_vendor_id,
+            "partnerName": "Raj Enterprises",
+            "users": [
+                {
+                    "userId": "USER_001",
+                    "empId": "EMP-001",
+                    "name": "Old Name",
+                    "mobile": "9999999999",
+                    "designation": "OPERATOR",
+                    "active": True
+                }
+            ]
+        }, timeout=86400)
+
+        with patch('apps.integrations.ilync_client.IlyncClient.get_vendor_by_id', return_value={'success': False, 'message': '500 Internal Server Error'}):
+            request = self.factory.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_raj.external_vendor_id}')
+            force_authenticate(request, user=self.admin)
+            response = self.view_roster(request)
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            team_members = response.data['data']['team_members']
+            uids = [m.get('external_user_id') for m in team_members]
+            self.assertIn("USER_001", uids)
+
+            self.user_001.refresh_from_db()
+            self.assertTrue(self.user_001.is_active)
+
+    def test_09_multi_vendor_user_appears_in_respective_vendors(self):
+        """9. Multi-vendor user appears only in vendors whose live iLync users[] contain that user."""
+        from unittest.mock import patch
+        from rest_framework.test import force_authenticate
+
+        rakesh_uid = "6a95114cf475d920736bd827"
+        def mock_get_vendor(ext_id):
+            if ext_id == self.vendor_premium.external_vendor_id:
+                return {'success': True, 'data': {
+                    'id': ext_id,
+                    'partnerName': 'Premium infra solutions',
+                    'users': [{'userId': rakesh_uid, 'name': 'Rakesh Karwasra', 'mobile': '9116485564', 'active': True}]
+                }}
+            elif ext_id == self.vendor_vikas.external_vendor_id:
+                return {'success': True, 'data': {
+                    'id': ext_id,
+                    'partnerName': 'Vikas kumar',
+                    'users': [{'userId': rakesh_uid, 'name': 'Rakesh Karwasra', 'mobile': '9116485564', 'active': True}]
+                }}
+            elif ext_id == self.vendor_raj.external_vendor_id:
+                return {'success': True, 'data': {
+                    'id': ext_id,
+                    'partnerName': 'Raj Enterprises',
+                    'users': [{'userId': 'RAJ_ONLY_USER', 'name': 'Sanwar lal', 'mobile': '9928396031', 'active': True}]
+                }}
+            return {'success': False}
+
+        with patch('apps.integrations.ilync_client.IlyncClient.get_vendor_by_id', side_effect=mock_get_vendor):
+            # 1. Premium roster has Rakesh
+            req_prem = self.factory.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_premium.external_vendor_id}')
+            force_authenticate(req_prem, user=self.admin)
+            res_prem = self.view_roster(req_prem)
+            uids_prem = [m.get('external_user_id') for m in res_prem.data['data']['team_members']]
+            self.assertIn(rakesh_uid, uids_prem)
+
+            # 2. Vikas roster has Rakesh
+            req_vikas = self.factory.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_vikas.external_vendor_id}')
+            force_authenticate(req_vikas, user=self.admin)
+            res_vikas = self.view_roster(req_vikas)
+            uids_vikas = [m.get('external_user_id') for m in res_vikas.data['data']['team_members']]
+            self.assertIn(rakesh_uid, uids_vikas)
+
+            # 3. Raj roster does NOT have Rakesh
+            req_raj = self.factory.get(f'/api/v1/attendance/team-attendance/?vendor_id={self.vendor_raj.external_vendor_id}')
+            force_authenticate(req_raj, user=self.admin)
+            res_raj = self.view_roster(req_raj)
+            uids_raj = [m.get('external_user_id') for m in res_raj.data['data']['team_members']]
+            self.assertNotIn(rakesh_uid, uids_raj)
+
+    def test_10_new_ilync_user_can_perform_attendance(self):
+        """10. New iLync user can perform attendance after appearing in active users[]."""
+        from unittest.mock import patch
+        from rest_framework.test import force_authenticate
+
+        new_uid = "NEW_ILYNC_USER_777"
+        mock_payload = {
+            "id": self.vendor_raj.external_vendor_id,
+            "partnerName": "Raj Enterprises",
+            "users": [
+                {
+                    "userId": new_uid,
+                    "empId": "EMP-777",
+                    "name": "Pooja Sharma",
+                    "mobile": "9829999999",
+                    "designation": "OPERATOR",
+                    "active": True
+                }
+            ]
+        }
+
+        with patch('apps.integrations.ilync_client.IlyncClient.get_vendor_by_id', return_value={'success': True, 'data': mock_payload}):
+            # Vendor manager marks attendance for Pooja
+            request = self.factory.post('/api/v1/attendance/check-in/', {
+                'external_user_id': new_uid,
+                'vendor_id': self.vendor_raj.id,
+                'latitude': 28.5355,
+                'longitude': 77.3910
+            })
+            force_authenticate(request, user=self.raj_mgr)
+            response = self.view_check_in(request)
+
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+            self.assertTrue(response.data.get('success'))
+            data = response.data.get('data')
+            self.assertEqual(data['external_user_id_snapshot'], new_uid)
+            self.assertEqual(data['vendor_external_id_snapshot'], self.vendor_raj.external_vendor_id)
+
+    def test_11_removed_or_inactive_user_cannot_perform_attendance(self):
+        """11. Removed or inactive iLync user cannot perform attendance under that vendor."""
+        from unittest.mock import patch
+        from rest_framework.test import force_authenticate
+
+        inactive_uid = "INACTIVE_USER_404"
+        inactive_user = User.objects.create_user(
+            username="inactive_emp",
+            external_user_id=inactive_uid,
+            phone_number="9777777777",
+            vendor=self.vendor_raj,
+            role="OPERATOR",
+            is_active=True
+        )
+
+        mock_payload = {
+            "id": self.vendor_raj.external_vendor_id,
+            "partnerName": "Raj Enterprises",
+            "users": [
+                {
+                    "userId": inactive_uid,
+                    "empId": "EMP-INACTIVE",
+                    "name": "Inactive Worker",
+                    "mobile": "9777777777",
+                    "designation": "OPERATOR",
+                    "active": False  # Deactivated in iLync
+                }
+            ]
+        }
+
+        with patch('apps.integrations.ilync_client.IlyncClient.get_vendor_by_id', return_value={'success': True, 'data': mock_payload}):
+            request = self.factory.post('/api/v1/attendance/check-in/', {
+                'external_user_id': inactive_uid,
+                'vendor_id': self.vendor_raj.id
+            })
+            force_authenticate(request, user=self.raj_mgr)
+            response = self.view_check_in(request)
+
+            # Must be denied (HTTP 403 Forbidden)
+            self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+            err_msg = str(response.data.get('message') or response.data.get('detail') or response.data)
+            self.assertIn("not an active team member", err_msg)
+
+    def tearDown(self):
+        from django.core.cache import cache
+        cache.clear()

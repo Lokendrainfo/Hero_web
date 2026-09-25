@@ -104,6 +104,8 @@ def auto_store_unmarked_records(target_date=None):
         for u_info in raw_users:
             if not isinstance(u_info, dict):
                 continue
+            if u_info.get('active') is False:
+                continue
             ext_u_id = str(u_info.get('userId') or u_info.get('id') or '').strip()
             if ext_u_id.lower() in ('none', 'null', ''):
                 ext_u_id = None
