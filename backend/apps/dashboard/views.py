@@ -72,33 +72,23 @@ def _extract_chassis_from_payload(payload):
 
 
 def _fetch_ilync_vendor_payloads(vendors):
-    from apps.integrations.ilync_client import IlyncClient
+    from apps.attendance.views import get_live_ilync_vendors, get_vendor_ilync_detail
 
     vendors = list(vendors or [])
     if not vendors:
         return []
 
-    def _one(v_obj):
-        ext_v_id = getattr(v_obj, 'external_vendor_id', None) or getattr(v_obj, 'id', None)
-        payload = {}
-        if not ext_v_id:
-            return v_obj, payload
-        try:
-            live_res = IlyncClient(timeout=(2.5, 6.0)).get_vendor_by_id(ext_v_id)
-        except Exception:
-            live_res = None
-        payload = (
-            live_res.get('data')
-            if (isinstance(live_res, dict) and live_res.get('success'))
-            else (live_res if isinstance(live_res, dict) else {})
-        )
-        if not isinstance(payload, dict):
-            payload = {}
-        return v_obj, payload
+    try:
+        get_live_ilync_vendors(ttl=10)
+    except Exception:
+        pass
 
-    workers = min(8, max(1, len(vendors)))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(_one, vendors))
+    def _get_one(v_obj):
+        detail = get_vendor_ilync_detail(v_obj, ttl=15) or {}
+        return (v_obj, detail if isinstance(detail, dict) else {})
+
+    with ThreadPoolExecutor(max_workers=min(16, len(vendors))) as ex:
+        return list(ex.map(_get_one, vendors))
 
 
 def _ff_row_is_running(item):
@@ -281,6 +271,10 @@ class DashboardSummaryView(APIView):
                         pass
 
         from apps.vendors.models import Vendor
+        from apps.attendance.views import get_live_ilync_vendors
+        # Auto-sync live vendors from iLync so new vendors immediately exist in DB
+        get_live_ilync_vendors(ttl=10)
+
         vendor_ids = get_user_vendor_ids(user)
         v_qs = Vendor.objects.filter(is_active=True)
         if vendor_ids is not None:
@@ -552,6 +546,9 @@ class DashboardSummaryView(APIView):
                 raw_users = []
             for u_info in raw_users:
                 if not isinstance(u_info, dict):
+                    continue
+                # Respect active status from iLync
+                if u_info.get('active') is False:
                     continue
                 total_team_members += 1
                 ext_u_id = str(u_info.get('userId') or u_info.get('id') or '').strip()

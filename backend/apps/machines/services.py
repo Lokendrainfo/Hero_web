@@ -476,6 +476,15 @@ def _fetch_live_fiberforce_machines_impl(user, params=None):
         # Stable integer ID or chassis string for frontend routing
         stable_id = existing_id_map.get(chassis) or (idx + 1000)
 
+        speed_val = _safe_float(tele.get('speed_kmph') or tele.get('speed'), 0.0)
+        course_val = _safe_float(tele.get('course_deg') or tele.get('heading'), 0.0)
+        dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+        try:
+            h_idx = int(((float(course_val) % 360) + 22.5) // 45) % 8
+            h_label = dirs[h_idx]
+        except Exception:
+            h_label = '—'
+
         item_dict = {
             "id": stable_id,
             "machine_chassis_no": chassis,
@@ -500,6 +509,11 @@ def _fetch_live_fiberforce_machines_impl(user, params=None):
             "current_longitude": longitude,
             "latitude": latitude,
             "longitude": longitude,
+            "speed": speed_val,
+            "course_deg": course_val,
+            "heading": course_val,
+            "heading_label": h_label,
+            "tilt": course_val,
             "fuel_percentage": int(round(fuel_pct)),
             "current_fuel_level": fuel_litres,
             "fuel_capacity": fuel_cap,

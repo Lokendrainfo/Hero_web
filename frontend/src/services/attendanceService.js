@@ -5,11 +5,16 @@ const dedupeGet = createDedupeGet(5000);
 
 export const attendanceService = {
   getAll: (params) => api.get('/attendance/', { params }),
-  getTeamAttendance: (params = {}) => dedupeGet(
-    () => api.get('/attendance/team-attendance/', { params }),
-    '/attendance/team-attendance/',
-    params,
-  ),
+  getTeamAttendance: (params = {}) => {
+    if (params && (params.refresh || params.force || params._t)) {
+      return api.get('/attendance/team-attendance/', { params });
+    }
+    return dedupeGet(
+      () => api.get('/attendance/team-attendance/', { params }),
+      '/attendance/team-attendance/',
+      params,
+    );
+  },
   bulkMark: (data) => api.post('/attendance/bulk-mark/', data),
   saveRecord: (data) => api.post('/attendance/', data),
   updateRecord: (id, data) => api.patch(`/attendance/${id}/`, data),

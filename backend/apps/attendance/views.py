@@ -17,15 +17,50 @@ from .services import auto_checkout_overnight_records, auto_store_unmarked_recor
 from apps.common.reporting_scope import get_reporting_scope
 
 import base64
+from django.db import transaction
 from django.core.files.base import ContentFile
 from django.core.cache import cache
 from apps.integrations.ilync_client import IlyncClient
 
-def get_vendor_ilync_detail(vendor_obj_or_ext_id, use_cache=True, ttl=45, force_refresh=False, return_status=False):
+def get_live_ilync_vendors(use_cache=True, ttl=10, force_refresh=False):
+    """
+    Fetches the comprehensive list of all active vendors, machines, and users
+    from iLync GET /api/vendor/list in a single fast call.
+    Returns tuple: (vendors_list, is_fallback)
+    """
+    cache_key = "ilync_live_vendor_list"
+    last_good_key = "ilync_live_vendor_list_last_good"
+
+    if use_cache and not force_refresh:
+        cached = cache.get(cache_key)
+        if cached is not None and isinstance(cached, list):
+            return (cached, False)
+
+    client = IlyncClient()
+    try:
+        res = client.get("api/vendor/list")
+        if res and isinstance(res, dict) and res.get('success'):
+            data = res.get('data')
+            if isinstance(data, list) and data:
+                cache.set(cache_key, data, timeout=ttl)
+                cache.set(last_good_key, data, timeout=86400)
+                return (data, False)
+    except Exception as err:
+        print(f"[AttendanceRosterSync] Failed to fetch live vendor list from iLync: {err}")
+
+    # Fallback to last known good vendor list across transient errors
+    last_good = cache.get(last_good_key)
+    if last_good is not None and isinstance(last_good, list):
+        return (last_good, True)
+
+    return ([], True)
+
+
+def get_vendor_ilync_detail(vendor_obj_or_ext_id, use_cache=True, ttl=10, force_refresh=False, return_status=False):
     """
     Fetches vendor detail from iLync GET /api/vendor/{external_vendor_id}.
     Returns data dictionary (or None if unavailable/error).
-    - Caches with short TTL (default 45s) to ensure data is always fresh.
+    - Caches with short TTL (default 10s) to ensure data is always fresh.
     - Preserves last known good cache across outages to prevent catastrophic user deletion during temporary API failures.
     - If return_status is True, returns tuple: (v_data, is_fallback).
     """
@@ -1784,6 +1819,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         search_filter = request.query_params.get('search')
         status_filter = request.query_params.get('status')
         req_v = request.query_params.get('vendor_id') or request.query_params.get('vendor')
+        force_refresh = request.query_params.get('refresh') in ('true', '1', True) or request.query_params.get('force') in ('true', '1', True)
 
         allowed_vendor_ids = get_user_vendor_ids(user)
         from apps.vendors.models import Vendor
@@ -1809,6 +1845,80 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         target_vendors = list(v_qs)
         target_vendor_ids = [v.id for v in target_vendors]
+
+        # When today's roster is requested across all vendors, automatically fetch live vendor & user roster from iLync
+        ilync_payload_by_ext_id = {}
+        if is_today and (not req_v or str(req_v).strip().lower() == 'all'):
+            ilync_vendors_raw, is_list_fallback = get_live_ilync_vendors(
+                use_cache=(not force_refresh),
+                ttl=10,
+                force_refresh=force_refresh
+            )
+            if isinstance(ilync_vendors_raw, list):
+                for v_item in ilync_vendors_raw:
+                    if not isinstance(v_item, dict):
+                        continue
+                    ext_id = str(v_item.get('id') or '').strip()
+                    if ext_id:
+                        ilync_payload_by_ext_id[ext_id] = v_item
+
+                    p_name = str(v_item.get('partnerName') or v_item.get('name') or '').strip()
+                    p_contact = str(v_item.get('contactName') or '').strip()
+                    p_phone = str(v_item.get('phoneNumber') or '').strip()
+                    p_email = str(v_item.get('email') or '').strip()
+                    p_type = str(v_item.get('legalEntityType') or 'COMPANY').strip()
+
+                    if ext_id and p_name:
+                        v_db = Vendor.objects.filter(external_vendor_id=ext_id).first()
+                        if not v_db:
+                            v_db = Vendor.objects.filter(name__iexact=p_name, external_vendor_id__in=['', None]).first()
+                        if not v_db:
+                            try:
+                                name_val = p_name
+                                if Vendor.objects.filter(name__iexact=name_val).exists():
+                                    name_val = f"{p_name} ({ext_id[-4:]})"
+                                with transaction.atomic():
+                                    v_db = Vendor.objects.create(
+                                        external_vendor_id=ext_id,
+                                        name=name_val,
+                                        contact_person=p_contact,
+                                        phone=p_phone,
+                                        email=p_email,
+                                        vendor_type=p_type,
+                                        is_active=True
+                                    )
+                                if v_db and (allowed_vendor_ids is None or v_db.id in allowed_vendor_ids):
+                                    if v_db not in target_vendors:
+                                        target_vendors.append(v_db)
+                                        target_vendor_ids.append(v_db.id)
+                            except Exception:
+                                pass
+                        else:
+                            up_fields = []
+                            if v_db.external_vendor_id != ext_id:
+                                v_db.external_vendor_id = ext_id
+                                up_fields.append('external_vendor_id')
+                            if p_name and v_db.name != p_name and not Vendor.objects.filter(name__iexact=p_name).exclude(id=v_db.id).exists():
+                                v_db.name = p_name
+                                up_fields.append('name')
+                            if p_contact and v_db.contact_person != p_contact:
+                                v_db.contact_person = p_contact
+                                up_fields.append('contact_person')
+                            if p_phone and v_db.phone != p_phone:
+                                v_db.phone = p_phone
+                                up_fields.append('phone')
+                            if p_email and v_db.email != p_email:
+                                v_db.email = p_email
+                                up_fields.append('email')
+                            if not v_db.is_active:
+                                v_db.is_active = True
+                                up_fields.append('is_active')
+                            if up_fields:
+                                try:
+                                    with transaction.atomic():
+                                        v_db.save(update_fields=up_fields)
+                                except Exception:
+                                    pass
 
         result_list = []
         assigned_machines_list = []
@@ -2013,23 +2123,19 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         # ------------------------------------------------------------------
         seen_record_ids = set()
 
-        # Controlled parallelism when multiple vendors are requested to avoid sequential blocking HTTP calls
-        vendor_payload_map = {}
-        if len(target_vendors) > 1:
-            from concurrent.futures import ThreadPoolExecutor
-            def fetch_v(v):
-                res, is_fb = get_vendor_ilync_detail(v, use_cache=True, ttl=45, return_status=True)
-                return v.id, res, is_fb
-
-            with ThreadPoolExecutor(max_workers=min(8, len(target_vendors))) as executor:
-                for vid, pl, is_fb in executor.map(fetch_v, target_vendors):
-                    vendor_payload_map[vid] = (pl, is_fb)
-
         for v_obj in target_vendors:
-            if v_obj.id in vendor_payload_map:
-                v_payload, is_fallback = vendor_payload_map[v_obj.id]
+            v_ext = getattr(v_obj, 'external_vendor_id', None)
+            if v_ext and v_ext in ilync_payload_by_ext_id:
+                v_payload = ilync_payload_by_ext_id[v_ext]
+                is_fallback = False
             else:
-                v_payload, is_fallback = get_vendor_ilync_detail(v_obj, use_cache=True, ttl=45, return_status=True)
+                v_payload, is_fallback = get_vendor_ilync_detail(
+                    v_obj,
+                    use_cache=(not force_refresh),
+                    ttl=10,
+                    force_refresh=force_refresh,
+                    return_status=True
+                )
 
             if not v_payload or not isinstance(v_payload, dict):
                 v_payload = {}
@@ -2037,11 +2143,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
             live_vname = str(v_payload.get('partnerName') or v_payload.get('name') or '').strip()
             if live_vname and v_obj.name != live_vname:
-                v_obj.name = live_vname
-                try:
-                    v_obj.save(update_fields=['name'])
-                except Exception:
-                    pass
+                if not Vendor.objects.filter(name__iexact=live_vname).exclude(id=v_obj.id).exists():
+                    try:
+                        with transaction.atomic():
+                            v_obj.name = live_vname
+                            v_obj.save(update_fields=['name'])
+                    except Exception:
+                        pass
             current_vname = live_vname or v_obj.name
 
             v_circle = extract_geo(v_payload, ['circles', 'circle', 'circleName', 'state'])
