@@ -56,7 +56,7 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendanceRecord
         fields = [
-            'id', 'user', 'user_id', 'user_name', 'employee_id', 'phone_number', 'role',
+            'id', 'date', 'user', 'user_id', 'user_name', 'employee_id', 'phone_number', 'role',
             'external_user_id', 'external_user_id_snapshot', 'employee_id_snapshot', 'user_name_snapshot',
             'phone_number_snapshot', 'role_snapshot', 'vendor_external_id', 'vendor_external_id_snapshot', 'vendor_name_snapshot',
             'reporting_manager_id', 'reporting_manager_name',

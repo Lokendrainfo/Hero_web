@@ -46,3 +46,26 @@ export const getFormattedDateTime = (date = new Date()) => {
   });
   return `${dateStr}, ${timeStr}`;
 };
+
+export const formatISTTime = (isoString) => {
+  if (!isoString) return '—';
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return String(isoString);
+  return d.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+};
+
+export const formatDisplayDate = (dateVal) => {
+  if (!dateVal) return '—';
+  const d = typeof dateVal === 'string' && dateVal.length === 10 ? new Date(`${dateVal}T00:00:00`) : new Date(dateVal);
+  if (isNaN(d.getTime())) return String(dateVal);
+  return d.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
+};
+

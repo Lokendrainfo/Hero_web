@@ -1644,8 +1644,10 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         subordinate_ids = get_reporting_scope(user)
         subordinate_ids = [uid for uid in subordinate_ids if uid != user.id]
 
+        base_pending_filter = Q(approval_status='PENDING') & ~Q(status__in=['NOT_MARKED', 'NOT_CHECKED_IN']) & Q(check_in__isnull=False)
+
         if is_admin:
-            qs = AttendanceRecord.objects.filter(approval_status='PENDING').exclude(user=user)
+            qs = AttendanceRecord.objects.filter(base_pending_filter).exclude(user=user)
         else:
             mgr_filter = Q(reporting_manager=user) | Q(user__reporting_manager=user) | Q(marked_by=user)
             if subordinate_ids:
@@ -1656,15 +1658,18 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 mgr_filter |= Q(vendor_id__in=allowed_vendor_ids) | Q(user__vendor_id__in=allowed_vendor_ids)
 
             qs = AttendanceRecord.objects.filter(
-                Q(approval_status='PENDING') & mgr_filter
+                base_pending_filter & mgr_filter
             ).exclude(user=user)
 
         req_vendor = request.query_params.get('vendor_id') or request.query_params.get('vendor')
         if req_vendor and str(req_vendor).strip() and str(req_vendor).lower() != 'all':
+            clean_v = str(req_vendor).strip()
             qs = qs.filter(
-                Q(vendor__external_vendor_id=req_vendor) |
-                Q(vendor__name__icontains=req_vendor) |
-                Q(vendor_id=req_vendor if str(req_vendor).isdigit() else None)
+                Q(vendor__external_vendor_id=clean_v) |
+                Q(vendor__name__iexact=clean_v) |
+                Q(vendor__name__iexact=str(req_vendor)) |
+                Q(vendor__name__icontains=clean_v) |
+                Q(vendor_id=clean_v if clean_v.isdigit() else None)
             )
 
         qs = qs.select_related('user', 'vendor', 'reporting_manager', 'marked_by', 'approved_by').distinct().order_by('-created_at', '-id')
@@ -1773,10 +1778,15 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if allowed_vendor_ids is not None:
             v_qs = v_qs.filter(id__in=allowed_vendor_ids)
         if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+            clean_v = str(req_v).strip()
             if allowed_vendor_ids is None:
-                check_vendor_access(user, req_v)
+                check_vendor_access(user, clean_v)
             v_qs = v_qs.filter(
-                Q(external_vendor_id=req_v) | Q(name__iexact=req_v) | Q(id=req_v if str(req_v).isdigit() else None)
+                Q(external_vendor_id=clean_v) |
+                Q(name__iexact=clean_v) |
+                Q(name__iexact=str(req_v)) |
+                Q(name__icontains=clean_v) |
+                Q(id=clean_v if clean_v.isdigit() else None)
             )
 
         target_vendors = list(v_qs)
@@ -2730,10 +2740,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             if date_to:
                 qs = qs.filter(date__lte=date_to)
             if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+                clean_v = str(req_v).strip()
                 qs = qs.filter(
-                    Q(vendor__external_vendor_id=req_v) |
-                    Q(vendor__name__iexact=req_v) |
-                    Q(vendor_id=req_v if str(req_v).isdigit() else None)
+                    Q(vendor__external_vendor_id=clean_v) |
+                    Q(vendor__name__iexact=clean_v) |
+                    Q(vendor__name__iexact=str(req_v)) |
+                    Q(vendor__name__icontains=clean_v) |
+                    Q(vendor_id=clean_v if clean_v.isdigit() else None)
                 )
             if status_filter and status_filter.upper() != 'ALL':
                 qs = qs.filter(status__iexact=status_filter)

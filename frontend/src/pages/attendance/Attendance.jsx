@@ -10,14 +10,14 @@ import {
   LucideFilter, LucideSave, LucideCheckCircle, LucideXCircle,
   LucideAlertCircle, LucideUser, LucideRefreshCw,
   LucideBuilding2, LucideCheck, LucideList, LucideHistory, LucideCheckSquare,
-  LucideMapPin, LucideCamera, LucideTruck, LucideShieldCheck, LucideEye, LucideX,
+  LucideMapPin, LucideCamera, LucideCameraOff, LucideTruck, LucideShieldCheck, LucideEye, LucideX,
   LucideChevronDown, LucideChevronUp, LucidePower, LucideDownload, LucideExternalLink,
   LucideWrench, LucideAlertTriangle
 } from 'lucide-react';
 import '../../styles/components.css';
 import { SearchableSelect } from '../../components/common/Select';
 import { DateField } from '../../components/common/DateField';
-import { getTodayDateString, getLocalDateString } from '../../utils/dateUtils';
+import { getTodayDateString, getLocalDateString, formatISTTime, formatDisplayDate } from '../../utils/dateUtils';
 
 export const Attendance = () => {
   const navigate = useNavigate();
@@ -140,7 +140,15 @@ export const Attendance = () => {
     open: false,
     url: null,
     type: 'CHECK_IN',
-    title: 'Mobile Check-In Photo Telemetry'
+    title: 'Mobile Check-In Photo Telemetry',
+    userName: '',
+    employeeId: '',
+    vendorName: '',
+    date: '',
+    time: '',
+    lat: null,
+    lng: null,
+    accuracy: null
   });
   const [photoLoadError, setPhotoLoadError] = useState(false);
   const [photoLoading, setPhotoLoading] = useState(true);
@@ -177,14 +185,22 @@ export const Attendance = () => {
     return `${backendHost}${formattedPath}`;
   };
 
-  const openPhotoModal = (url, type = 'CHECK_IN') => {
+  const openPhotoModal = (url, type = 'CHECK_IN', telemetry = {}) => {
     setPhotoLoadError(false);
     setPhotoLoading(true);
     setPhotoModal({
       open: true,
       url: normalizeHeroPhotoUrl(url),
       type: type,
-      title: type === 'CHECK_OUT' ? 'Mobile Check-Out Photo Telemetry' : 'Mobile Check-In Photo Telemetry'
+      title: type === 'CHECK_OUT' ? 'Mobile Check-Out Photo Telemetry' : 'Mobile Check-In Photo Telemetry',
+      userName: telemetry.userName || '',
+      employeeId: telemetry.employeeId || '',
+      vendorName: telemetry.vendorName || '',
+      date: telemetry.date || '',
+      time: telemetry.time || '',
+      lat: telemetry.lat || null,
+      lng: telemetry.lng || null,
+      accuracy: telemetry.accuracy || null
     });
   };
 
@@ -1921,116 +1937,277 @@ export const Attendance = () => {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th style={{ paddingLeft: '20px' }}>Employee Name & ID</th>
-                  <th>Manager</th>
-                  <th>Attendance Type</th>
-                  <th>Check In Time</th>
+                  <th style={{ paddingLeft: '20px' }}>Employee & Vendor</th>
+                  <th>Attendance Date</th>
+                  <th>Check-In / Out (IST)</th>
                   <th>Working Hours</th>
-                  <th>Geo Telemetry & Photo</th>
+                  <th>Selfie Photo & GPS Telemetry</th>
+                  <th>Manager</th>
                   <th>Approval Action</th>
                 </tr>
               </thead>
               <tbody>
-                {pendingRecords.map(r => (
-                  <tr key={r.id}>
-                    <td style={{ paddingLeft: '20px' }}>
-                      <div style={{ fontWeight: '700', color: '#0f172a' }}>{r.user_name || `User #${r.user}`}</div>
-                      <div style={{ fontFamily: 'monospace', fontSize: '0.72rem', color: '#2563eb', fontWeight: '700' }}>
-                        {r.employee_id || `EMP-${r.user}`}
-                      </div>
-                    </td>
-                    <td>
-                      <span style={{ fontSize: '0.8rem', color: '#475569', fontWeight: '600' }}>
-                        {r.reporting_manager_name || 'System Manager'}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`badge-pill ${r.attendance_type === 'MACHINE' ? 'badge-amber' : 'badge-blue'}`} style={{ fontSize: '0.7rem' }}>
-                        {r.attendance_type || 'TEAM'}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ fontSize: '0.8rem', fontWeight: '600', color: '#0f172a' }}>
-                        {r.check_in ? new Date(r.check_in).toLocaleString() : '—'}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ fontSize: '0.8rem', fontWeight: '700', color: '#047857' }}>
-                        {r.total_working_hours || 'In Progress'}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        {r.check_in_latitude ? (
-                          <span style={{ fontSize: '0.72rem', color: '#047857', fontWeight: '600' }}>
-                            📍 {Number(r.check_in_latitude).toFixed(4)}, {Number(r.check_in_longitude).toFixed(4)}
-                          </span>
-                        ) : <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>No GPS</span>}
+                {pendingRecords.map(r => {
+                  const checkInTele = {
+                    userName: r.user_name || `User #${r.user}`,
+                    employeeId: r.employee_id || `EMP-${r.user}`,
+                    vendorName: r.vendor_name || 'Vendor',
+                    date: formatDisplayDate(r.date || r.created_at),
+                    time: formatISTTime(r.check_in),
+                    lat: r.check_in_latitude,
+                    lng: r.check_in_longitude,
+                    accuracy: r.check_in_accuracy
+                  };
 
-                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
-                          <button
-                            type="button"
-                            onClick={() => openPhotoModal(r.check_in_photo, 'CHECK_IN')}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              padding: '3px 8px',
-                              background: r.check_in_photo ? '#f0fdf4' : '#f8fafc',
-                              color: r.check_in_photo ? '#166534' : '#64748b',
-                              border: `1px solid ${r.check_in_photo ? '#bbf7d0' : '#cbd5e1'}`,
-                              borderRadius: '6px',
-                              fontSize: '0.7rem',
-                              fontWeight: '700',
-                              cursor: 'pointer',
-                              width: 'fit-content'
-                            }}
-                          >
-                            <LucideCamera size={12} /> Check-In Photo
-                          </button>
-                          {r.check_out_photo && (
-                            <button
-                              type="button"
-                              onClick={() => openPhotoModal(r.check_out_photo, 'CHECK_OUT')}
-                              style={{
+                  const checkOutTele = {
+                    userName: r.user_name || `User #${r.user}`,
+                    employeeId: r.employee_id || `EMP-${r.user}`,
+                    vendorName: r.vendor_name || 'Vendor',
+                    date: formatDisplayDate(r.date || r.created_at),
+                    time: formatISTTime(r.check_out),
+                    lat: r.check_out_latitude || r.check_in_latitude,
+                    lng: r.check_out_longitude || r.check_in_longitude,
+                    accuracy: r.check_out_accuracy
+                  };
+
+                  return (
+                    <tr key={r.id}>
+                      <td style={{ paddingLeft: '20px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.88rem' }}>
+                            {r.user_name || `User #${r.user}`}
+                          </span>
+                          <span className={`badge-pill ${r.attendance_type === 'MACHINE' ? 'badge-amber' : 'badge-blue'}`} style={{ fontSize: '0.68rem', padding: '1px 6px' }}>
+                            {r.attendance_type || 'TEAM'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '3px' }}>
+                          <span style={{ fontFamily: 'monospace', fontSize: '0.74rem', color: '#2563eb', fontWeight: '700' }}>
+                            {r.employee_id || `EMP-${r.user}`}
+                          </span>
+                          {r.vendor_name && (
+                            <span style={{ fontSize: '0.72rem', color: '#64748b', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                              <LucideBuilding2 size={11} /> {r.vendor_name}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontWeight: '700', color: '#1e293b', fontSize: '0.82rem' }}>
+                          <LucideCalendarCheck size={14} color="#0284c7" />
+                          {formatDisplayDate(r.date || r.created_at)}
+                        </div>
+                        <div style={{ fontSize: '0.7rem', color: '#64748b', marginLeft: '19px', marginTop: '2px' }}>
+                          Shift: {r.shift || 'DAY'}
+                        </div>
+                      </td>
+
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', fontWeight: '600', color: '#047857' }}>
+                            <span style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: '#10b981' }}></span>
+                            <span style={{ color: '#64748b', fontSize: '0.7rem', fontWeight: '700', minWidth: '26px' }}>IN:</span>
+                            <span>{r.check_in ? formatISTTime(r.check_in) : '—'}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', fontWeight: '600', color: r.check_out ? '#b91c1c' : '#d97706' }}>
+                            <span style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: r.check_out ? '#ef4444' : '#f59e0b' }}></span>
+                            <span style={{ color: '#64748b', fontSize: '0.7rem', fontWeight: '700', minWidth: '26px' }}>OUT:</span>
+                            <span>{r.check_out ? formatISTTime(r.check_out) : '⏳ In Progress'}</span>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td>
+                        <span style={{
+                          display: 'inline-block',
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          background: r.total_working_hours ? '#ecfdf5' : '#fffbeb',
+                          border: `1px solid ${r.total_working_hours ? '#a7f3d0' : '#fde68a'}`,
+                          fontSize: '0.78rem',
+                          fontWeight: '700',
+                          color: r.total_working_hours ? '#065f46' : '#92400e'
+                        }}>
+                          {r.total_working_hours || 'In Progress'}
+                        </span>
+                      </td>
+
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {r.check_in_photo && (
+                              <div
+                                onClick={() => openPhotoModal(r.check_in_photo, 'CHECK_IN', checkInTele)}
+                                title="Click to view Check-In Selfie photo"
+                                style={{
+                                  position: 'relative',
+                                  cursor: 'pointer',
+                                  width: '44px',
+                                  height: '44px',
+                                  borderRadius: '8px',
+                                  overflow: 'hidden',
+                                  border: '2px solid #10b981',
+                                  boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+                                  flexShrink: 0
+                                }}
+                              >
+                                <img
+                                  src={normalizeHeroPhotoUrl(r.check_in_photo)}
+                                  alt="Check-In"
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                  onError={(e) => {
+                                    e.target.style.display = 'none';
+                                    if (e.target.parentElement) {
+                                      e.target.parentElement.style.background = '#dcfce7';
+                                      e.target.parentElement.style.display = 'flex';
+                                      e.target.parentElement.style.alignItems = 'center';
+                                      e.target.parentElement.style.justifyContent = 'center';
+                                      e.target.parentElement.innerHTML = '<span style="font-size:10px;font-weight:800;color:#166534">IN</span>';
+                                    }
+                                  }}
+                                />
+                                <span style={{
+                                  position: 'absolute',
+                                  bottom: 0,
+                                  left: 0,
+                                  right: 0,
+                                  background: 'rgba(16, 185, 129, 0.9)',
+                                  color: '#ffffff',
+                                  fontSize: '8px',
+                                  fontWeight: '800',
+                                  textAlign: 'center',
+                                  lineHeight: '12px'
+                                }}>
+                                  IN
+                                </span>
+                              </div>
+                            )}
+
+                            {r.check_out_photo && (
+                              <div
+                                onClick={() => openPhotoModal(r.check_out_photo, 'CHECK_OUT', checkOutTele)}
+                                title="Click to view Check-Out Selfie photo"
+                                style={{
+                                  position: 'relative',
+                                  cursor: 'pointer',
+                                  width: '44px',
+                                  height: '44px',
+                                  borderRadius: '8px',
+                                  overflow: 'hidden',
+                                  border: '2px solid #3b82f6',
+                                  boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+                                  flexShrink: 0
+                                }}
+                              >
+                                <img
+                                  src={normalizeHeroPhotoUrl(r.check_out_photo)}
+                                  alt="Check-Out"
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                  onError={(e) => {
+                                    e.target.style.display = 'none';
+                                    if (e.target.parentElement) {
+                                      e.target.parentElement.style.background = '#dbeafe';
+                                      e.target.parentElement.style.display = 'flex';
+                                      e.target.parentElement.style.alignItems = 'center';
+                                      e.target.parentElement.style.justifyContent = 'center';
+                                      e.target.parentElement.innerHTML = '<span style="font-size:10px;font-weight:800;color:#1e40af">OUT</span>';
+                                    }
+                                  }}
+                                />
+                                <span style={{
+                                  position: 'absolute',
+                                  bottom: 0,
+                                  left: 0,
+                                  right: 0,
+                                  background: 'rgba(59, 130, 246, 0.9)',
+                                  color: '#ffffff',
+                                  fontSize: '8px',
+                                  fontWeight: '800',
+                                  textAlign: 'center',
+                                  lineHeight: '12px'
+                                }}>
+                                  OUT
+                                </span>
+                              </div>
+                            )}
+
+                            {!r.check_in_photo && !r.check_out_photo && (
+                              <span style={{
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 gap: '4px',
                                 padding: '3px 8px',
-                                background: '#eff6ff',
-                                color: '#1d4ed8',
-                                border: '1px solid #bfdbfe',
+                                background: '#f8fafc',
+                                color: '#94a3b8',
+                                border: '1px solid #e2e8f0',
                                 borderRadius: '6px',
-                                fontSize: '0.7rem',
-                                fontWeight: '700',
-                                cursor: 'pointer',
-                                width: 'fit-content'
-                              }}
-                            >
-                              <LucideCamera size={12} /> Check-Out Photo
-                            </button>
-                          )}
+                                fontSize: '0.72rem',
+                                fontWeight: '600'
+                              }}>
+                                <LucideCameraOff size={12} /> No Photo
+                              </span>
+                            )}
+                          </div>
+
+                          <div>
+                            {r.check_in_latitude ? (
+                              <a
+                                href={`https://www.google.com/maps/search/?api=1&query=${r.check_in_latitude},${r.check_in_longitude}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                title="Open GPS in Google Maps"
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  fontSize: '0.72rem',
+                                  color: '#047857',
+                                  fontWeight: '600',
+                                  textDecoration: 'none',
+                                  background: '#ecfdf5',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  border: '1px solid #a7f3d0'
+                                }}
+                              >
+                                <LucideMapPin size={11} /> {Number(r.check_in_latitude).toFixed(4)}, {Number(r.check_in_longitude).toFixed(4)}
+                                <LucideExternalLink size={9} style={{ opacity: 0.7 }} />
+                              </a>
+                            ) : (
+                              <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                <LucideMapPin size={11} /> No GPS
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '6px' }}>
-                        <button
-                          onClick={() => handleApproveRecord(r.id, r.user)}
-                          style={{ padding: '6px 14px', background: '#059669', color: '#ffffff', border: 'none', borderRadius: '6px', fontSize: '0.78rem', fontWeight: '700', cursor: 'pointer' }}
-                        >
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => setRejectionModal({ open: true, recordId: r.id, reason: '' })}
-                          style={{ padding: '6px 14px', background: '#dc2626', color: '#ffffff', border: 'none', borderRadius: '6px', fontSize: '0.78rem', fontWeight: '700', cursor: 'pointer' }}
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+
+                      <td>
+                        <span style={{ fontSize: '0.8rem', color: '#475569', fontWeight: '600' }}>
+                          {r.reporting_manager_name || 'System Manager'}
+                        </span>
+                      </td>
+
+                      <td>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button
+                            onClick={() => handleApproveRecord(r.id, r.user)}
+                            style={{ padding: '6px 14px', background: '#059669', color: '#ffffff', border: 'none', borderRadius: '6px', fontSize: '0.78rem', fontWeight: '700', cursor: 'pointer' }}
+                          >
+                            Approve
+                          </button>
+                          <button
+                            onClick={() => setRejectionModal({ open: true, recordId: r.id, reason: '' })}
+                            style={{ padding: '6px 14px', background: '#dc2626', color: '#ffffff', border: 'none', borderRadius: '6px', fontSize: '0.78rem', fontWeight: '700', cursor: 'pointer' }}
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
 
                 {pendingRecords.length === 0 && (
                   <tr>
@@ -2052,15 +2229,88 @@ export const Attendance = () => {
           background: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(4px)',
           zIndex: 99999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
         }}>
-          <div style={{ background: '#ffffff', borderRadius: '16px', maxWidth: '560px', width: '100%', overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)' }}>
+          <div style={{ background: '#ffffff', borderRadius: '16px', maxWidth: '580px', width: '100%', overflow: 'hidden', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)' }}>
             <div style={{ padding: '14px 20px', background: '#f8fafc', color: '#0f172a', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0' }}>
               <div style={{ fontWeight: '700', fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <LucideCamera size={18} color="#059669" /> {photoModal.title}
               </div>
-              <button onClick={() => setPhotoModal({ open: false, url: null, type: 'CHECK_IN', title: '' })} style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}>
+              <button
+                onClick={() => setPhotoModal({ open: false, url: null, type: 'CHECK_IN', title: '', userName: '', employeeId: '', vendorName: '', date: '', time: '', lat: null, lng: null, accuracy: null })}
+                style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer' }}
+              >
                 <LucideX size={20} />
               </button>
             </div>
+
+            {/* Telemetry metadata sub-banner */}
+            {(photoModal.userName || photoModal.date || photoModal.time || photoModal.lat) && (
+              <div style={{
+                padding: '10px 20px',
+                background: '#f1f5f9',
+                borderBottom: '1px solid #e2e8f0',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '12px 20px',
+                fontSize: '0.78rem',
+                alignItems: 'center'
+              }}>
+                <div>
+                  <span style={{ color: '#64748b', fontSize: '0.7rem', display: 'block', fontWeight: '600' }}>EMPLOYEE</span>
+                  <span style={{ fontWeight: '700', color: '#0f172a' }}>{photoModal.userName || 'Employee'}</span>
+                  {photoModal.employeeId && (
+                    <span style={{ marginLeft: '4px', fontFamily: 'monospace', fontSize: '0.72rem', color: '#2563eb', fontWeight: '700' }}>
+                      ({photoModal.employeeId})
+                    </span>
+                  )}
+                </div>
+
+                {photoModal.vendorName && (
+                  <div>
+                    <span style={{ color: '#64748b', fontSize: '0.7rem', display: 'block', fontWeight: '600' }}>VENDOR</span>
+                    <span style={{ fontWeight: '600', color: '#334155' }}>{photoModal.vendorName}</span>
+                  </div>
+                )}
+
+                {photoModal.date && (
+                  <div>
+                    <span style={{ color: '#64748b', fontSize: '0.7rem', display: 'block', fontWeight: '600' }}>DATE</span>
+                    <span style={{ fontWeight: '600', color: '#334155' }}>📅 {photoModal.date}</span>
+                  </div>
+                )}
+
+                {photoModal.time && (
+                  <div>
+                    <span style={{ color: '#64748b', fontSize: '0.7rem', display: 'block', fontWeight: '600' }}>TIME (IST)</span>
+                    <span style={{ fontWeight: '700', color: photoModal.type === 'CHECK_OUT' ? '#b91c1c' : '#047857' }}>
+                      🕒 {photoModal.time}
+                    </span>
+                  </div>
+                )}
+
+                {photoModal.lat && photoModal.lng && (
+                  <div>
+                    <span style={{ color: '#64748b', fontSize: '0.7rem', display: 'block', fontWeight: '600' }}>GPS</span>
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${photoModal.lat},${photoModal.lng}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '3px',
+                        color: '#0284c7',
+                        fontWeight: '700',
+                        textDecoration: 'none',
+                        fontSize: '0.75rem'
+                      }}
+                    >
+                      📍 {Number(photoModal.lat).toFixed(4)}, {Number(photoModal.lng).toFixed(4)}
+                      <LucideExternalLink size={10} />
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div style={{ padding: '24px 20px', textAlign: 'center', background: '#0f172a', minHeight: '260px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
               {!photoModal.url ? (
@@ -2137,10 +2387,19 @@ export const Attendance = () => {
 
             <div style={{ padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', borderTop: '1px solid #e2e8f0' }}>
               <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                {photoModal.url ? 'Selfie Verification Photo' : 'No Media Attached'}
+                {photoModal.url ? (
+                  <a
+                    href={photoModal.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#2563eb', fontWeight: '600', textDecoration: 'none' }}
+                  >
+                    <LucideExternalLink size={13} /> View Full Resolution
+                  </a>
+                ) : 'No Media Attached'}
               </div>
               <button
-                onClick={() => setPhotoModal({ open: false, url: null, type: 'CHECK_IN', title: '' })}
+                onClick={() => setPhotoModal({ open: false, url: null, type: 'CHECK_IN', title: '', userName: '', employeeId: '', vendorName: '', date: '', time: '', lat: null, lng: null, accuracy: null })}
                 style={{ padding: '8px 18px', background: '#334155', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: '700', fontSize: '0.8rem', cursor: 'pointer' }}
               >
                 Close

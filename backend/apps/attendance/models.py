@@ -20,6 +20,7 @@ APPROVAL_STATUS_CHOICES = (
     ('PENDING', 'Pending'),
     ('APPROVED', 'Approved'),
     ('REJECTED', 'Rejected'),
+    ('NOT_APPLICABLE', 'Not Applicable'),
 )
 
 ATTENDANCE_TYPE_CHOICES = (
