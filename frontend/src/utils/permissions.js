@@ -33,6 +33,7 @@ export const getDefaultRoute = (permissions = [], isAdmin = false) => {
   if (perms.includes('vendors.view')) return '/vendors';
   if (perms.includes('users.view')) return '/users';
   if (perms.includes('roles.view')) return '/roles';
+  if (perms.includes('machine_shift.view')) return '/machine-shift';
   if (perms.includes('notifications.view')) return '/notifications';
   if (perms.includes('settings.view')) return '/settings';
   

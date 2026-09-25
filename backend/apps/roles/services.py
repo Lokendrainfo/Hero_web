@@ -157,6 +157,16 @@ SYSTEM_PERMISSIONS = [
     # System Settings
     ("settings.view", "View Platform Settings", "System Settings", "View global platform parameters and branding"),
     ("settings.manage", "Manage Platform Settings", "System Settings", "Manage global system parameters and integrations"),
+
+    # Machine Shift Requests
+    ("machine_shift.view", "View Machine Shift Requests", "Machine Shift", "View machine shifting requests, tracking, and details"),
+    ("machine_shift.create", "Create Machine Shift Request", "Machine Shift", "Create requests to shift machinery between locations"),
+    ("machine_shift.edit", "Edit Machine Shift Request", "Machine Shift", "Modify pending machine shifting requests"),
+    ("machine_shift.cancel", "Cancel Machine Shift Request", "Machine Shift", "Cancel pending machine shifting requests"),
+    ("machine_shift.shift", "Execute Machine Shifting", "Machine Shift", "Update shifting execution details, upload machine pictures, and mark shifted"),
+    ("machine_shift.scm_review", "SCM Review & Approval", "Machine Shift", "Approve or reject machine shift requests as SCM authority"),
+    ("machine_shift.scm_invoice", "SCM Invoice Management", "Machine Shift", "Attach and manage shifting invoices and financial amounts"),
+    ("machine_shift.scm_confirm", "SCM Final Confirmation", "Machine Shift", "Perform final confirmation and lock completed machine shift requests"),
 ]
 
 DEFAULT_ROLES = {
@@ -234,7 +244,8 @@ DEFAULT_ROLES = {
             "machines.view", "team.view", "team.create", "team.edit", "team.assign", "tracking.view",
             "attendance.view", "attendance.create", "attendance.approve", "attendance.export",
             "expenses.view", "expenses.create", "expenses.export",
-            "fuel.view", "refuel.view", "refuel.create", "refuel.approve", "breakdowns.view", "breakdowns.create", "reports.view"
+            "fuel.view", "refuel.view", "refuel.create", "refuel.approve", "breakdowns.view", "breakdowns.create", "reports.view",
+            "machine_shift.view", "machine_shift.create"
         ]
     },
     "VENDOR_USER": {
@@ -246,7 +257,8 @@ DEFAULT_ROLES = {
             "dashboard.view", "mapview.view", "chartview.view",
             "tasks.view", "tasks.edit", "machines.view", "team.view",
             "attendance.view", "attendance.create", "expenses.view", "expenses.create",
-            "fuel.view", "refuel.view", "refuel.create", "breakdowns.view", "breakdowns.create"
+            "fuel.view", "refuel.view", "refuel.create", "breakdowns.view", "breakdowns.create",
+            "machine_shift.view", "machine_shift.create"
         ]
     },
     "OPERATOR": {
@@ -285,6 +297,26 @@ DEFAULT_ROLES = {
         "is_system": True,
         "data_scope": "ALL_DATA",
         "permission_codes": [p[0] for p in SYSTEM_PERMISSIONS if p[0].endswith('.view')]
+    },
+    "SCM": {
+        "code": "SCM",
+        "description": "Supply Chain Management role responsible for reviewing, approving, invoice attachments, and confirming machine shift requests",
+        "is_system": True,
+        "data_scope": "ALL_DATA",
+        "permission_codes": [
+            "dashboard.view", "machines.view", "tracking.view", "reports.view",
+            "machine_shift.view", "machine_shift.scm_review", "machine_shift.scm_invoice", "machine_shift.scm_confirm"
+        ]
+    },
+    "SHIFTER": {
+        "code": "SHIFTER",
+        "description": "Equipment Shifter responsible for executing machine relocation, uploading machine photos, and recording shifting expenses",
+        "is_system": True,
+        "data_scope": "ALL_DATA",
+        "permission_codes": [
+            "dashboard.view", "machines.view", "tracking.view",
+            "machine_shift.view", "machine_shift.shift"
+        ]
     }
 }
 

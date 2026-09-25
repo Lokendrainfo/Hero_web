@@ -44,6 +44,8 @@ const Stock = lazyComponent(() => import('../pages/stock/Stock'), 'Stock');
 const Vendors = lazyComponent(() => import('../pages/vendors/Vendors'), 'Vendors');
 const Users = lazyComponent(() => import('../pages/users/Users'), 'Users');
 const Roles = lazyComponent(() => import('../pages/roles/Roles'), 'Roles');
+const MachineShiftList = lazyComponent(() => import('../pages/machine_shift/MachineShiftList'), 'MachineShiftList');
+const MachineShiftCreate = lazyComponent(() => import('../pages/machine_shift/MachineShiftCreate'), 'MachineShiftCreate');
 const Notifications = lazyComponent(() => import('../pages/notifications/Notifications'), 'Notifications');
 const Profile = lazyComponent(() => import('../pages/settings/Profile'), 'Profile');
 
@@ -84,6 +86,8 @@ export const AppRoutes = () => {
             <Route path="/tasks" element={<Tasks />} />
             <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
             <Route path="/tasks/detail/:taskId" element={<TaskDetailPage />} />
+            <Route path="/machine-shift" element={<MachineShiftList />} />
+            <Route path="/machine-shift/create" element={<MachineShiftCreate />} />
             <Route path="/map-view" element={<MapViewPage />} />
             <Route path="/map-view/trenching" element={<TrenchingMapViewPage />} />
             <Route path="/chart-view" element={<ChartViewPage />} />

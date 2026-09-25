@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     'apps.dashboard',
     'apps.reports',
     'apps.integrations',
+    'apps.machine_shift',
 ]
 
 MIDDLEWARE = [
