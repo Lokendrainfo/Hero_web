@@ -93,36 +93,78 @@ def normalize_pagination(response_data, page=0, size=10):
 class IlyncVendorListView(IlyncBaseView):
     def get(self, request):
         page = int(request.query_params.get('page', 0))
-        size = int(request.query_params.get('size', 10))
+        size = int(request.query_params.get('size', 100))
         search = request.query_params.get('search', None)
+        vendor_filter = request.query_params.get('vendor_id') or request.query_params.get('vendor')
 
         client = IlyncClient()
         data = client.get_vendors(page=page, size=size, search=search)
         normalized = normalize_pagination(data, page=page, size=size)
 
         if isinstance(normalized.get('results'), list):
-            from apps.machines.models import Machine
-            from apps.machines.serializers import MachineSerializer
-            
-            all_machines = list(Machine.objects.all().select_related('vendor'))
+            filtered_results = []
             for v_item in normalized['results']:
                 if not isinstance(v_item, dict):
                     continue
-                v_id = str(v_item.get('id') or '')
+
+                # Clean and normalize strings
                 v_pname = str(v_item.get('partnerName') or v_item.get('name') or '').strip()
-                
-                matched = [
-                    m for m in all_machines
-                    if (v_id and m.vendor and (str(m.vendor.external_vendor_id) == v_id or str(m.vendor.id) == v_id))
-                    or (v_pname and m.vendor and m.vendor.name and v_pname.lower() in m.vendor.name.lower())
-                ]
-                
-                if matched:
-                    matched_serialized = MachineSerializer(matched, many=True).data
-                    v_item['assigned_machines'] = matched_serialized
-                    if not v_item.get('machines'):
-                        v_item['machines'] = matched_serialized
-                    v_item['machines_count'] = len(matched_serialized)
+                v_item['partnerName'] = v_pname
+                v_item['name'] = v_pname
+                if v_item.get('contactName'):
+                    v_item['contactName'] = str(v_item['contactName']).strip()
+                if v_item.get('contact_person'):
+                    v_item['contact_person'] = str(v_item['contact_person']).strip()
+                v_id = str(v_item.get('id') or v_item.get('external_vendor_id') or '').strip()
+                v_item['id'] = v_id
+                v_item['external_vendor_id'] = v_id
+
+                # iLync is the single source of truth for vendor machines
+                ilync_machines = v_item.get('machines') or []
+                if isinstance(ilync_machines, list):
+                    v_item['machines'] = ilync_machines
+                    v_item['assigned_machines'] = ilync_machines
+                    v_item['machines_count'] = len(ilync_machines)
+                else:
+                    v_item['machines'] = []
+                    v_item['assigned_machines'] = []
+                    v_item['machines_count'] = 0
+
+                # iLync is the single source of truth for vendor team users
+                ilync_users = v_item.get('users') or []
+                if isinstance(ilync_users, list):
+                    v_item['users'] = ilync_users
+                    v_item['users_count'] = len(ilync_users)
+                else:
+                    v_item['users'] = []
+                    v_item['users_count'] = 0
+
+                # Optional vendor ID filtering
+                if vendor_filter and str(vendor_filter).strip().lower() != 'all':
+                    vf = str(vendor_filter).strip().lower()
+                    if vf not in (v_id.lower(), v_pname.lower()) and vf not in v_pname.lower():
+                        continue
+
+                # Optional search filtering
+                if search:
+                    sp = str(search).strip().lower()
+                    haystack = " ".join([
+                        v_pname,
+                        str(v_item.get('contactName') or ''),
+                        str(v_item.get('contact_person') or ''),
+                        str(v_item.get('phoneNumber') or ''),
+                        str(v_item.get('phone') or ''),
+                        str(v_item.get('email') or ''),
+                        str(v_item.get('code') or ''),
+                        str(v_item.get('legalEntityType') or ''),
+                    ]).lower()
+                    if sp not in haystack:
+                        continue
+
+                filtered_results.append(v_item)
+
+            normalized['results'] = filtered_results
+            normalized['total'] = len(filtered_results)
 
         return success_response(data=normalized, message="Vendors fetched successfully from ILYNC API")
 

@@ -63,8 +63,19 @@ export const Vendors = () => {
       });
   }, [selectedVendor]);
 
-  const displayVendors = (!isAdmin && authVendors && authVendors.length > 0)
-    ? vendors.filter(v => {
+  const displayVendors = useMemo(() => {
+    let list = vendors;
+    if (selectedVendorId && selectedVendorId !== 'all') {
+      const targetId = String(selectedVendorId).toLowerCase().trim();
+      list = list.filter(v => {
+        const vId = String(v.id || '').toLowerCase();
+        const vExtId = String(v.external_vendor_id || v.external_id || '').toLowerCase();
+        const vName = String(v.partnerName || v.name || '').toLowerCase();
+        const vCode = String(v.code || v.vendor_code || '').toLowerCase();
+        return vId === targetId || vExtId === targetId || vCode === targetId || vName === targetId || vName.includes(targetId) || targetId.includes(vName);
+      });
+    } else if (!isAdmin && authVendors && authVendors.length > 0) {
+      list = list.filter(v => {
         const vId = String(v.id || '').toLowerCase();
         const vExtId = String(v.external_vendor_id || v.external_id || '').toLowerCase();
         const vName = String(v.partnerName || v.name || '').toLowerCase();
@@ -74,8 +85,10 @@ export const Vendors = () => {
           const avName = String(av.partnerName || av.name || '').toLowerCase();
           return (vId && avId && vId === avId) || (vExtId && avExtId && vExtId === avExtId) || (vName && avName && (vName.includes(avName) || avName.includes(vName)));
         });
-      })
-    : vendors;
+      });
+    }
+    return list;
+  }, [vendors, selectedVendorId, isAdmin, authVendors]);
 
   const filteredVendors = useMemo(() => {
     const q = search.trim().toLowerCase();
