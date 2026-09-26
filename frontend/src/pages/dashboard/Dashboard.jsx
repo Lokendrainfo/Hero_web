@@ -174,17 +174,18 @@ export const Dashboard = () => {
               <h2 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <LucideGauge size={16} /> Total machine output
               </h2>
-              <p className="page-subtitle">Till date and daily HDD bore output by machine</p>
+              <p className="page-subtitle">MTD and TTD HDD bore output by machine</p>
             </div>
           </div>
           {(() => {
             const outputData = data?.total_machine_output || {};
             const machineList = Array.isArray(outputData.machines) ? outputData.machines : [];
             const totalMachines = Number(outputData.total_machines || machineList.length || 0);
-            const dailyOutputLabel = selectedDate === getTodayDateString() ? 'Today' : selectedDate;
 
             const totalTillDateMeters = Number(outputData.total_meters ?? machineList.reduce((sum, m) => sum + (Number(m.output_meters) || 0), 0));
             const totalTodayMeters = Number(outputData.day_output_meters ?? machineList.reduce((sum, m) => sum + (Number(m.day_output_meters) || 0), 0));
+            const totalMtdKm = totalTillDateMeters / 1000;
+            const totalTtdKm = totalTodayMeters / 1000;
 
             return (
               <div className="fleet-health" style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: 10 }}>
@@ -194,23 +195,23 @@ export const Dashboard = () => {
                     <strong>{totalMachines}</strong>
                   </div>
                   <div className="fleet-health-stat">
-                    <span className="kpi-label">Till Date Total</span>
+                    <span className="kpi-label">MTD</span>
                     <strong style={{ color: '#0f766e' }}>
-                      {totalTillDateMeters.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
+                      {totalMtdKm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                     </strong>
                   </div>
                   <div className="fleet-health-stat">
-                    <span className="kpi-label">{dailyOutputLabel === 'Today' ? 'Today Total' : `${dailyOutputLabel} Total`}</span>
+                    <span className="kpi-label">TTD</span>
                     <strong style={{ color: '#0284c7' }}>
-                      {totalTodayMeters.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
+                      {totalTtdKm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                     </strong>
                   </div>
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(90px, 0.75fr) minmax(90px, 0.75fr)', gap: 12, padding: '4px 12px 6px', color: 'var(--text-muted)', fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid var(--border)' }}>
                   <span>Machine</span>
-                  <span style={{ textAlign: 'right' }}>Till Date</span>
-                  <span style={{ textAlign: 'right' }}>{dailyOutputLabel}</span>
+                  <span style={{ textAlign: 'right' }}>MTD</span>
+                  <span style={{ textAlign: 'right' }}>TTD</span>
                 </div>
 
                 <div className="metric-list fleet-health-issue-list" style={{ flex: 1, minHeight: 250, maxHeight: 350, overflowY: 'auto' }}>
@@ -234,10 +235,10 @@ export const Dashboard = () => {
                         </em>
                       </span>
                       <strong style={{ color: '#0f766e', fontWeight: 700, fontSize: '0.92rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {Number(m.output_meters || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
+                        {(Number(m.output_meters || 0) / 1000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                       </strong>
                       <strong style={{ color: Number(m.day_output_meters || 0) > 0 ? '#0284c7' : 'var(--text-muted)', fontWeight: 700, fontSize: '0.92rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                        {Number(m.day_output_meters || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
+                        {(Number(m.day_output_meters || 0) / 1000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                       </strong>
                     </div>
                   ))}
@@ -259,10 +260,10 @@ export const Dashboard = () => {
                 >
                   <span style={{ color: 'var(--text-primary)' }}>Total ({totalMachines} M/C)</span>
                   <span style={{ color: '#0f766e', textAlign: 'right' }}>
-                    {totalTillDateMeters.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
+                    {totalMtdKm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                   </span>
                   <span style={{ color: '#0284c7', textAlign: 'right' }}>
-                    {totalTodayMeters.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
+                    {totalTtdKm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                   </span>
                 </div>
               </div>
