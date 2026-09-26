@@ -2355,34 +2355,11 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'norm_role': norm_role
                 })
 
-            # Handle REMOVED / INACTIVE iLync users for this vendor:
-            # ONLY when we had a genuine successful response from iLync (NOT during fallback/error):
+            # Section 20: Keep CURRENT ATTENDANCE AUTHORIZATION separate from HERO USER MASTER STATUS.
+            # Active roster members for today are drawn from iLync vendor users[],
+            # but missing users are NEVER deactivated or stripped of Hero assignments.
             if not is_fallback and raw_users is not None:
-                from apps.vendors.models import HeroVendorAssignment
-                stale_assignments = HeroVendorAssignment.objects.filter(
-                    vendor=v_obj,
-                    is_active=True
-                ).exclude(
-                    Q(user__is_superuser=True) |
-                    Q(user__is_staff=True) |
-                    Q(user__role__in=['VENDOR', 'VENDOR_ADMIN', 'ADMIN', 'MANAGER', 'SUPERVISOR', 'PROJECT_MANAGER', 'HERO']) |
-                    Q(user__roles__name__in=['VENDOR', 'VENDOR_ADMIN', 'ADMIN', 'MANAGER', 'SUPERVISOR', 'PROJECT_MANAGER', 'HERO'])
-                )
-                if synced_active_uids:
-                    stale_assignments = stale_assignments.exclude(user__external_user_id__in=synced_active_uids)
-
-                for sa in stale_assignments:
-                    stale_u = sa.user
-                    # Never deactivate administrative or management accounts
-                    if stale_u.is_superuser or stale_u.is_staff or stale_u.role in ['VENDOR', 'VENDOR_ADMIN', 'ADMIN', 'MANAGER', 'SUPERVISOR', 'PROJECT_MANAGER', 'HERO']:
-                        continue
-                    sa.is_active = False
-                    sa.save(update_fields=['is_active'])
-                    # If user has no other active vendor assignments, mark user.is_active = False
-                    if not stale_u.hero_vendor_assignments.filter(is_active=True).exists():
-                        stale_u.is_active = False
-                        stale_u.save(update_fields=['is_active'])
-                    removed_count += 1
+                pass
 
             # Audit Log
             print(f"[AttendanceRosterSync] vendor={getattr(v_obj, 'external_vendor_id', v_obj.id)} ({v_obj.name}) iLync_users={len(raw_users)} active={len(active_users_for_roster)} new={new_count} updated={updated_count} removed={removed_count}")

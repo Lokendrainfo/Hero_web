@@ -1187,11 +1187,11 @@ class AttendanceRosterSyncTestCase(TestCase):
             self.assertNotIn("USER_001", uids)
             self.assertIn("OTHER_USER_123", uids)
 
-            # User_001 is NOT deleted physically, but marked inactive
+            # User_001 is NOT deleted physically and is NOT marked inactive (Section 4 & 20)
             self.assertTrue(User.objects.filter(external_user_id="USER_001").exists())
             self.user_001.refresh_from_db()
-            self.assertFalse(self.user_001.is_active)
-            self.assertFalse(HeroVendorAssignment.objects.filter(user=self.user_001, vendor=self.vendor_raj, is_active=True).exists())
+            self.assertTrue(self.user_001.is_active)
+            self.assertTrue(HeroVendorAssignment.objects.filter(user=self.user_001, vendor=self.vendor_raj).exists())
 
     def test_06_historical_attendance_remains_unchanged_after_user_update(self):
         """6. Historical AttendanceRecord snapshots remain intact after user profile updates in iLync."""

@@ -312,10 +312,22 @@ class UserViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='sync')
     def sync_ilync_users(self, request):
-        synced = fetch_and_sync_all_ilync_users(max_pages=20, size=50)
+        synced = fetch_and_sync_all_ilync_users(max_pages=100, size=100)
+        c = getattr(synced, 'created', 0)
+        u = getattr(synced, 'updated', 0)
+        un = getattr(synced, 'unchanged', 0)
+        sk = getattr(synced, 'skipped', 0)
+        err = getattr(synced, 'errors', 0)
         return success_response(
-            data={"synced_count": len(synced)},
-            message=f"Successfully synchronized {len(synced)} users from external ILYNC portal."
+            data={
+                "synced_count": len(synced),
+                "created": c,
+                "updated": u,
+                "unchanged": un,
+                "skipped": sk,
+                "errors": err
+            },
+            message=f"Sync completed. Created: {c}, Updated: {u}, Unchanged: {un}, Skipped: {sk}, Errors: {err}."
         )
 
     @action(detail=False, methods=['get'], url_path='my-team')

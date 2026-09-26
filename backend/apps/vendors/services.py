@@ -126,8 +126,9 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
                 if email and (not matched_user.email or matched_user.email != email):
                     matched_user.email = email
                     changed = True
-                if u_role and (matched_user.role != u_role or matched_user.role in ('VIEWER', None, '')):
-                    matched_user.role = u_role
+                # Preserve existing Hero role (Section 8: Hero role is controlled by Hero RBAC)
+                if not matched_user.role or (matched_user.role == 'VIEWER' and not matched_user.roles.exists()):
+                    matched_user.role = u_role or 'OPERATOR'
                     changed = True
                 if not matched_user.vendor:
                     matched_user.vendor = vendor_obj
@@ -205,18 +206,11 @@ def sync_vendor_detail_links(vendor_obj, ext_v_id):
                     f"Hero_vendor_id=None | mapping_status={mapping_status}"
                 )
 
-        # Remove / unassign any duplicate database users for this vendor that are not in the iLync vendor users array
-        if synced_user_ids:
-            HeroVendorAssignment.objects.filter(vendor=vendor_obj).exclude(user_id__in=synced_user_ids).update(is_active=False)
-            stale_users = User.objects.filter(vendor=vendor_obj).exclude(id__in=synced_user_ids)
-            from apps.attendance.models import AttendanceRecord
-            for su in list(stale_users):
-                has_active_assignments = su.hero_vendor_assignments.filter(is_active=True).exists()
-                if not AttendanceRecord.objects.filter(user=su).exists() and not su.external_user_id and not has_active_assignments:
-                    su.delete()
-                else:
-                    su.vendor = None
-                    su.save(update_fields=['vendor'])
+        # Section 3, 4, 9, 13: Never delete or deactivate assignments or users during normal sync
+        logger.info(
+            f"[iLyncMapping] vendor_external_id={ext_v_id} | vendor_hero_id={vendor_obj.id} | "
+            f"Synced {len(synced_user_ids)} users. All existing assignments and user master records preserved."
+        )
 
     except Exception as e:
         logger.error(f"Error syncing detail links for vendor {vendor_obj.name}: {str(e)}")
