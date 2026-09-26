@@ -313,7 +313,14 @@ export const MachineShiftDetailModal = ({
                     <strong style={{ color: 'var(--text-primary)' }}>{request.machine_name} [{request.machine_chassis_no || request.machine_code}]</strong>
 
                     <span style={{ color: 'var(--text-muted)' }}>Reason:</span>
-                    <span>{request.reason_name}</span>
+                    <div>
+                      <span style={{ fontWeight: 600 }}>{request.reason_name}</span>
+                      {request.reason_text && request.reason_text !== request.reason_name && (
+                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginTop: 2 }}>
+                          {request.reason_text}
+                        </div>
+                      )}
+                    </div>
 
                     <span style={{ color: 'var(--text-muted)' }}>Required Date:</span>
                     <span>{request.required_date}</span>

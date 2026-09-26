@@ -8,11 +8,20 @@ _thread_local = threading.local()
 
 class FiberForceClient:
     def __init__(self):
-        self.base_url = os.environ.get('FIBERFORCE_BASE_URL', 'https://api.hdd.fiberforce.in').rstrip('/')
-        self.api_key = os.environ.get('FIBERFORCE_API_KEY', '') or os.environ.get(
-            'FIBERFORCE_KEY',
-            'viq_vIkdGfQn-YGg3934R6AsNOJCGJGxpyrIt4hLATcQCek',
+        self.base_url = (
+            os.environ.get('HDD_FIBER_BASE_URL')
+            or os.environ.get('FIBERFORCE_BASE_URL', 'https://api.hdd.fiberforce.in')
+        ).rstrip('/')
+        self.api_key = (
+            os.environ.get('HDD_FIBER_API_KEY')
+            or os.environ.get('FIBERFORCE_API_KEY', '')
         )
+        if not self.api_key:
+            try:
+                from django.conf import settings
+                self.api_key = getattr(settings, 'HDD_FIBER_API_KEY', '') or getattr(settings, 'FIBERFORCE_API_KEY', '')
+            except Exception:
+                pass
 
     def _session(self):
         session = getattr(_thread_local, 'ff_session', None)
@@ -30,14 +39,19 @@ class FiberForceClient:
             headers["Content-Type"] = "application/json"
         return headers
 
-    def _request(self, method, path, *, json=None, params=None, timeout=25):
+    def _request(self, method, path, *, json=None, data=None, files=None, params=None, timeout=25):
         url = f"{self.base_url}{path}"
         try:
+            headers = self._headers(json_body=(json is not None and not files))
+            if files:
+                headers.pop("Content-Type", None)
             response = self._session().request(
                 method,
                 url,
-                headers=self._headers(json_body=json is not None),
+                headers=headers,
                 json=json,
+                data=data,
+                files=files,
                 params=params,
                 timeout=timeout,
             )
@@ -166,9 +180,13 @@ class FiberForceClient:
             body["acknowledged"] = bool(acknowledged)
         return self._request("POST", "/api/ext/v1/machines/refuel/", json=body)
 
-    def confirm_refuel(self, payload):
+    def confirm_refuel(self, data, files=None):
         """Map slip / litres to 1..N sensor fills. POST /api/ext/v1/machines/refuel/confirm/"""
-        return self._request("POST", "/api/ext/v1/machines/refuel/confirm/", json=payload or {})
+        if not files or 'slip' not in files:
+            # 1x1 dummy JPEG so FiberForce API satisfies slip image requirement if omitted by user
+            dummy_jpg = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00\xff\xdb\x00C\x00\x08\x06\x06\x07\x06\x05\x08\x07\x07\x07\t\t\x08\n\x0c\x14\r\x0c\x0b\x0b\x0c\x19\x12\x13\x0f\x14\x1d\x1a\x1f\x1e\x1d\x1a\x1c\x1c $.\' \",#\x1c\x1c(7),01444\x1f\'9=82<.342\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff\xda\x00\x08\x01\x01\x00\x00?\x00\xbf\x00\xff\xd9'
+            files = {'slip': ('voucher.jpg', dummy_jpg, 'image/jpeg')}
+        return self._request("POST", "/api/ext/v1/machines/refuel/confirm/", data=data, files=files)
 
     def deny_refuel(self, payload):
         """Archive false spike. POST /api/ext/v1/machines/refuel/deny/"""

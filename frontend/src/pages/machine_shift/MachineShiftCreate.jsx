@@ -210,11 +210,16 @@ export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => 
       return;
     }
 
-    // Backend coordinates check
+    if (!formData.reason && !formData.reason_text.trim()) {
+      setErrorMsg('Please select a Reason from the dropdown or enter custom Reason text.');
+      return;
+    }
+
     const payload = {
       vendor: formData.vendor,
       machine: formData.machine,
       reason: formData.reason ? Number(formData.reason) : null,
+      reason_text: (formData.reason_text || '').trim(),
       a_point_name: formData.a_point_name.trim(),
       a_point_latitude: formData.a_point_latitude ? Number(formData.a_point_latitude) : null,
       a_point_longitude: formData.a_point_longitude ? Number(formData.a_point_longitude) : null,
@@ -447,21 +452,36 @@ export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => 
           {/* Reason Master Dropdown */}
           <div>
             <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>
-              Reason for Shifting <span style={{ color: '#ef4444' }}>*</span>
+              Reason for Shifting (Dropdown)
             </label>
             <SearchableSelect
               value={formData.reason}
               onChange={(e) => setFormData({ ...formData, reason: e.target.value })}
-              placeholder="— Select Reason —"
+              placeholder="— Select from Dropdown —"
               searchPlaceholder="Search reason..."
             >
-              <option value="">— Select Reason —</option>
+              <option value="">— Select from Dropdown —</option>
               {reasons.map(r => (
                 <option key={r.id} value={r.id}>
                   {r.name}
                 </option>
               ))}
             </SearchableSelect>
+          </div>
+
+          {/* Reason Free Text */}
+          <div>
+            <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 6 }}>
+              Reason Details / Notes (Free Text)
+            </label>
+            <input
+              type="text"
+              className="form-control"
+              value={formData.reason_text}
+              onChange={(e) => setFormData({ ...formData, reason_text: e.target.value })}
+              placeholder="Type custom reason or site remarks..."
+              style={{ width: '100%', height: 38 }}
+            />
           </div>
 
           {/* Shifting Required Date */}
@@ -496,6 +516,9 @@ export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => 
               <option value="BY_TRUCK">By Truck</option>
             </select>
           </div>
+        </div>
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 10 }}>
+          ℹ️ You can select a standard reason category from the dropdown, enter custom free-text details/remarks, or provide both.
         </div>
       </div>
 

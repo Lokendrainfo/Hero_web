@@ -307,16 +307,157 @@ class RefuelViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='confirm')
     def confirm_sensor_refuel(self, request):
-        """Proxy FiberForce /refuel/confirm/ — map slip to 1..N fills."""
-        payload = dict(request.data or {})
-        ff = FiberForceClient().confirm_refuel(payload)
-        if ff.get('success') is False:
+        """
+        Proxy HDD Fiber /refuel/confirm/ — maps manual slip & litres to 1..N sensor fills.
+        Accepts:
+          - refuel_tracker_ids (list, int, or comma-separated string)
+          - litres (float >= 0)
+          - amount_paid (float, optional)
+          - mobile (string, mandatory)
+          - note (string, optional)
+          - variance_disposition (string, optional)
+          - slip or slip_photo (file, optional)
+        """
+        req_data = request.data
+        
+        # 1. Extract & validate refuel_tracker_ids
+        raw_ids = req_data.get('refuel_tracker_ids') or req_data.get('ids') or req_data.get('id')
+        if not raw_ids:
             return error_response(
-                message=ff.get('message') or 'Refuel confirm failed.',
-                status_code=status.HTTP_502_BAD_GATEWAY,
+                message='At least one pending sensor fill (refuel_tracker_ids) must be selected.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        tracker_ids = []
+        if isinstance(raw_ids, (list, tuple)):
+            tracker_ids = [str(x).strip() for x in raw_ids if str(x).strip()]
+        elif isinstance(raw_ids, str):
+            # could be JSON array string or comma-separated
+            raw_ids = raw_ids.strip()
+            if raw_ids.startswith('[') and raw_ids.endswith(']'):
+                import json
+                try:
+                    parsed = json.loads(raw_ids)
+                    if isinstance(parsed, list):
+                        tracker_ids = [str(x).strip() for x in parsed if str(x).strip()]
+                except Exception:
+                    pass
+            if not tracker_ids:
+                tracker_ids = [s.strip() for s in raw_ids.split(',') if s.strip()]
+        else:
+            tracker_ids = [str(raw_ids).strip()]
+
+        if not tracker_ids:
+            return error_response(
+                message='Invalid or empty refuel_tracker_ids provided.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 2. Extract & validate litres
+        raw_litres = req_data.get('litres') if req_data.get('litres') is not None else req_data.get('total_litres')
+        if raw_litres is None:
+            return error_response(
+                message='Total Litres is mandatory for refuel confirmation.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            litres_val = float(raw_litres)
+            if litres_val < 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            return error_response(
+                message='Total Litres must be a valid positive number.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 3. Extract & validate mobile
+        mobile = str(
+            req_data.get('mobile')
+            or getattr(request.user, 'phone_number', '')
+            or getattr(request.user, 'mobile', '')
+            or getattr(request.user, 'phone', '')
+            or ''
+        ).strip()
+        if not mobile:
+            return error_response(
+                message='Mobile number is mandatory for refuel confirmation.',
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 4. Optional fields
+        amount_paid = req_data.get('amount_paid') or req_data.get('amount')
+        note = str(req_data.get('note') or req_data.get('notes') or '').strip()
+        variance_disp = str(req_data.get('variance_disposition') or '').strip()
+
+        # Build form data list for FiberForce request
+        post_data = [
+            ('mobile', mobile),
+            ('litres', str(litres_val)),
+        ]
+        if amount_paid is not None and str(amount_paid).strip() != '':
+            try:
+                post_data.append(('amount_paid', str(float(amount_paid))))
+            except (TypeError, ValueError):
+                pass
+        if note:
+            post_data.append(('note', note))
+        if variance_disp:
+            post_data.append(('variance_disposition', variance_disp))
+
+        # Add tracker IDs
+        for tid in tracker_ids:
+            post_data.append(('refuel_tracker_ids', str(tid)))
+
+        # 5. Extract optional slip photo
+        files = {}
+        slip_file = request.FILES.get('slip') or request.FILES.get('slip_photo') or request.FILES.get('file')
+        if slip_file:
+            files['slip'] = (slip_file.name, slip_file.read(), slip_file.content_type or 'image/jpeg')
+
+        # 6. Execute request to HDD Fiber API
+        client = FiberForceClient()
+        ff = client.confirm_refuel(data=post_data, files=files if files else None)
+
+        if ff.get('success') is False:
+            err_msg = ff.get('error') or ff.get('message') or 'HDD Fiber refuel confirmation failed.'
+            return error_response(
+                message=err_msg,
+                status_code=status.HTTP_400_BAD_REQUEST if '422' in str(ff.get('message', '')) or 'error' in ff else status.HTTP_502_BAD_GATEWAY,
                 errors=ff,
             )
-        return success_response(data=ff.get('data') or ff, message=ff.get('message') or 'Refuel confirmed.')
+
+        # 7. Auto-sync to Hero local RefuelEntry for internal reporting
+        confirmed_data = ff.get('data') if isinstance(ff.get('data'), dict) else {}
+        chassis_no = (
+            confirmed_data.get('machine_chassis_no')
+            or req_data.get('machine_chassis_no')
+            or req_data.get('chassis')
+        )
+        if chassis_no:
+            try:
+                machine = Machine.objects.filter(
+                    Q(machine_chassis_no__iexact=str(chassis_no).strip()) |
+                    Q(code__iexact=str(chassis_no).strip()) |
+                    Q(serial_number__iexact=str(chassis_no).strip())
+                ).first()
+                if machine:
+                    cost_val = float(amount_paid) if (amount_paid and float(amount_paid) > 0) else round(litres_val * 95.0, 2)
+                    RefuelEntry.objects.create(
+                        machine=machine,
+                        performed_by=request.user if request.user and request.user.is_authenticated else None,
+                        quantity_liters=litres_val,
+                        price_per_liter=round(cost_val / litres_val, 2) if litres_val > 0 else 95.0,
+                        total_cost=cost_val,
+                        meter_reading=getattr(machine, 'current_hours', 0) or 0,
+                        notes=f"HDD Fiber Confirmed fill(s) #{', '.join(tracker_ids)}. {note}".strip()
+                    )
+            except Exception as sync_err:
+                print(f"[RefuelConfirm] Local RefuelEntry sync note: {sync_err}")
+
+        return success_response(
+            data=confirmed_data or ff,
+            message=ff.get('details') or ff.get('message') or 'Refuel confirmed successfully by HDD Fiber.'
+        )
 
     @action(detail=False, methods=['post'], url_path='deny')
     def deny_sensor_refuel(self, request):

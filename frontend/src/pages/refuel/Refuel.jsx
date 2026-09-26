@@ -18,7 +18,13 @@ import {
   LucideFuel,
   LucideX,
   LucideCheckCircle2,
-  LucideFileText
+  LucideFileText,
+  LucideUpload,
+  LucideAlertCircle,
+  LucideInfo,
+  LucideTrash2,
+  LucideCheck,
+  LucidePhone
 } from 'lucide-react';
 import '../../styles/components.css';
 import { SearchableSelect } from '../../components/common/Select';
@@ -57,6 +63,25 @@ export const Refuel = () => {
   const [meterReading, setMeterReading] = useState('100.0');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // Selection state for PENDING sensor fills
+  const [selectedPendingIds, setSelectedPendingIds] = useState([]);
+
+  // Confirmation Modal state
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [confirmTargetFills, setConfirmTargetFills] = useState([]);
+  const [confirmFormData, setConfirmFormData] = useState({
+    litres: '',
+    amount_paid: '',
+    mobile: '',
+    note: '',
+    variance_disposition: ''
+  });
+  const [slipFile, setSlipFile] = useState(null);
+  const [slipPreviewUrl, setSlipPreviewUrl] = useState(null);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmError, setConfirmError] = useState(null);
+  const [confirmSuccessData, setConfirmSuccessData] = useState(null);
 
   const fetchMachinesList = React.useCallback(() => {
     const params = {};
@@ -239,6 +264,138 @@ export const Refuel = () => {
     return 0;
   }, [isFuelLogsTab, sensorMeta, filteredSensorLogs]);
 
+  const pendingFills = useMemo(() => {
+    return filteredSensorLogs.filter(r => (r.status || '').toUpperCase() === 'PENDING');
+  }, [filteredSensorLogs]);
+
+  const selectedFillsSummary = useMemo(() => {
+    const selected = sensorLogsSafe.filter(r => selectedPendingIds.includes(r.id));
+    const totalLitres = selected.reduce((acc, r) => acc + (parseFloat(r.litres ?? r.quantity_liters) || 0), 0);
+    const machineName = selected[0]?.machine_name || selected[0]?.machine_code || selected[0]?.machine_chassis_no || 'Machine';
+    return { count: selected.length, totalLitres, machineName, items: selected };
+  }, [sensorLogsSafe, selectedPendingIds]);
+
+  const handleToggleSelect = (fill) => {
+    const id = fill.id;
+    if (selectedPendingIds.includes(id)) {
+      setSelectedPendingIds(prev => prev.filter(x => x !== id));
+      return;
+    }
+
+    if (selectedPendingIds.length > 0) {
+      const alreadySelected = sensorLogsSafe.find(r => selectedPendingIds.includes(r.id));
+      if (alreadySelected && alreadySelected.machine_chassis_no && fill.machine_chassis_no &&
+          alreadySelected.machine_chassis_no !== fill.machine_chassis_no) {
+        showToast('HDD Fiber requires all selected fills in a single confirmation to belong to the same machine rig.', 'error');
+        return;
+      }
+    }
+
+    setSelectedPendingIds(prev => [...prev, id]);
+  };
+
+  const handleSelectAllPending = () => {
+    if (selectedPendingIds.length > 0) {
+      setSelectedPendingIds([]);
+      return;
+    }
+    if (pendingFills.length === 0) return;
+
+    const firstMachineChassis = pendingFills[0]?.machine_chassis_no;
+    const sameMachineFills = pendingFills.filter(r => r.machine_chassis_no === firstMachineChassis);
+    setSelectedPendingIds(sameMachineFills.map(r => r.id));
+    if (sameMachineFills.length < pendingFills.length) {
+      showToast(`Selected ${sameMachineFills.length} fills for machine ${firstMachineChassis}. (HDD Fiber requires same-machine batching)`, 'info');
+    }
+  };
+
+  const openConfirmModalForFills = (fills) => {
+    if (!fills || fills.length === 0) return;
+    const totalSensorL = fills.reduce((acc, r) => acc + (parseFloat(r.litres ?? r.quantity_liters) || 0), 0);
+    const estAmount = Math.round(totalSensorL * 95);
+    const userPhone = auth?.user?.phone_number || auth?.user?.mobile || auth?.user?.phone || '';
+
+    setConfirmTargetFills(fills);
+    setConfirmFormData({
+      litres: totalSensorL > 0 ? String(totalSensorL.toFixed(1)) : '',
+      amount_paid: estAmount > 0 ? String(estAmount) : '',
+      mobile: userPhone,
+      note: '',
+      variance_disposition: ''
+    });
+    setSlipFile(null);
+    setSlipPreviewUrl(null);
+    setConfirmError(null);
+    setConfirmSuccessData(null);
+    setShowConfirmModal(true);
+  };
+
+  const handleAcknowledgeSelected = () => {
+    const fills = sensorLogsSafe.filter(r => selectedPendingIds.includes(r.id));
+    if (fills.length === 0) {
+      showToast('Please select at least one pending sensor fill to confirm.', 'error');
+      return;
+    }
+    openConfirmModalForFills(fills);
+  };
+
+  const handleAcknowledgeSingle = (fill) => {
+    openConfirmModalForFills([fill]);
+  };
+
+  const handleConfirmSubmit = async (e) => {
+    if (e) e.preventDefault();
+    setConfirmError(null);
+
+    const litresNum = parseFloat(confirmFormData.litres);
+    if (isNaN(litresNum) || litresNum < 0) {
+      setConfirmError('Please enter a valid Total Litres amount (>= 0).');
+      return;
+    }
+
+    if (!confirmFormData.mobile || !confirmFormData.mobile.trim()) {
+      setConfirmError('Mobile number is mandatory for HDD Fiber confirmation.');
+      return;
+    }
+
+    setConfirming(true);
+    try {
+      const fd = new FormData();
+      confirmTargetFills.forEach(f => {
+        fd.append('refuel_tracker_ids', String(f.id));
+      });
+      fd.append('litres', String(litresNum));
+      if (confirmFormData.amount_paid) {
+        fd.append('amount_paid', String(confirmFormData.amount_paid));
+      }
+      fd.append('mobile', confirmFormData.mobile.trim());
+      if (confirmFormData.note) {
+        fd.append('note', confirmFormData.note.trim());
+      }
+      if (confirmFormData.variance_disposition) {
+        fd.append('variance_disposition', confirmFormData.variance_disposition);
+      }
+      if (slipFile) {
+        fd.append('slip', slipFile);
+      }
+
+      const res = await refuelService.confirmSensor(fd);
+      const resData = res?.data || res || {};
+      showToast('✓ Refuel confirmed successfully with HDD Fiber!', 'success');
+      setConfirmSuccessData(resData);
+      
+      setSelectedPendingIds([]);
+      fetchSensorLogs();
+    } catch (err) {
+      console.error("Refuel confirmation failed:", err);
+      const msg = err?.data?.message || err?.message || err?.error || 'Failed to confirm refuel with HDD Fiber.';
+      setConfirmError(typeof msg === 'object' ? JSON.stringify(msg) : msg);
+      showToast('HDD Fiber Refuel confirmation failed', 'error');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
   const statusBadge = (st) => {
     const s = (st || '').toUpperCase();
     if (s === 'CONFIRMED') return { bg: '#ecfdf5', color: '#047857', border: '#a7f3d0' };
@@ -310,6 +467,26 @@ export const Refuel = () => {
             <LucideRefreshCw size={15} className={loading ? 'animate-spin' : ''} />
             Refresh
           </button>
+
+          {isFuelLogsTab && selectedPendingIds.length > 0 && (
+            <button
+              onClick={handleAcknowledgeSelected}
+              className="btn-primary"
+              style={{
+                padding: '9px 18px',
+                fontSize: '0.85rem',
+                borderRadius: '10px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                boxShadow: 'none',
+                background: '#059669',
+                borderColor: '#059669'
+              }}
+            >
+              <LucideCheckCircle2 size={18} /> Acknowledge Selected ({selectedPendingIds.length})
+            </button>
+          )}
 
           {!isFuelLogsTab && (
             <button
@@ -560,7 +737,16 @@ export const Refuel = () => {
           <thead>
             {isFuelLogsTab ? (
               <tr>
-                <th style={{ paddingLeft: '20px' }}>Machine / Chassis</th>
+                <th style={{ width: '40px', paddingLeft: '16px', textAlign: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={pendingFills.length > 0 && selectedPendingIds.length === pendingFills.length}
+                    onChange={handleSelectAllPending}
+                    title="Select all pending fills"
+                    style={{ cursor: 'pointer', width: 16, height: 16 }}
+                  />
+                </th>
+                <th style={{ paddingLeft: '12px' }}>Machine / Chassis</th>
                 <th>Occurred At</th>
                 <th>Sensor Litres</th>
                 <th>Level Before → After</th>
@@ -568,6 +754,7 @@ export const Refuel = () => {
                 <th>Status</th>
                 <th>Verify / Slip</th>
                 <th>Variance</th>
+                <th style={{ textAlign: 'center', paddingRight: '20px' }}>Action</th>
               </tr>
             ) : (
               <tr>
@@ -589,7 +776,19 @@ export const Refuel = () => {
                   const badge = statusBadge(r.status);
                   return (
                     <tr key={r.id || `${r.machine_chassis_no}-${r.occurred_at}`}>
-                      <td style={{ paddingLeft: '20px' }}>
+                      <td style={{ width: '40px', paddingLeft: '16px', textAlign: 'center' }}>
+                        {(r.status || '').toUpperCase() === 'PENDING' ? (
+                          <input
+                            type="checkbox"
+                            checked={selectedPendingIds.includes(r.id)}
+                            onChange={() => handleToggleSelect(r)}
+                            style={{ cursor: 'pointer', width: 16, height: 16 }}
+                          />
+                        ) : (
+                          <span style={{ color: '#cbd5e1' }}>—</span>
+                        )}
+                      </td>
+                      <td style={{ paddingLeft: '12px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <div style={{ width: '34px', height: '34px', borderRadius: '8px', background: '#eff6ff', border: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#2563eb' }}>
                             <LucideTruck size={16} />
@@ -695,12 +894,43 @@ export const Refuel = () => {
                           <div style={{ fontSize: '0.7rem', color: '#b91c1c', marginTop: 2 }}>{r.deny_reason}</div>
                         )}
                       </td>
+
+                      {/* Action Column */}
+                      <td style={{ textAlign: 'center', paddingRight: '20px' }}>
+                        {(r.status || '').toUpperCase() === 'PENDING' ? (
+                          <button
+                            type="button"
+                            onClick={() => handleAcknowledgeSingle(r)}
+                            style={{
+                              padding: '5px 12px',
+                              fontSize: '0.76rem',
+                              fontWeight: '700',
+                              borderRadius: '6px',
+                              background: '#059669',
+                              color: '#ffffff',
+                              border: 'none',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                            }}
+                            title="Confirm and acknowledge refuel with HDD Fiber"
+                          >
+                            <LucideCheckCircle2 size={13} /> Acknowledge
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: '0.75rem', color: '#059669', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <LucideCheck size={14} /> Confirmed
+                          </span>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
                 {filteredSensorLogs.length === 0 && (
                   <tr>
-                    <td colSpan="8" style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
+                    <td colSpan="10" style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
                         <LucideFuel size={36} color="#cbd5e1" />
                         <div style={{ fontSize: '0.95rem', fontWeight: '600', color: '#334155' }}>
@@ -997,6 +1227,414 @@ export const Refuel = () => {
               </div>
 
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* STICKY FLOATING SELECTION BAR FOR PENDING FILLS */}
+      {selectedPendingIds.length > 0 && isFuelLogsTab && (
+        <div style={{
+          position: 'fixed',
+          bottom: 24,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 100,
+          background: '#0f172a',
+          color: '#ffffff',
+          borderRadius: '14px',
+          padding: '12px 22px',
+          boxShadow: '0 12px 28px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 20,
+          border: '1px solid #334155'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#10b981', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <LucideCheck size={16} color="#fff" />
+            </div>
+            <div>
+              <div style={{ fontSize: '0.88rem', fontWeight: 700 }}>
+                {selectedPendingIds.length} Pending Fill{selectedPendingIds.length > 1 ? 's' : ''} Selected
+              </div>
+              <div style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
+                Rig: {selectedFillsSummary.machineName} · Total: {selectedFillsSummary.totalLitres.toFixed(1)} L
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleAcknowledgeSelected}
+              style={{
+                padding: '8px 18px',
+                fontSize: '0.84rem',
+                fontWeight: 700,
+                background: '#059669',
+                borderColor: '#059669',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6
+              }}
+            >
+              <LucideCheckCircle2 size={16} /> Acknowledge & Confirm Refuel
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedPendingIds([])}
+              style={{
+                background: 'transparent',
+                border: '1px solid #475569',
+                color: '#cbd5e1',
+                padding: '7px 12px',
+                borderRadius: '8px',
+                fontSize: '0.8rem',
+                cursor: 'pointer'
+              }}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* HDD FIBER SENSOR REFUEL CONFIRMATION MODAL */}
+      {showConfirmModal && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-card" style={{ maxWidth: '600px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }}>
+            
+            {/* Modal Header */}
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: 34, height: 34, borderRadius: 8, background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#2563eb' }}>
+                  <LucideFuel size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
+                    Confirm & Acknowledge Refuel
+                  </h3>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                    Maps manual slip & payment details to HDD Fiber sensor fills
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setShowConfirmModal(false); setConfirmSuccessData(null); }}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 4 }}
+              >
+                <LucideX size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            {confirmSuccessData ? (
+              /* Success View */
+              <div style={{ padding: 24, textAlign: 'center' }}>
+                <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#ecfdf5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px auto' }}>
+                  <LucideCheckCircle2 size={32} />
+                </div>
+                <h4 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#0f172a', margin: '0 0 6px 0' }}>
+                  Refuel Confirmed with HDD Fiber!
+                </h4>
+                <p style={{ fontSize: '0.82rem', color: '#64748b', margin: '0 0 20px 0' }}>
+                  The sensor fill(s) have been verified and marked as CONFIRMED on the HDD Fiber platform and synced with HERO internal records.
+                </p>
+
+                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: 16, marginBottom: 20, textAlign: 'left', fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#64748b' }}>Status:</span>
+                    <span style={{ fontWeight: 700, color: '#059669' }}>CONFIRMED</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#64748b' }}>Acknowledged Litres:</span>
+                    <span style={{ fontWeight: 700 }}>{confirmSuccessData.acknowledged_litres || confirmFormData.litres} L</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#64748b' }}>Amount Paid:</span>
+                    <span style={{ fontWeight: 700 }}>₹{confirmSuccessData.amount_paid || confirmFormData.amount_paid || '—'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#64748b' }}>Confirmed By Mobile:</span>
+                    <span style={{ fontWeight: 600 }}>{confirmSuccessData.confirmed_by_mobile || confirmFormData.mobile}</span>
+                  </div>
+                  {confirmSuccessData.variance_pct != null && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: '#64748b' }}>Variance:</span>
+                      <span style={{ fontWeight: 700, color: confirmSuccessData.variance_ok === false ? '#b91c1c' : '#059669' }}>
+                        {confirmSuccessData.variance_pct}% ({confirmSuccessData.variance_ok === false ? 'Exceeds limit' : 'OK'})
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => { setShowConfirmModal(false); setConfirmSuccessData(null); }}
+                  style={{ width: '100%', padding: '10px' }}
+                >
+                  Done & Refresh Logs
+                </button>
+              </div>
+            ) : (
+              /* Confirmation Form View */
+              <form onSubmit={handleConfirmSubmit} style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                
+                {confirmError && (
+                  <div style={{ padding: '10px 14px', background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: 8, color: '#ef4444', fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <LucideAlertCircle size={16} style={{ flexShrink: 0 }} />
+                    <span>{confirmError}</span>
+                  </div>
+                )}
+
+                {/* Selected Fills Card */}
+                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Selected Sensor Fill(s): {confirmTargetFills.length}</span>
+                    <span style={{ color: '#2563eb' }}>Rig: {confirmTargetFills[0]?.machine_name || confirmTargetFills[0]?.machine_code || confirmTargetFills[0]?.machine_chassis_no}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 100, overflowY: 'auto' }}>
+                    {confirmTargetFills.map((f, i) => (
+                      <div key={f.id || i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: '#334155', background: '#ffffff', padding: '6px 10px', borderRadius: 6, border: '1px solid #e2e8f0' }}>
+                        <span>Fill #{f.id} · {formatWhen(f.occurred_at || f.refuel_date)}</span>
+                        <span style={{ fontWeight: 700, color: '#059669' }}>+{parseFloat(f.litres ?? f.quantity_liters ?? 0).toFixed(1)} L</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #cbd5e1', display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', fontWeight: 700 }}>
+                    <span>Total Detected Sensor Volume:</span>
+                    <span style={{ color: '#2563eb' }}>
+                      {confirmTargetFills.reduce((a, b) => a + (parseFloat(b.litres ?? b.quantity_liters) || 0), 0).toFixed(1)} L
+                    </span>
+                  </div>
+                </div>
+
+                {/* Litres & Amount Paid Row */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Total Confirmed Litres <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.1"
+                      required
+                      className="form-control"
+                      value={confirmFormData.litres}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setConfirmFormData(prev => ({
+                          ...prev,
+                          litres: val,
+                          amount_paid: prev.amount_paid ? prev.amount_paid : (val ? String(Math.round(parseFloat(val) * 95)) : '')
+                        }));
+                      }}
+                      placeholder="e.g. 46.0"
+                      style={{ width: '100%', height: 38, fontWeight: 700, fontSize: '0.95rem' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Amount Paid (₹)
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      className="form-control"
+                      value={confirmFormData.amount_paid}
+                      onChange={(e) => setConfirmFormData({ ...confirmFormData, amount_paid: e.target.value })}
+                      placeholder="e.g. 4370"
+                      style={{ width: '100%', height: 38, fontWeight: 700, fontSize: '0.95rem' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Mobile Number & Variance Disposition Row */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Mobile Number <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                    <input
+                      type="tel"
+                      required
+                      className="form-control"
+                      value={confirmFormData.mobile}
+                      onChange={(e) => setConfirmFormData({ ...confirmFormData, mobile: e.target.value })}
+                      placeholder="e.g. 9876543210"
+                      style={{ width: '100%', height: 38 }}
+                    />
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                      Used by HDD Fiber to attribute acknowledgment
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Variance Disposition (Optional)
+                    </label>
+                    <select
+                      className="form-control"
+                      value={confirmFormData.variance_disposition}
+                      onChange={(e) => setConfirmFormData({ ...confirmFormData, variance_disposition: e.target.value })}
+                      style={{ width: '100%', height: 38 }}
+                    >
+                      <option value="">— Select Disposition (If Variance) —</option>
+                      <option value="Meter Tolerance / Normal">Meter Tolerance / Normal (≤ 3%)</option>
+                      <option value="Dispenser Nozzle Difference">Dispenser Nozzle Difference</option>
+                      <option value="Tank Calibration Adjustment">Tank Calibration Adjustment</option>
+                      <option value="Spillage / Test Sample">Spillage / Test Sample</option>
+                      <option value="Operator Reported Discrepancy">Operator Reported Discrepancy</option>
+                      <option value="Other">Other Reason</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Real-time Variance Calculation Banner */}
+                {(() => {
+                  const sensorL = confirmTargetFills.reduce((a, b) => a + (parseFloat(b.litres ?? b.quantity_liters) || 0), 0);
+                  const enteredL = parseFloat(confirmFormData.litres);
+                  if (sensorL > 0 && !isNaN(enteredL)) {
+                    const diff = enteredL - sensorL;
+                    const pct = (diff / sensorL) * 100;
+                    const isWithin = Math.abs(pct) <= 3.0;
+                    return (
+                      <div style={{
+                        padding: '10px 14px',
+                        borderRadius: 8,
+                        background: isWithin ? '#ecfdf5' : '#fffbeb',
+                        border: `1px solid ${isWithin ? '#a7f3d0' : '#fde68a'}`,
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        fontSize: '0.8125rem'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <LucideInfo size={16} color={isWithin ? '#059669' : '#d97706'} />
+                          <span style={{ color: isWithin ? '#065f46' : '#92400e', fontWeight: 600 }}>
+                            Variance: {pct >= 0 ? `+${pct.toFixed(1)}%` : `${pct.toFixed(1)}%`} ({diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)} L)
+                          </span>
+                        </div>
+                        <span style={{
+                          padding: '2px 8px',
+                          borderRadius: 999,
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          background: isWithin ? '#059669' : '#d97706',
+                          color: '#fff'
+                        }}>
+                          {isWithin ? '✓ OK (Within 3%)' : '⚠ Requires Disposition'}
+                        </span>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
+                {/* Optional Slip Photo Upload */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Refuel Slip / Invoice Photo (Optional)
+                  </label>
+                  
+                  {!slipPreviewUrl ? (
+                    <label style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: 16,
+                      border: '2px dashed #cbd5e1',
+                      borderRadius: 10,
+                      cursor: 'pointer',
+                      background: '#f8fafc',
+                      transition: 'all 0.2s'
+                    }}>
+                      <LucideUpload size={24} color="#94a3b8" />
+                      <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginTop: 6 }}>
+                        Click to upload diesel pump slip or invoice photo
+                      </span>
+                      <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                        Supports JPG, PNG, WebP (Max 10MB)
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,application/pdf"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setSlipFile(file);
+                            setSlipPreviewUrl(URL.createObjectURL(file));
+                          }
+                        }}
+                        style={{ display: 'none' }}
+                      />
+                    </label>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 10, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                      <img src={slipPreviewUrl} alt="Slip Preview" style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, border: '1px solid #cbd5e1' }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {slipFile?.name || 'Slip Photo Attached'}
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                          {slipFile ? `${(slipFile.size / 1024).toFixed(1)} KB` : ''}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setSlipFile(null); setSlipPreviewUrl(null); }}
+                        style={{ background: '#fee2e2', border: 'none', color: '#dc2626', padding: '6px 10px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 600 }}
+                      >
+                        <LucideTrash2 size={13} /> Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Optional Note */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Optional Remarks / Slip Note
+                  </label>
+                  <textarea
+                    rows={2}
+                    className="form-control"
+                    value={confirmFormData.note}
+                    onChange={(e) => setConfirmFormData({ ...confirmFormData, note: e.target.value })}
+                    placeholder="e.g. Pump slip #48291, Bharat Petroleum Sujangarh bypass"
+                    style={{ width: '100%', resize: 'vertical' }}
+                  />
+                </div>
+
+                {/* Modal Footer Buttons */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10, paddingTop: 14, borderTop: '1px solid #e2e8f0' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmModal(false)}
+                    disabled={confirming}
+                    style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid #cbd5e1', background: '#fff', color: '#475569', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={confirming}
+                    className="btn-primary"
+                    style={{ padding: '9px 20px', borderRadius: 8, fontWeight: 700, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8, background: '#059669', borderColor: '#059669' }}
+                  >
+                    <LucideCheckCircle2 size={16} />
+                    {confirming ? 'Confirming with HDD Fiber...' : 'Confirm Refuel'}
+                  </button>
+                </div>
+
+              </form>
+            )}
+
           </div>
         </div>
       )}

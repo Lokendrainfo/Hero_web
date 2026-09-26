@@ -118,7 +118,8 @@ class User(AbstractUser):
                 'dashboard.view', 'machines.view', 'tracking.view', 'tasks.view',
                 'team.view', 'inventory.view', 'stock.view', 'maintenance.view',
                 'breakdowns.view', 'alerts.view', 'notifications.view',
-                'machine_shift.view', 'machine_shift.create'
+                'machine_shift.view', 'machine_shift.create',
+                'refuel.view', 'refuel.create'
             ]
             perm_codes = list(set(default_vendor_perms))
 

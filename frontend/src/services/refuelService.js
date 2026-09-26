@@ -6,6 +6,9 @@ export const refuelService = {
   getById: (id) => api.get(`/refuel/${id}/`),
   create: (data) => api.post('/refuel/', data),
   getSensorLogs: (params) => api.get('/refuel/sensor-logs/', { params }),
-  confirmSensor: (data) => api.post('/refuel/confirm/', data),
+  confirmSensor: (data) => {
+    const isFormData = typeof FormData !== 'undefined' && data instanceof FormData;
+    return api.post('/refuel/confirm/', data, isFormData ? { headers: { 'Content-Type': 'multipart/form-data' } } : {});
+  },
   denySensor: (data) => api.post('/refuel/deny/', data),
 };

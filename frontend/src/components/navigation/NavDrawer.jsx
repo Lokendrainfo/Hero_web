@@ -28,6 +28,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
       items: [
         { label: 'Machines', path: '/machines', icon: LucideTruck, perm: 'machines.view' },
         { label: 'Live Tracking', path: '/tracking', icon: LucideNavigation, perm: 'tracking.view' },
+        { label: 'Refuel', path: '/refuel', icon: LucideFuel, perm: 'refuel.view' },
         { label: 'Tasks', path: '/tasks', icon: LucideCheckSquare, perm: 'tasks.view' },
         { label: 'Machine Shift Request', path: '/machine-shift', icon: LucideArrowLeftRight, perm: 'machine_shift.view' },
         { label: 'Map View', path: '/map-view', icon: LucideGlobe, perm: 'mapview.view' },
@@ -40,7 +41,6 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
       items: [
         { label: 'Expenses', path: '/expenses', icon: LucideDollarSign, perm: 'expenses.view' },
         { label: 'Fuel Logs', path: '/fuel', icon: LucideFuel, perm: 'fuel.view' },
-        { label: 'Refuel', path: '/refuel', icon: LucideRepeat, perm: 'refuel.view' },
         { label: 'Reports', path: '/reports', icon: LucideFileText, perm: 'reports.view' }
       ]
     },

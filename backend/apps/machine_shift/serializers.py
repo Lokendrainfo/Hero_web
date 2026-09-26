@@ -127,9 +127,13 @@ class MachineShiftRequestSerializer(serializers.ModelSerializer):
         ]
 
     def get_reason_name(self, obj):
-        if obj.reason:
-            return obj.reason.name
-        return obj.reason_text or 'New Task'
+        cat = obj.reason.name if obj.reason else ''
+        text = (obj.reason_text or '').strip()
+        if cat and text and cat != text:
+            if cat.lower() == 'other':
+                return text
+            return f"{cat}: {text}"
+        return cat or text or 'New Task'
 
     def get_created_by_name(self, obj):
         if obj.created_by:

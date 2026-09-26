@@ -143,20 +143,26 @@ class MachineShiftRequestViewSet(viewsets.ModelViewSet):
             # Concurrency & Unique Request ID generation
             new_request_id = MachineShiftRequest.generate_unique_request_id()
 
-            # Ensure default reason if not provided
+            # Handle both dropdown category and free-text reason
             reason = serializer.validated_data.get('reason')
+            reason_text = serializer.validated_data.get('reason_text') or self.request.data.get('reason_text', '')
             if not reason:
-                default_reason, _ = MachineShiftReason.objects.get_or_create(
-                    name="New Task",
-                    defaults={"code": "NEW_TASK", "description": "Shift required for new task execution"}
-                )
-                reason = default_reason
+                if reason_text:
+                    other_reason = MachineShiftReason.objects.filter(code='OTHER').first()
+                    reason = other_reason
+                else:
+                    default_reason, _ = MachineShiftReason.objects.get_or_create(
+                        name="New Task",
+                        defaults={"code": "NEW_TASK", "description": "Shift required for new task execution"}
+                    )
+                    reason = default_reason
 
             instance = serializer.save(
                 request_id=new_request_id,
                 created_by=user,
                 status=MachineShiftRequest.STATUS_PENDING,
-                reason=reason
+                reason=reason,
+                reason_text=reason_text
             )
 
             # Audit record
