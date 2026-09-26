@@ -176,9 +176,6 @@ export const Dashboard = () => {
               </h2>
               <p className="page-subtitle">Till date and daily HDD bore output by machine</p>
             </div>
-            <button type="button" className="panel-link" onClick={() => navigate('/tasks')}>
-              View tasks
-            </button>
           </div>
           {(() => {
             const outputData = data?.total_machine_output || {};
@@ -216,7 +213,7 @@ export const Dashboard = () => {
                   <span style={{ textAlign: 'right' }}>{dailyOutputLabel}</span>
                 </div>
 
-                <div className="metric-list fleet-health-issue-list" style={{ flex: 1, minHeight: 220, maxHeight: 310, overflowY: 'auto' }}>
+                <div className="metric-list fleet-health-issue-list" style={{ flex: 1, minHeight: 250, maxHeight: 350, overflowY: 'auto' }}>
                   {machineList.length === 0 ? (
                     <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                       No machine HDD output records found.
@@ -224,9 +221,8 @@ export const Dashboard = () => {
                   ) : machineList.map((m) => (
                     <div
                       key={m.machine_no}
-                      className="metric-row fleet-health-issue"
-                      onClick={() => navigate('/tasks')}
-                      style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(90px, 0.75fr) minmax(90px, 0.75fr)', gap: 12, alignItems: 'center', cursor: 'pointer' }}
+                      className="metric-row"
+                      style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(90px, 0.75fr) minmax(90px, 0.75fr)', gap: 12, alignItems: 'center', cursor: 'default' }}
                       title={`Machine ${m.machine_no} · ${m.vendor_name}`}
                     >
                       <span style={{ minWidth: 0, overflow: 'hidden' }}>
@@ -253,12 +249,12 @@ export const Dashboard = () => {
                     gridTemplateColumns: 'minmax(0, 1.4fr) minmax(90px, 0.75fr) minmax(90px, 0.75fr)',
                     gap: 12,
                     alignItems: 'center',
-                    padding: '8px 12px',
+                    padding: '10px 12px',
                     background: 'var(--bg-subtle, #f8fafc)',
                     borderTop: '1px solid var(--border)',
                     borderRadius: 'var(--radius-sm, 6px)',
                     fontWeight: 700,
-                    fontSize: '0.85rem'
+                    fontSize: '0.88rem'
                   }}
                 >
                   <span style={{ color: 'var(--text-primary)' }}>Total ({totalMachines} M/C)</span>
@@ -269,15 +265,6 @@ export const Dashboard = () => {
                     {totalTodayMeters.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
                   </span>
                 </div>
-
-                <button
-                  type="button"
-                  className="btn-secondary fleet-health-more"
-                  onClick={() => navigate('/tasks')}
-                  style={{ marginTop: 2 }}
-                >
-                  View all tasks & bore output
-                </button>
               </div>
             );
           })()}
