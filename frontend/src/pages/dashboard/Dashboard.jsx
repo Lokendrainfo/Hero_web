@@ -174,7 +174,7 @@ export const Dashboard = () => {
               <h2 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <LucideGauge size={16} /> Total machine output
               </h2>
-              <p className="page-subtitle">MTD and TTD HDD bore output by machine</p>
+              <p className="page-subtitle">LTD, MTD and FTD HDD bore output by machine</p>
             </div>
           </div>
           {(() => {
@@ -183,35 +183,44 @@ export const Dashboard = () => {
             const totalMachines = Number(outputData.total_machines || machineList.length || 0);
 
             const totalTillDateMeters = Number(outputData.total_meters ?? machineList.reduce((sum, m) => sum + (Number(m.output_meters) || 0), 0));
+            const totalMonthMeters = Number(outputData.month_output_meters ?? machineList.reduce((sum, m) => sum + (Number(m.month_output_meters) || 0), 0));
             const totalTodayMeters = Number(outputData.day_output_meters ?? machineList.reduce((sum, m) => sum + (Number(m.day_output_meters) || 0), 0));
-            const totalMtdKm = totalTillDateMeters / 1000;
-            const totalTtdKm = totalTodayMeters / 1000;
+            const totalLtdKm = totalTillDateMeters / 1000;
+            const totalMtdKm = totalMonthMeters / 1000;
+            const totalFtdKm = totalTodayMeters / 1000;
 
             return (
               <div className="fleet-health" style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: 10 }}>
-                <div className="fleet-health-stats" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                <div className="fleet-health-stats" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
                   <div className="fleet-health-stat">
                     <span className="kpi-label">Total Machines</span>
                     <strong>{totalMachines}</strong>
                   </div>
                   <div className="fleet-health-stat">
-                    <span className="kpi-label">MTD</span>
+                    <span className="kpi-label">LTD</span>
                     <strong style={{ color: '#0f766e' }}>
+                      {totalLtdKm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
+                    </strong>
+                  </div>
+                  <div className="fleet-health-stat">
+                    <span className="kpi-label">MTD</span>
+                    <strong style={{ color: '#16a34a' }}>
                       {totalMtdKm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                     </strong>
                   </div>
                   <div className="fleet-health-stat">
-                    <span className="kpi-label">TTD</span>
+                    <span className="kpi-label">FTD</span>
                     <strong style={{ color: '#0284c7' }}>
-                      {totalTtdKm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
+                      {totalFtdKm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                     </strong>
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(90px, 0.75fr) minmax(90px, 0.75fr)', gap: 12, padding: '4px 12px 6px', color: 'var(--text-muted)', fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(75px, 0.7fr) minmax(75px, 0.7fr) minmax(75px, 0.7fr)', gap: 10, padding: '4px 12px 6px', color: 'var(--text-muted)', fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid var(--border)' }}>
                   <span>Machine</span>
+                  <span style={{ textAlign: 'right' }}>LTD</span>
                   <span style={{ textAlign: 'right' }}>MTD</span>
-                  <span style={{ textAlign: 'right' }}>TTD</span>
+                  <span style={{ textAlign: 'right' }}>FTD</span>
                 </div>
 
                 <div className="metric-list fleet-health-issue-list" style={{ flex: 1, minHeight: 250, maxHeight: 350, overflowY: 'auto' }}>
@@ -223,7 +232,7 @@ export const Dashboard = () => {
                     <div
                       key={m.machine_no}
                       className="metric-row"
-                      style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(90px, 0.75fr) minmax(90px, 0.75fr)', gap: 12, alignItems: 'center', cursor: 'default' }}
+                      style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(75px, 0.7fr) minmax(75px, 0.7fr) minmax(75px, 0.7fr)', gap: 10, alignItems: 'center', cursor: 'default' }}
                       title={`Machine ${m.machine_no} · ${m.vendor_name}`}
                     >
                       <span style={{ minWidth: 0, overflow: 'hidden' }}>
@@ -237,6 +246,9 @@ export const Dashboard = () => {
                       <strong style={{ color: '#0f766e', fontWeight: 700, fontSize: '0.92rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {(Number(m.output_meters || 0) / 1000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                       </strong>
+                      <strong style={{ color: Number(m.month_output_meters || 0) > 0 ? '#16a34a' : 'var(--text-muted)', fontWeight: 700, fontSize: '0.92rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {(Number(m.month_output_meters || 0) / 1000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
+                      </strong>
                       <strong style={{ color: Number(m.day_output_meters || 0) > 0 ? '#0284c7' : 'var(--text-muted)', fontWeight: 700, fontSize: '0.92rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {(Number(m.day_output_meters || 0) / 1000).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                       </strong>
@@ -247,8 +259,8 @@ export const Dashboard = () => {
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: 'minmax(0, 1.4fr) minmax(90px, 0.75fr) minmax(90px, 0.75fr)',
-                    gap: 12,
+                    gridTemplateColumns: 'minmax(0, 1.4fr) minmax(75px, 0.7fr) minmax(75px, 0.7fr) minmax(75px, 0.7fr)',
+                    gap: 10,
                     alignItems: 'center',
                     padding: '10px 12px',
                     background: 'var(--bg-subtle, #f8fafc)',
@@ -260,10 +272,13 @@ export const Dashboard = () => {
                 >
                   <span style={{ color: 'var(--text-primary)' }}>Total ({totalMachines} M/C)</span>
                   <span style={{ color: '#0f766e', textAlign: 'right' }}>
+                    {totalLtdKm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
+                  </span>
+                  <span style={{ color: '#16a34a', textAlign: 'right' }}>
                     {totalMtdKm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                   </span>
                   <span style={{ color: '#0284c7', textAlign: 'right' }}>
-                    {totalTtdKm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
+                    {totalFtdKm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} km
                   </span>
                 </div>
               </div>

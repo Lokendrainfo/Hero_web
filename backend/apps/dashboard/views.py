@@ -224,8 +224,9 @@ def _compute_machine_hdd_output(user=None, request=None, req_vendor=None, date_p
     target_date = str(date_param or '').strip()
     if not target_date or target_date.lower() == 'today':
         target_date = datetime.now().strftime('%Y-%m-%d')
+    target_month = target_date[:7]
 
-    cache_key = f"dashboard:machine_output:{getattr(user, 'id', 'anon')}:{req_vendor or 'all'}:{target_date}"
+    cache_key = f"dashboard:machine_output_v3:{getattr(user, 'id', 'anon')}:{req_vendor or 'all'}:{target_date}"
     cached = ttl_get(cache_key)
     if cached is not None:
         return cached
@@ -248,9 +249,10 @@ def _compute_machine_hdd_output(user=None, request=None, req_vendor=None, date_p
         print(f"[Dashboard] _compute_machine_hdd_output error: {exc}")
         tasks = []
 
-    machine_stats = defaultdict(lambda: {'meters': 0.0, 'day_meters': 0.0, 'vendor': '', 'tasks': 0})
+    machine_stats = defaultdict(lambda: {'meters': 0.0, 'month_meters': 0.0, 'day_meters': 0.0, 'vendor': '', 'tasks': 0})
     daily_stats = defaultdict(lambda: {'meters': 0.0, 'machines': set()})
     total_meters = 0.0
+    month_total_meters = 0.0
     day_total_meters = 0.0
 
     resolved_vendor_name = "All Vendors"
@@ -292,14 +294,22 @@ def _compute_machine_hdd_output(user=None, request=None, req_vendor=None, date_p
 
             total_meters += lens
             daily_stats[d_str]['meters'] += lens
+
+            is_this_month = (d_str[:7] == target_month and d_str <= target_date)
+            is_target_day = (d_str == target_date)
+
+            if is_this_month:
+                month_total_meters += lens
+            if is_target_day:
+                day_total_meters += lens
+
             if m_no:
                 daily_stats[d_str]['machines'].add(m_no)
                 machine_stats[m_no]['meters'] += lens
-                if d_str == target_date:
+                if is_this_month:
+                    machine_stats[m_no]['month_meters'] += lens
+                if is_target_day:
                     machine_stats[m_no]['day_meters'] += lens
-
-            if d_str == target_date:
-                day_total_meters += lens
 
         if m_no:
             machine_stats[m_no]['tasks'] += 1
@@ -321,9 +331,12 @@ def _compute_machine_hdd_output(user=None, request=None, req_vendor=None, date_p
     result = {
         "total_meters": round(total_meters, 2),
         "total_km": round(total_meters / 1000.0, 2),
+        "month_output_meters": round(month_total_meters, 2),
+        "month_output_km": round(month_total_meters / 1000.0, 2),
         "day_output_meters": round(day_total_meters, 2),
         "day_output_km": round(day_total_meters / 1000.0, 2),
         "selected_date": target_date,
+        "selected_month": target_month,
         "total_machines": len(machine_stats),
         "day_active_machines": len(daily_stats.get(target_date, {}).get('machines', set())),
         "vendor_name": resolved_vendor_name,
@@ -334,7 +347,10 @@ def _compute_machine_hdd_output(user=None, request=None, req_vendor=None, date_p
                 "vendor_name": st["vendor"] or "—",
                 "output_meters": round(st["meters"], 2),
                 "output_km": round(st["meters"] / 1000.0, 2),
+                "month_output_meters": round(st["month_meters"], 2),
+                "month_output_km": round(st["month_meters"] / 1000.0, 2),
                 "day_output_meters": round(st["day_meters"], 2),
+                "day_output_km": round(st["day_meters"] / 1000.0, 2),
                 "tasks_count": st["tasks"],
             }
             for m_id, st in sorted_machines
@@ -460,6 +476,10 @@ class DashboardSummaryView(APIView):
                 total_machine_output = {
                     "total_meters": 0.0,
                     "total_km": 0.0,
+                    "month_output_meters": 0.0,
+                    "month_output_km": 0.0,
+                    "day_output_meters": 0.0,
+                    "day_output_km": 0.0,
                     "total_machines": 0,
                     "total_shots": 0,
                     "vendor_name": "All Vendors",
