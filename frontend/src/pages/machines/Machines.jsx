@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { machineService } from '../../services/machineService';
 import { LucideRefreshCw } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../../components/common/PageHeader';
 
 const statusClass = (status) => {
@@ -12,6 +12,8 @@ const statusClass = (status) => {
   if (s === 'BREAKDOWN') return 'badge-breakdown';
   return 'badge-offline';
 };
+
+const VALID_FILTERS = ['Commissioned', 'All', 'Live', 'Running', 'Idle', 'Maintenance'];
 
 const unwrapMachines = (res) => {
   const payload = res?.data && !Array.isArray(res.data) && (res.data.results || res.data.status_counts)
@@ -29,14 +31,27 @@ const unwrapMachines = (res) => {
 };
 
 export const Machines = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filterParam = searchParams.get('filter') || searchParams.get('status');
+  const matchedInitial = VALID_FILTERS.find((opt) => opt.toLowerCase() === (filterParam || '').toLowerCase());
+
   const [allMachines, setAllMachines] = useState([]);
   const [statusCounts, setStatusCounts] = useState(null);
   const [emptyStateCode, setEmptyStateCode] = useState(null);
   const [emptyStateMessage, setEmptyStateMessage] = useState('');
   const [loading, setLoading] = useState(true);
-  const [activeFilter, setActiveFilter] = useState('Commissioned');
+  const [activeFilter, setActiveFilter] = useState(matchedInitial || 'Commissioned');
   const [search, setSearch] = useState('');
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (filterParam) {
+      const match = VALID_FILTERS.find((opt) => opt.toLowerCase() === filterParam.toLowerCase());
+      if (match) {
+        setActiveFilter(match);
+      }
+    }
+  }, [filterParam]);
 
   const fetchMachines = (shouldResync = false, isSilent = false) => {
     if (!isSilent) setLoading(true);
@@ -185,7 +200,10 @@ export const Machines = () => {
             key={f.label}
             type="button"
             className={`filter-chip ${activeFilter === f.label ? 'active' : ''}`}
-            onClick={() => setActiveFilter(f.label)}
+            onClick={() => {
+              setActiveFilter(f.label);
+              setSearchParams({ filter: f.label });
+            }}
           >
             {f.label} {f.count}
           </button>

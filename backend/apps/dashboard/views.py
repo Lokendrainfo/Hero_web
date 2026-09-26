@@ -214,6 +214,137 @@ def _quick_commissioned_chassis(assigned_chassis, ff_machines=None):
     return chassis_list or _unique_chassis(assigned_chassis)
 
 
+def _compute_machine_hdd_output(user=None, request=None, req_vendor=None, date_param=None):
+    from apps.common.ttl_cache import ttl_get, ttl_set
+    from apps.common.task_scope import get_user_authorized_tasks, parse_iso_epoch
+    from apps.vendors.models import Vendor
+    from collections import defaultdict
+    from datetime import datetime
+
+    target_date = str(date_param or '').strip()
+    if not target_date or target_date.lower() == 'today':
+        target_date = datetime.now().strftime('%Y-%m-%d')
+
+    cache_key = f"dashboard:machine_output:{getattr(user, 'id', 'anon')}:{req_vendor or 'all'}:{target_date}"
+    cached = ttl_get(cache_key)
+    if cached is not None:
+        return cached
+
+    extra_params = {}
+    if req_vendor and str(req_vendor).strip() and str(req_vendor).lower() != 'all':
+        extra_params['vendor_id'] = str(req_vendor).strip()
+
+    try:
+        scoped_res = get_user_authorized_tasks(
+            user=user,
+            request=request,
+            task_type='FIBER_TRENCHING_DUCTING_TASK',
+            page=0,
+            size=100,
+            extra_params=extra_params
+        )
+        tasks = scoped_res.get('results', []) if isinstance(scoped_res, dict) else (scoped_res if isinstance(scoped_res, list) else [])
+    except Exception as exc:
+        print(f"[Dashboard] _compute_machine_hdd_output error: {exc}")
+        tasks = []
+
+    machine_stats = defaultdict(lambda: {'meters': 0.0, 'day_meters': 0.0, 'vendor': '', 'tasks': 0})
+    daily_stats = defaultdict(lambda: {'meters': 0.0, 'machines': set()})
+    total_meters = 0.0
+    day_total_meters = 0.0
+
+    resolved_vendor_name = "All Vendors"
+    if req_vendor and str(req_vendor).strip() and str(req_vendor).lower() != 'all':
+        v_obj = Vendor.objects.filter(id=int(req_vendor)).first() if str(req_vendor).isdigit() else Vendor.objects.filter(external_vendor_id=req_vendor).first()
+        if v_obj and v_obj.name:
+            resolved_vendor_name = v_obj.name
+
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        ex = t.get('taskExecution') or {}
+        fd = ex.get('fieldData') or {}
+        tr = fd.get('trenching') or {}
+        mach = tr.get('trenchingMachineDetails') or {}
+        shots = tr.get('hddShot') or tr.get('shots') or ex.get('shots') or []
+
+        m_no = str(mach.get('machineId') or mach.get('machineNo') or mach.get('machineName') or '').strip()
+        v_name = mach.get('vendorName') or t.get('vendorName') or (t.get('vendorSnapshot') or {}).get('partnerName') or (t.get('vendorSnapshot') or {}).get('name') or ''
+
+        for s in shots:
+            if not isinstance(s, dict):
+                continue
+            lens = float(s.get('tentativeShotLength') or s.get('lengthMeters') or 0)
+            t_raw = s.get('hddStartTime') or s.get('hddEndTime') or s.get('updatedAt') or s.get('createdAt') or t.get('updatedAt') or t.get('createdAt')
+            d_str = None
+            if t_raw:
+                ep = parse_iso_epoch(t_raw)
+                if ep:
+                    d_str = datetime.fromtimestamp(ep).strftime('%Y-%m-%d')
+                elif isinstance(t_raw, str) and len(t_raw) >= 10:
+                    parts = t_raw[:10].split('-')
+                    if len(parts) == 3 and len(parts[2]) == 4:
+                        d_str = f'{parts[2]}-{parts[1]}-{parts[0]}'
+                    else:
+                        d_str = t_raw[:10]
+            if not d_str:
+                d_str = datetime.now().strftime('%Y-%m-%d')
+
+            total_meters += lens
+            daily_stats[d_str]['meters'] += lens
+            if m_no:
+                daily_stats[d_str]['machines'].add(m_no)
+                machine_stats[m_no]['meters'] += lens
+                if d_str == target_date:
+                    machine_stats[m_no]['day_meters'] += lens
+
+            if d_str == target_date:
+                day_total_meters += lens
+
+        if m_no:
+            machine_stats[m_no]['tasks'] += 1
+            if v_name and (not machine_stats[m_no]['vendor'] or machine_stats[m_no]['vendor'] == '—'):
+                machine_stats[m_no]['vendor'] = v_name
+
+    sorted_machines = sorted(machine_stats.items(), key=lambda x: x[1]['meters'], reverse=True)
+
+    day_wise_list = [
+        {
+            "date": d,
+            "output_meters": round(st["meters"], 2),
+            "output_km": round(st["meters"] / 1000.0, 2),
+            "machine_count": len(st["machines"]),
+        }
+        for d, st in sorted(daily_stats.items(), reverse=True)
+    ]
+
+    result = {
+        "total_meters": round(total_meters, 2),
+        "total_km": round(total_meters / 1000.0, 2),
+        "day_output_meters": round(day_total_meters, 2),
+        "day_output_km": round(day_total_meters / 1000.0, 2),
+        "selected_date": target_date,
+        "total_machines": len(machine_stats),
+        "day_active_machines": len(daily_stats.get(target_date, {}).get('machines', set())),
+        "vendor_name": resolved_vendor_name,
+        "day_wise": day_wise_list,
+        "machines": [
+            {
+                "machine_no": m_id,
+                "vendor_name": st["vendor"] or "—",
+                "output_meters": round(st["meters"], 2),
+                "output_km": round(st["meters"] / 1000.0, 2),
+                "day_output_meters": round(st["day_meters"], 2),
+                "tasks_count": st["tasks"],
+            }
+            for m_id, st in sorted_machines
+        ]
+    }
+    ttl_set(cache_key, result, ttl_seconds=60)
+    return result
+
+
+
 class DashboardSummaryView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -315,12 +446,25 @@ class DashboardSummaryView(APIView):
                 print("[Dashboard] Open machine issues fetch error:", exc)
                 return {}, {}
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        with ThreadPoolExecutor(max_workers=4) as pool:
             ff_future = pool.submit(_ff_machines)
             issues_future = pool.submit(_ff_open_issues)
+            output_future = pool.submit(_compute_machine_hdd_output, user, request, req_v, date_param)
             vendor_pairs = _fetch_ilync_vendor_payloads(target_vendors)
             ff_machines = ff_future.result()
             oem_by_chassis, ops_by_chassis = issues_future.result()
+            try:
+                total_machine_output = output_future.result()
+            except Exception as exc:
+                print("[Dashboard] Output future error:", exc)
+                total_machine_output = {
+                    "total_meters": 0.0,
+                    "total_km": 0.0,
+                    "total_machines": 0,
+                    "total_shots": 0,
+                    "vendor_name": "All Vendors",
+                    "machines": []
+                }
 
         assigned_chassis = []
         for _v_obj, payload in vendor_pairs:
@@ -594,8 +738,16 @@ class DashboardSummaryView(APIView):
                     st = 'NOT_MARKED'
                 bump_scope_matrix(scope_matrix_map, u_role, st)
 
+        if req_v and str(req_v).strip() and str(req_v).lower() != 'all':
+            total_all_machines = commissioned
+        elif vendor_ids is not None:
+            total_all_machines = commissioned
+        else:
+            total_all_machines = len(ff_machines) if isinstance(ff_machines, list) and len(ff_machines) > 0 else (Machine.objects.count() or commissioned)
+
         quick_stats = {
-            "total_machines": commissioned,
+            "total_machines": total_all_machines,
+            "all_machines": total_all_machines,
             "commissioned_machines": commissioned,
             "running_machines": running_live,
             "assigned_machines": commissioned,
@@ -636,6 +788,7 @@ class DashboardSummaryView(APIView):
             "quick_stats": quick_stats,
             "machine_status_widget": machine_status_widget,
             "machine_health": machine_health,
+            "total_machine_output": total_machine_output,
             "fuel_status_widget": fuel_status_widget,
             "fuel_theft_widget": fuel_theft_widget,
             "fiber_tasks": {"Fiber 1": []},

@@ -10,7 +10,7 @@ import { PageHeader } from '../../components/common/PageHeader';
 import { DateField } from '../../components/common/DateField';
 import { LeafletMap } from '../../components/common/LeafletMap';
 import { getTodayDateString } from '../../utils/dateUtils';
-import { LucideMapPin, LucideShieldAlert, LucideCheckCircle2, LucideWrench } from 'lucide-react';
+import { LucideMapPin, LucideShieldAlert, LucideCheckCircle2, LucideWrench, LucideGauge } from 'lucide-react';
 
 const isCommissioned = (m) => Boolean(m?.is_vendor_assigned || m?.is_commissioned_tab);
 
@@ -94,12 +94,12 @@ export const Dashboard = () => {
   const scopeMatrix = Array.isArray(team.scope_matrix) && team.scope_matrix.length
     ? team.scope_matrix
     : [
-        // { scope: 'HERO', total: 0, present: 0, not_marked: 0 },
-        { scope: 'VENDOR', total: 0, present: 0, not_marked: 0 },
-        { scope: 'OPERATOR', total: 0, present: 0, not_marked: 0 },
-        { scope: 'TRACKER', total: 0, present: 0, not_marked: 0 },
-        { scope: 'HELPER', total: 0, present: 0, not_marked: 0 },
-      ];
+      // { scope: 'HERO', total: 0, present: 0, not_marked: 0 },
+      { scope: 'VENDOR', total: 0, present: 0, not_marked: 0 },
+      { scope: 'OPERATOR', total: 0, present: 0, not_marked: 0 },
+      { scope: 'TRACKER', total: 0, present: 0, not_marked: 0 },
+      { scope: 'HELPER', total: 0, present: 0, not_marked: 0 },
+    ];
 
   const fleetMapMachines = useMemo(() => (
     mapMachines
@@ -135,87 +135,149 @@ export const Dashboard = () => {
           </div>
         </div>
         <div className="fleet-kpi-grid">
-          <button type="button" className="fleet-kpi-item" onClick={() => navigate('/machines')}>
-            <span className="kpi-label">Total machines</span>
-            <span className="kpi-value">{data?.quick_stats?.commissioned_machines ?? data?.quick_stats?.total_machines ?? 0}</span>
+          <button type="button" className="fleet-kpi-item" onClick={() => navigate('/machines?filter=All')}>
+            <span className="kpi-label">Total Machines</span>
+            <span className="kpi-value">{data?.quick_stats?.total_machines ?? data?.quick_stats?.all_machines ?? 0}</span>
+          </button>
+          <button type="button" className="fleet-kpi-item" onClick={() => navigate('/machines?filter=Commissioned')}>
+            <span className="kpi-label">M/C Commissioned</span>
+            <span className="kpi-value">{data?.quick_stats?.commissioned_machines ?? 0}</span>
           </button>
           <button type="button" className="fleet-kpi-item" onClick={() => navigate('/attendance')}>
-            <span className="kpi-label">Machine actual shift</span>
+            <span className="kpi-label">M/C One Time Turned on By Operator</span>
             <span className="kpi-value">
               {data?.quick_stats?.machine_actual_shift ?? 0}
               <small> / {data?.quick_stats?.machine_actual_shift_total ?? data?.quick_stats?.commissioned_machines ?? 0}</small>
             </span>
           </button>
           <button type="button" className="fleet-kpi-item" onClick={() => navigate('/attendance')}>
-            <span className="kpi-label">Machine attendance</span>
+            <span className="kpi-label">M/C Attendance (Hero)</span>
             <span className="kpi-value">
               {data?.quick_stats?.machine_attendance_present ?? 0}
               <small> / {data?.quick_stats?.machine_attendance_total ?? data?.quick_stats?.commissioned_machines ?? 0}</small>
             </span>
           </button>
-          <button type="button" className="fleet-kpi-item" onClick={() => navigate('/machines')}>
-            <span className="kpi-label">Under working RPM</span>
+          <button type="button" className="fleet-kpi-item" onClick={() => navigate('/machines?filter=Running')}>
+            <span className="kpi-label">M/C Running Live</span>
             <span className="kpi-value">
               {data?.quick_stats?.running_machines ?? 0}
-              <small> / {data?.quick_stats?.commissioned_machines ?? data?.quick_stats?.total_machines ?? 0}</small>
+              <small> / {data?.quick_stats?.commissioned_machines ?? 0}</small>
             </span>
           </button>
         </div>
       </section>
 
       <div className="split-2">
-        <section className="panel">
+        <section className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
           <div className="panel-header">
-            <h2 className="panel-title">Team attendance</h2>
-            <button type="button" className="panel-link" onClick={() => navigate('/attendance')}>Open attendance</button>
+            <div>
+              <h2 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <LucideGauge size={16} /> Total machine output
+              </h2>
+              <p className="page-subtitle">Till date and daily HDD bore output by machine</p>
+            </div>
+            <button type="button" className="panel-link" onClick={() => navigate('/tasks')}>
+              View tasks
+            </button>
           </div>
-
           {(() => {
-            const totalAll = Number(team.total_team ?? scopeMatrix.reduce((s, r) => s + (Number(r.total) || 0), 0)) || 0;
-            const presentAll = Number(team.present ?? scopeMatrix.reduce((s, r) => s + (Number(r.present) || 0), 0)) || 0;
-            const notMarkedAll = Number(team.not_marked ?? scopeMatrix.reduce((s, r) => s + (Number(r.not_marked) || 0), 0)) || 0;
-            const presentPct = totalAll > 0 ? Math.min(100, Math.round((presentAll / totalAll) * 100)) : 0;
+            const outputData = data?.total_machine_output || {};
+            const machineList = Array.isArray(outputData.machines) ? outputData.machines : [];
+            const totalMachines = Number(outputData.total_machines || machineList.length || 0);
+            const dailyOutputLabel = selectedDate === getTodayDateString() ? 'Today' : selectedDate;
+
+            const totalTillDateMeters = Number(outputData.total_meters ?? machineList.reduce((sum, m) => sum + (Number(m.output_meters) || 0), 0));
+            const totalTodayMeters = Number(outputData.day_output_meters ?? machineList.reduce((sum, m) => sum + (Number(m.day_output_meters) || 0), 0));
 
             return (
-              <div className="att-scope">
-                <div className="att-scope-summary">
-                  <div className="att-scope-summary-text">
-                    <div className="att-scope-summary-label">Present today</div>
-                    <div className="att-scope-summary-value">
-                      {presentAll}
-                      <span> / {totalAll}</span>
-                    </div>
+              <div className="fleet-health" style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: 10 }}>
+                <div className="fleet-health-stats" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                  <div className="fleet-health-stat">
+                    <span className="kpi-label">Total Machines</span>
+                    <strong>{totalMachines}</strong>
                   </div>
-                  <div className="att-scope-summary-meta">
-                    <span>{presentPct}%</span>
-                    <span className="att-scope-dot" />
-                    <span>{notMarkedAll} not marked</span>
+                  <div className="fleet-health-stat">
+                    <span className="kpi-label">Till Date Total</span>
+                    <strong style={{ color: '#0f766e' }}>
+                      {totalTillDateMeters.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
+                    </strong>
                   </div>
-                </div>
-                <div className="progress-track att-scope-progress">
-                  <div className="progress-fill" style={{ width: `${presentPct}%` }} />
+                  <div className="fleet-health-stat">
+                    <span className="kpi-label">{dailyOutputLabel === 'Today' ? 'Today Total' : `${dailyOutputLabel} Total`}</span>
+                    <strong style={{ color: '#0284c7' }}>
+                      {totalTodayMeters.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
+                    </strong>
+                  </div>
                 </div>
 
-                <div className="metric-list att-scope-list">
-                  {scopeMatrix.filter((row) => row.scope !== 'HERO').map((row) => {
-                    const total = Number(row.total) || 0;
-                    const present = Number(row.present) || 0;
-                    const notMarked = Number(row.not_marked) || 0;
-                    const empty = total === 0;
-                    return (
-                      <div key={row.scope} className={`metric-row att-scope-row${empty ? ' is-empty' : ''}`}>
-                        <span className="att-scope-name">{row.scope}</span>
-                        <div className="att-scope-stats">
-                          <strong>
-                            {present}
-                            <span className="att-scope-of"> / {total}</span>
-                          </strong>
-                          <em>{empty ? 'No crew' : `${notMarked} not marked`}</em>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(90px, 0.75fr) minmax(90px, 0.75fr)', gap: 12, padding: '4px 12px 6px', color: 'var(--text-muted)', fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase', borderBottom: '1px solid var(--border)' }}>
+                  <span>Machine</span>
+                  <span style={{ textAlign: 'right' }}>Till Date</span>
+                  <span style={{ textAlign: 'right' }}>{dailyOutputLabel}</span>
                 </div>
+
+                <div className="metric-list fleet-health-issue-list" style={{ flex: 1, minHeight: 220, maxHeight: 310, overflowY: 'auto' }}>
+                  {machineList.length === 0 ? (
+                    <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                      No machine HDD output records found.
+                    </div>
+                  ) : machineList.map((m) => (
+                    <div
+                      key={m.machine_no}
+                      className="metric-row fleet-health-issue"
+                      onClick={() => navigate('/tasks')}
+                      style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(90px, 0.75fr) minmax(90px, 0.75fr)', gap: 12, alignItems: 'center', cursor: 'pointer' }}
+                      title={`Machine ${m.machine_no} · ${m.vendor_name}`}
+                    >
+                      <span style={{ minWidth: 0, overflow: 'hidden' }}>
+                        <strong style={{ display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {m.machine_no?.length > 18 ? m.machine_no.substring(0, 14) + '…' : m.machine_no.startsWith('M/C') ? m.machine_no : `M/C ${m.machine_no}`}
+                        </strong>
+                        <em className="fleet-health-reason" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {m.vendor_name || 'Vendor'}
+                        </em>
+                      </span>
+                      <strong style={{ color: '#0f766e', fontWeight: 700, fontSize: '0.92rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {Number(m.output_meters || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
+                      </strong>
+                      <strong style={{ color: Number(m.day_output_meters || 0) > 0 ? '#0284c7' : 'var(--text-muted)', fontWeight: 700, fontSize: '0.92rem', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {Number(m.day_output_meters || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(0, 1.4fr) minmax(90px, 0.75fr) minmax(90px, 0.75fr)',
+                    gap: 12,
+                    alignItems: 'center',
+                    padding: '8px 12px',
+                    background: 'var(--bg-subtle, #f8fafc)',
+                    borderTop: '1px solid var(--border)',
+                    borderRadius: 'var(--radius-sm, 6px)',
+                    fontWeight: 700,
+                    fontSize: '0.85rem'
+                  }}
+                >
+                  <span style={{ color: 'var(--text-primary)' }}>Total ({totalMachines} M/C)</span>
+                  <span style={{ color: '#0f766e', textAlign: 'right' }}>
+                    {totalTillDateMeters.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
+                  </span>
+                  <span style={{ color: '#0284c7', textAlign: 'right' }}>
+                    {totalTodayMeters.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })} m
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn-secondary fleet-health-more"
+                  onClick={() => navigate('/tasks')}
+                  style={{ marginTop: 2 }}
+                >
+                  View all tasks & bore output
+                </button>
               </div>
             );
           })()}
@@ -330,6 +392,104 @@ export const Dashboard = () => {
         </section>
       </div>
 
+
+      <div className="split-2">
+        <section className="panel dashboard-map-panel">
+          <div className="panel-header">
+            <div>
+              <h2 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <LucideMapPin size={15} /> Fleet locations
+              </h2>
+              <p className="page-subtitle">
+                {mapLoading
+                  ? 'Loading live GPS…'
+                  : `${fleetMapMachines.length} commissioned on map · ${mapRunning} running`}
+              </p>
+            </div>
+            <button type="button" className="panel-link" onClick={() => navigate('/tracking')}>
+              Open live tracking
+            </button>
+          </div>
+          <div className="dashboard-map-canvas">
+            {!mapLoading && fleetMapMachines.length === 0 ? (
+              <div className="empty-state" style={{ border: 'none', borderRadius: 0, minHeight: 280 }}>
+                <h3>No machines on map</h3>
+                <p>Waiting for live GPS from FiberForce on commissioned machines.</p>
+              </div>
+            ) : (
+              <LeafletMap
+                machines={fleetMapMachines}
+                height="100%"
+                zoom={11}
+                showRoute={false}
+                title="Fleet map"
+                chrome={false}
+                fill
+                loading={mapLoading}
+                fitToken={`${selectedVendorId || 'all'}-${fleetMapMachines.length}`}
+              />
+            )}
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-header">
+            <h2 className="panel-title">Team attendance</h2>
+            <button type="button" className="panel-link" onClick={() => navigate('/attendance')}>Open attendance</button>
+          </div>
+
+          {(() => {
+            const totalAll = Number(team.total_team ?? scopeMatrix.reduce((s, r) => s + (Number(r.total) || 0), 0)) || 0;
+            const presentAll = Number(team.present ?? scopeMatrix.reduce((s, r) => s + (Number(r.present) || 0), 0)) || 0;
+            const notMarkedAll = Number(team.not_marked ?? scopeMatrix.reduce((s, r) => s + (Number(r.not_marked) || 0), 0)) || 0;
+            const presentPct = totalAll > 0 ? Math.min(100, Math.round((presentAll / totalAll) * 100)) : 0;
+
+            return (
+              <div className="att-scope">
+                <div className="att-scope-summary">
+                  <div className="att-scope-summary-text">
+                    <div className="att-scope-summary-label">Present today</div>
+                    <div className="att-scope-summary-value">
+                      {presentAll}
+                      <span> / {totalAll}</span>
+                    </div>
+                  </div>
+                  <div className="att-scope-summary-meta">
+                    <span>{presentPct}%</span>
+                    <span className="att-scope-dot" />
+                    <span>{notMarkedAll} not marked</span>
+                  </div>
+                </div>
+                <div className="progress-track att-scope-progress">
+                  <div className="progress-fill" style={{ width: `${presentPct}%` }} />
+                </div>
+
+                <div className="metric-list att-scope-list">
+                  {scopeMatrix.filter((row) => row.scope !== 'HERO').map((row) => {
+                    const total = Number(row.total) || 0;
+                    const present = Number(row.present) || 0;
+                    const notMarked = Number(row.not_marked) || 0;
+                    const empty = total === 0;
+                    return (
+                      <div key={row.scope} className={`metric-row att-scope-row${empty ? ' is-empty' : ''}`}>
+                        <span className="att-scope-name">{row.scope}</span>
+                        <div className="att-scope-stats">
+                          <strong>
+                            {present}
+                            <span className="att-scope-of"> / {total}</span>
+                          </strong>
+                          <em>{empty ? 'No crew' : `${notMarked} not marked`}</em>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+        </section>
+      </div>
+
       <div className="split-2">
         <section className="panel">
           <div className="panel-header">
@@ -396,44 +556,6 @@ export const Dashboard = () => {
           </div>
         </section>
       </div>
-
-      <section className="panel dashboard-map-panel">
-        <div className="panel-header">
-          <div>
-            <h2 className="panel-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <LucideMapPin size={15} /> Fleet locations
-            </h2>
-            <p className="page-subtitle">
-              {mapLoading
-                ? 'Loading live GPS…'
-                : `${fleetMapMachines.length} commissioned on map · ${mapRunning} running`}
-            </p>
-          </div>
-          <button type="button" className="panel-link" onClick={() => navigate('/tracking')}>
-            Open live tracking
-          </button>
-        </div>
-        <div className="dashboard-map-canvas">
-          {!mapLoading && fleetMapMachines.length === 0 ? (
-            <div className="empty-state" style={{ border: 'none', borderRadius: 0, minHeight: 280 }}>
-              <h3>No machines on map</h3>
-              <p>Waiting for live GPS from FiberForce on commissioned machines.</p>
-            </div>
-          ) : (
-            <LeafletMap
-              machines={fleetMapMachines}
-              height="100%"
-              zoom={11}
-              showRoute={false}
-              title="Fleet map"
-              chrome={false}
-              fill
-              loading={mapLoading}
-              fitToken={`${selectedVendorId || 'all'}-${fleetMapMachines.length}`}
-            />
-          )}
-        </div>
-      </section>
     </div>
   );
 };

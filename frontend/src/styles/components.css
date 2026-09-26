@@ -769,7 +769,7 @@ textarea:focus {
 
 .fleet-kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   border-top: 1px solid var(--border);
 }
 
@@ -820,7 +820,27 @@ textarea:focus {
   color: var(--text-muted);
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1024px) {
+  .fleet-kpi-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .fleet-kpi-item {
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .fleet-kpi-item:nth-child(3n),
+  .fleet-kpi-item:last-child {
+    border-right: none;
+  }
+
+  .fleet-kpi-item:nth-child(n + 4) {
+    border-bottom: none;
+  }
+}
+
+@media (max-width: 680px) {
   .fleet-kpi-grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -830,11 +850,12 @@ textarea:focus {
     border-bottom: 1px solid var(--border);
   }
 
-  .fleet-kpi-item:nth-child(2n) {
+  .fleet-kpi-item:nth-child(2n),
+  .fleet-kpi-item:last-child {
     border-right: none;
   }
 
-  .fleet-kpi-item:nth-child(n + 3) {
+  .fleet-kpi-item:nth-child(n + 5) {
     border-bottom: none;
   }
 }
@@ -2057,7 +2078,7 @@ textarea:focus {
 }
 
 .dashboard-map-canvas {
-  height: 420px;
+  height: 360px;
   margin: 0 -16px -16px;
   border-top: 1px solid var(--border);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
@@ -2067,7 +2088,7 @@ textarea:focus {
 
 @media (max-width: 860px) {
   .dashboard-map-canvas {
-    height: 320px;
+    height: 300px;
   }
 }
 

@@ -209,7 +209,7 @@ const StatusPill = ({ status }) => {
 
 export const Breakdowns = () => {
   const { isAdmin } = useAuth();
-  const [tab, setTab] = useState('oem');
+  const [tab, setTab] = useState('ops');
   const [machines, setMachines] = useState([]);
   const [rows, setRows] = useState([]);
   const [options, setOptions] = useState({
@@ -419,7 +419,7 @@ export const Breakdowns = () => {
     <div className="screen-container">
       <PageHeader
         title="Breakdown Tickets & Repair History"
-        subtitle="OEM breakdowns and internal Ops Stops, scoped to machines you can access"
+        subtitle="Internal Ops Stops and OEM breakdowns, scoped to machines you can access"
         actions={
           <>
             <span className={`badge-pill ${isAdmin ? 'badge-neutral' : 'badge-maintenance'}`}>
@@ -437,24 +437,24 @@ export const Breakdowns = () => {
           <button
             type="button"
             role="tab"
-            aria-selected={isOem}
-            className={`seg-tab ${isOem ? 'active' : ''}`}
-            onClick={() => setTab('oem')}
-          >
-            OEM
-          </button>
-          <button
-            type="button"
-            role="tab"
             aria-selected={!isOem}
             className={`seg-tab ${!isOem ? 'active' : ''}`}
             onClick={() => setTab('ops')}
           >
             Internal
           </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={isOem}
+            className={`seg-tab ${isOem ? 'active' : ''}`}
+            onClick={() => setTab('oem')}
+          >
+            OEM
+          </button>
         </div>
         <button type="button" className="btn-primary" onClick={openCreate} disabled={!accessibleMachines.length}>
-          <LucidePlus size={14} /> {isOem ? 'Report breakdown' : 'Open Ops Stop'}
+          <LucidePlus size={14} /> {!isOem ? 'Open Ops Stop' : 'Report breakdown'}
         </button>
       </div>
 
