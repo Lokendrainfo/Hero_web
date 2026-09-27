@@ -175,7 +175,7 @@ class IlyncTokenManager:
         refresh_token = creds['refresh_token']
         static_token = creds['static_token']
 
-        # If not force_refresh and we have a valid static token configured, use it
+        # 1. Primary: Use configured ILYNC_API_TOKEN directly if strictly VALID
         if not force_refresh and static_token:
             token_status = cls.check_token_status(static_token)
             if token_status == "VALID":
@@ -184,7 +184,7 @@ class IlyncTokenManager:
                 logger.info("[ILYNC_AUTH] Token valid")
                 return static_token
 
-        # Attempt 1: Refresh token endpoint if refresh_token available
+        # 2. Token refresh endpoint if refresh_token available
         if refresh_token:
             try:
                 new_access, new_refresh = cls._call_refresh_api(refresh_token)
@@ -193,12 +193,12 @@ class IlyncTokenManager:
                     if new_refresh:
                         cls._cached_refresh_token = new_refresh
                     cls._token_expiry = cls.decode_jwt_expiry(new_access)
-                    logger.info("[ILYNC_AUTH] Authentication successful")
+                    logger.info("[ILYNC_AUTH] Authentication successful via refresh token")
                     return new_access
             except Exception as e:
                 logger.warning("[ILYNC_AUTH] Refresh token failed: %s", type(e).__name__)
 
-        # Attempt 2: Login endpoint if phone_number and password available
+        # 3. Optional fallback: Login endpoint if phone_number and password available
         if phone_number and password:
             try:
                 new_access, new_refresh = cls._call_login_api(phone_number, password)
@@ -207,35 +207,21 @@ class IlyncTokenManager:
                     if new_refresh:
                         cls._cached_refresh_token = new_refresh
                     cls._token_expiry = cls.decode_jwt_expiry(new_access)
-                    logger.info("[ILYNC_AUTH] Authentication successful")
+                    logger.info("[ILYNC_AUTH] Authentication successful via credentials")
                     return new_access
             except Exception as e:
-                logger.error("[ILYNC_AUTH] Authentication failed")
+                logger.error("[ILYNC_AUTH] Authentication failed via credentials")
                 raise IlyncAuthException("iLync login authentication failed")
 
-        # Attempt 3: Backward compatible static token from environment
+        # 4. Fallback to configured ILYNC_API_TOKEN
         if static_token:
-            token_status = cls.check_token_status(static_token)
-            if token_status == "VALID":
-                cls._cached_access_token = static_token
-                cls._token_expiry = cls.decode_jwt_expiry(static_token)
-                logger.info("[ILYNC_AUTH] Token valid")
-                return static_token
-            elif token_status == "NEAR_EXPIRY":
-                logger.info("[ILYNC_AUTH] Token near expiry, refreshing")
-                # When no login credentials exist to renew, serve the token until hard expiry
-                cls._cached_access_token = static_token
-                cls._token_expiry = cls.decode_jwt_expiry(static_token)
-                return static_token
-            else:  # EXPIRED
-                logger.error("[ILYNC_AUTH] Authentication failed")
-                if force_refresh:
-                    raise IlyncAuthException("Static iLync token is expired and no renewal credentials are configured")
-                cls._cached_access_token = static_token
-                return static_token
+            cls._cached_access_token = static_token
+            cls._token_expiry = cls.decode_jwt_expiry(static_token)
+            logger.info("[ILYNC_AUTH] Using configured ILYNC_API_TOKEN")
+            return static_token
 
-        logger.error("[ILYNC_AUTH] Authentication failed")
-        raise IlyncAuthException("No iLync credentials or API token configured")
+        logger.error("[ILYNC_AUTH] Authentication failed: No ILYNC_API_TOKEN or credentials configured")
+        raise IlyncAuthException("No iLync API token or credentials configured")
 
     @classmethod
     def _call_login_api(cls, phone_number: str, password: str, timeout: float = 10.0) -> Tuple[str, Optional[str]]:
