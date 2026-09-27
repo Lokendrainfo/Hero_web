@@ -1,9 +1,17 @@
 import re
+import time
+import logging
+import requests
+import concurrent.futures
 from datetime import datetime, timezone, timedelta
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from django.conf import settings
+from apps.integrations.exceptions import IlyncTimeoutException, IlyncAPIException
 from apps.integrations.ilync_client import IlyncClient
 from apps.common.vendor_scope import get_user_vendor_ids, check_vendor_access
 from apps.vendors.models import Vendor
+
+logger = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -256,20 +264,78 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         )
     ]
 
+    exec_timeout = getattr(settings, 'ILYNC_TASK_EXECUTION_TIMEOUT', (2.0, 4.0))
+    batch_timeout = getattr(settings, 'ILYNC_TASK_EXECUTION_BATCH_TIMEOUT', 15.0)
+    max_workers_cfg = getattr(settings, 'ILYNC_TASK_EXECUTION_MAX_WORKERS', 10)
+
     def fetch_exec(t):
         tid = t.get('id')
         if not tid:
             return (t, None)
+        t0 = time.time()
         try:
-            e_res = client.get_task_execution(tid)
+            e_res = client.get_task_execution(tid, timeout=exec_timeout)
+            elapsed_ms = round((time.time() - t0) * 1000, 2)
             e_data = e_res.get('data') if isinstance(e_res, dict) else None
             return (t, e_data)
-        except Exception:
+        except (IlyncTimeoutException, requests.exceptions.Timeout) as exc:
+            elapsed_ms = round((time.time() - t0) * 1000, 2)
+            logger.warning(
+                "[TASK_EXECUTION] Timeout fetching telemetry for task_id=%s elapsed=%sms: %s",
+                tid,
+                elapsed_ms,
+                type(exc).__name__,
+            )
+            return (t, None)
+        except Exception as exc:
+            elapsed_ms = round((time.time() - t0) * 1000, 2)
+            logger.warning(
+                "[TASK_EXECUTION] Error fetching telemetry for task_id=%s elapsed=%sms: %s",
+                tid,
+                elapsed_ms,
+                type(exc).__name__,
+            )
             return (t, None)
 
     if seg_candidates:
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            exec_pairs = list(executor.map(fetch_exec, seg_candidates))
+        workers = min(max_workers_cfg, max(1, len(seg_candidates)))
+        future_to_task = {}
+        completed_futures = set()
+        exec_pairs = []
+
+        executor = ThreadPoolExecutor(max_workers=workers)
+        try:
+            for t in seg_candidates:
+                f = executor.submit(fetch_exec, t)
+                future_to_task[f] = t
+
+            wait_timeout = batch_timeout if (batch_timeout and batch_timeout > 0) else None
+            try:
+                for future in as_completed(future_to_task, timeout=wait_timeout):
+                    completed_futures.add(future)
+                    task_obj = future_to_task[future]
+                    try:
+                        res_task, e_data = future.result()
+                        exec_pairs.append((res_task, e_data))
+                    except Exception as exc:
+                        logger.warning(
+                            "[TASK_EXECUTION] Unexpected future error for task_id=%s: %s",
+                            task_obj.get('id'),
+                            type(exc).__name__,
+                        )
+                        exec_pairs.append((task_obj, None))
+            except concurrent.futures.TimeoutError:
+                logger.warning(
+                    "[TASK_EXECUTION] Batch timeout reached (%ss) for execution telemetry; remaining %s tasks will proceed without telemetry",
+                    batch_timeout,
+                    len(future_to_task) - len(completed_futures),
+                )
+                for f, t in future_to_task.items():
+                    if f not in completed_futures:
+                        f.cancel()
+                        exec_pairs.append((t, None))
+        finally:
+            executor.shutdown(wait=False)
 
         for task_obj, exec_data in exec_pairs:
             if not task_obj or not isinstance(exec_data, dict):

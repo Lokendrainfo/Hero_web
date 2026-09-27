@@ -216,4 +216,24 @@ ILYNC_API_TOKEN = os.environ.get('ILYNC_API_TOKEN', '')
 HDD_FIBER_BASE_URL = os.environ.get('HDD_FIBER_BASE_URL') or os.environ.get('FIBERFORCE_BASE_URL', 'https://api.hdd.fiberforce.in')
 HDD_FIBER_API_KEY = os.environ.get('HDD_FIBER_API_KEY') or os.environ.get('FIBERFORCE_API_KEY', '')
 
+# ILYNC Task Execution Telemetry Timeout (connect, read) in seconds
+def _parse_task_execution_timeout():
+    val = os.environ.get('ILYNC_TASK_EXECUTION_TIMEOUT')
+    if val:
+        try:
+            if ',' in val:
+                c, r = val.split(',', 1)
+                return (float(c.strip()), float(r.strip()))
+            return float(val.strip())
+        except (ValueError, TypeError):
+            pass
+    connect_to = float(os.environ.get('ILYNC_TASK_EXECUTION_CONNECT_TIMEOUT', 2.0))
+    read_to = float(os.environ.get('ILYNC_TASK_EXECUTION_READ_TIMEOUT', 4.0))
+    return (connect_to, read_to)
+
+ILYNC_TASK_EXECUTION_TIMEOUT = _parse_task_execution_timeout()
+ILYNC_TASK_EXECUTION_MAX_WORKERS = int(os.environ.get('ILYNC_TASK_EXECUTION_MAX_WORKERS', 10))
+ILYNC_TASK_EXECUTION_BATCH_TIMEOUT = float(os.environ.get('ILYNC_TASK_EXECUTION_BATCH_TIMEOUT', 15.0))
+
+
 

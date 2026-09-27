@@ -20,9 +20,10 @@ class IlyncClient:
         self.session = requests.Session()
         self.request = request
 
-    def _request(self, method, endpoint, params=None, data=None, json=None, headers=None, _is_retry=False):
+    def _request(self, method, endpoint, params=None, data=None, json=None, headers=None, timeout=None, _is_retry=False):
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         req_headers = IlyncAuthManager.apply_auth_headers(headers)
+        eff_timeout = timeout if timeout is not None else self.timeout
 
         start_time = time.time()
         try:
@@ -33,7 +34,7 @@ class IlyncClient:
                 data=data,
                 json=json,
                 headers=req_headers,
-                timeout=self.timeout
+                timeout=eff_timeout
             )
             duration = round((time.time() - start_time) * 1000, 2)
             
@@ -56,6 +57,7 @@ class IlyncClient:
                     data=data,
                     json=json,
                     headers=headers,
+                    timeout=timeout,
                     _is_retry=True
                 )
 
@@ -95,20 +97,20 @@ class IlyncClient:
                 payload=err_payload
             )
 
-    def get(self, endpoint, params=None, headers=None):
-        return self._request('GET', endpoint, params=params, headers=headers)
+    def get(self, endpoint, params=None, headers=None, timeout=None):
+        return self._request('GET', endpoint, params=params, headers=headers, timeout=timeout)
 
-    def post(self, endpoint, json=None, params=None, headers=None):
-        return self._request('POST', endpoint, json=json, params=params, headers=headers)
+    def post(self, endpoint, json=None, params=None, headers=None, timeout=None):
+        return self._request('POST', endpoint, json=json, params=params, headers=headers, timeout=timeout)
 
-    def put(self, endpoint, json=None, params=None, headers=None):
-        return self._request('PUT', endpoint, json=json, params=params, headers=headers)
+    def put(self, endpoint, json=None, params=None, headers=None, timeout=None):
+        return self._request('PUT', endpoint, json=json, params=params, headers=headers, timeout=timeout)
 
-    def patch(self, endpoint, json=None, params=None, headers=None):
-        return self._request('PATCH', endpoint, json=json, params=params, headers=headers)
+    def patch(self, endpoint, json=None, params=None, headers=None, timeout=None):
+        return self._request('PATCH', endpoint, json=json, params=params, headers=headers, timeout=timeout)
 
-    def delete(self, endpoint, params=None, headers=None):
-        return self._request('DELETE', endpoint, params=params, headers=headers)
+    def delete(self, endpoint, params=None, headers=None, timeout=None):
+        return self._request('DELETE', endpoint, params=params, headers=headers, timeout=timeout)
 
     # Standard Upstream Endpoints
     def get_vendors(self, page=0, size=10, search=None):
@@ -141,8 +143,11 @@ class IlyncClient:
     def get_task_children(self, task_id):
         return self.get(f"api/tasks/{task_id}/children")
 
-    def get_task_execution(self, task_id):
-        return self.get(f"api/task-executions/{task_id}")
+    def get_task_execution(self, task_id, timeout=None):
+        if timeout is None:
+            timeout = getattr(settings, 'ILYNC_TASK_EXECUTION_TIMEOUT', (2.0, 4.0))
+        return self.get(f"api/task-executions/{task_id}", timeout=timeout)
+
 
     def get_users(self, page=0, size=10):
         params = {"page": page, "size": size}
