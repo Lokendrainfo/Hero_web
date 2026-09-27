@@ -9,7 +9,12 @@ dotenv.load_dotenv(BASE_DIR.parent / '.env')
 
 SECRET_KEY = os.environ.get('SECRET_KEY', 'hero-web-default-secret-key')
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
+raw_hosts = os.environ.get('ALLOWED_HOSTS', '*').split(',')
+ALLOWED_HOSTS = [h.strip() for h in raw_hosts if h.strip()]
+if '*' not in ALLOWED_HOSTS:
+    for host in ['hero.pramaanu.co.in', '.pramaanu.co.in', 'localhost', '127.0.0.1', '0.0.0.0']:
+        if host not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(host)
 
 # HTTPS & Reverse Proxy Settings
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -181,10 +186,18 @@ SIMPLE_JWT = {
 }
 
 CORS_ALLOWED_ORIGINS = [
+    "https://hero.pramaanu.co.in",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
 CORS_ALLOW_CREDENTIALS = True
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://hero.pramaanu.co.in",
+    "https://*.pramaanu.co.in",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
 CHANNEL_LAYERS = {
     'default': {
