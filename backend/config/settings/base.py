@@ -194,8 +194,8 @@ CHANNEL_LAYERS = {
 
 # ILYNC Integration Configuration
 ILYNC_BASE_URL = os.environ.get('ILYNC_BASE_URL', 'https://ilync.tech')
-ILYNC_PHONE_NUMBER = os.environ.get('ILYNC_PHONE_NUMBER', '9175804320')
-ILYNC_PASSWORD = os.environ.get('ILYNC_PASSWORD', '9175804320')
+ILYNC_PHONE_NUMBER = os.environ.get('ILYNC_PHONE_NUMBER', '9654673404')
+ILYNC_PASSWORD = os.environ.get('ILYNC_PASSWORD', '9654673404')
 ILYNC_REFRESH_TOKEN = os.environ.get('ILYNC_REFRESH_TOKEN', '')
 ILYNC_API_TOKEN = os.environ.get('ILYNC_API_TOKEN', '')
 
