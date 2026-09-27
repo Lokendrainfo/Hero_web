@@ -19,8 +19,8 @@ class MapViewExecutionRegressionTestCase(TestCase):
         """
         TEST 1: Existing execution appears in list → Open Map → detail page finds same execution.
         """
-        # Fetch tasks list
-        req = self.factory.get('/api/v1/integrations/tasks/my-tasks/?task_type=FIBER_TRENCHING_DUCTING_TASK')
+        # Fetch tasks list with expand=true
+        req = self.factory.get('/api/v1/integrations/tasks/my-tasks/?task_type=FIBER_TRENCHING_DUCTING_TASK&expand=true')
         force_authenticate(req, user=self.admin_user)
         list_view = IlyncMyTasksListView.as_view()
         res_list = list_view(req)

@@ -99,7 +99,7 @@ def safe_float(val, default=0.0):
     except (ValueError, TypeError):
         return default
 
-def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=50, extra_params=None):
+def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=50, extra_params=None, expand_hierarchy=None, include_telemetry=None):
     """
     Single source of truth for authorized task visibility across My Tasks, Dashboard, Maps, and Detail views.
     Strictly enforces role-based vendor scope, Advance User geographical scope, and Reporting Manager scope.
@@ -116,6 +116,43 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
     if not req_vendor:
         req_vendor = extra_params.get('vendor_id') or extra_params.get('vendor')
 
+    # Resolve whether to expand entire child hierarchy (Levels 1 & 2 child tasks).
+    # Default to True so all routes, segments, districts, blocks, and users are included.
+    if expand_hierarchy is None:
+        if request is not None:
+            q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
+            expand_val = q_params.get('expand') or q_params.get('expand_hierarchy') or q_params.get('include_children')
+            if expand_val is not None:
+                expand_hierarchy = str(expand_val).lower() in ('1', 'true')
+            else:
+                expand_hierarchy = True
+        elif extra_params and ('expand_hierarchy' in extra_params or 'expand' in extra_params):
+            expand_val = extra_params.get('expand_hierarchy') or extra_params.get('expand')
+            expand_hierarchy = str(expand_val).lower() in ('1', 'true')
+        else:
+            expand_hierarchy = True
+
+    # Resolve whether to query live execution telemetry (api/task-executions/<id>) for each leaf task.
+    # Omit for task listing endpoints (my-tasks) to keep response time fast (~0.6s).
+    # Enable for dashboard machine output or when ?telemetry=true is explicitly requested.
+    if include_telemetry is None:
+        if request is not None:
+            q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
+            telem_val = q_params.get('telemetry') or q_params.get('include_telemetry')
+            if telem_val is not None:
+                include_telemetry = str(telem_val).lower() in ('1', 'true')
+            else:
+                path = getattr(request, 'path', '') or ''
+                if 'tasks/my-tasks' in path:
+                    include_telemetry = False
+                else:
+                    include_telemetry = True
+        elif extra_params and ('include_telemetry' in extra_params or 'telemetry' in extra_params):
+            telem_val = extra_params.get('include_telemetry') or extra_params.get('telemetry')
+            include_telemetry = str(telem_val).lower() in ('1', 'true')
+        else:
+            include_telemetry = True
+
     # Fast cache retrieval if not explicitly requesting refresh and not running test suite
     import sys
     is_testing = 'test' in sys.argv or getattr(settings, 'TESTING', False)
@@ -130,7 +167,7 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         u_id = getattr(user, 'id', 'anon') if user else 'anon'
         u_type = getattr(user, 'user_type', '') if user else ''
         extra_tuple = tuple(sorted((str(k), str(v)) for k, v in extra_params.items())) if extra_params else ()
-        auth_cache_key = f"auth_tasks:{u_id}:{u_type}:{task_type}:{page}:{size}:{req_vendor}:{extra_tuple}"
+        auth_cache_key = f"auth_tasks:{u_id}:{u_type}:{task_type}:{page}:{size}:{req_vendor}:{expand_hierarchy}:{include_telemetry}:{extra_tuple}"
         cached_res = ttl_get(auth_cache_key)
         if cached_res is not None:
             return cached_res
@@ -246,176 +283,182 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         if not isinstance(base_content, list):
             base_content = []
 
-    exec_timeout = getattr(settings, 'ILYNC_TASK_EXECUTION_TIMEOUT', (2.0, 4.0))
-    batch_timeout = getattr(settings, 'ILYNC_TASK_EXECUTION_BATCH_TIMEOUT', 15.0)
-    max_workers_cfg = getattr(settings, 'ILYNC_TASK_EXECUTION_MAX_WORKERS', 10)
-
-    # Parallel fetch child task hierarchy (Levels 1 & 2)
-    def fetch_children_batch(tasks_list):
-        def fetch_c(t):
-            tid = t.get('id')
-            if not tid:
-                return []
-            child_cache_key = f"task_children:{tid}"
-            if not is_testing:
-                cached_c = ttl_get(child_cache_key)
-                if cached_c is not None:
-                    return cached_c
-            try:
-                c_res = client.get_task_children(tid)
-                c_data = c_res.get('data', []) if isinstance(c_res, dict) else []
-                if not is_testing:
-                    ttl_set(child_cache_key, c_data, ttl_seconds=600)
-                return c_data
-            except Exception:
-                return []
-
-        workers = min(max_workers_cfg, max(1, len(tasks_list))) if tasks_list else 1
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            return list(executor.map(fetch_c, tasks_list))
-
-    level1_children_lists = fetch_children_batch(base_content)
-    
+    level1_children_lists = []
     level1_flat = []
-    for i, root in enumerate(base_content):
-        c_list = level1_children_lists[i] if i < len(level1_children_lists) else []
-        level1_flat.extend(c_list)
+    level2_children_lists = []
 
-    level2_children_lists = fetch_children_batch(level1_flat)
+    if expand_hierarchy:
+        exec_timeout = getattr(settings, 'ILYNC_TASK_EXECUTION_TIMEOUT', (2.0, 4.0))
+        batch_timeout = getattr(settings, 'ILYNC_TASK_EXECUTION_BATCH_TIMEOUT', 15.0)
+        max_workers_cfg = getattr(settings, 'ILYNC_TASK_EXECUTION_MAX_WORKERS', 10)
 
-    # Parallel fetch execution telemetry for segment tasks to derive accurate covered length
-    all_raw_tasks = list(base_content) + list(level1_flat)
-    for l2_sub in level2_children_lists:
-        all_raw_tasks.extend(l2_sub)
+        # Parallel fetch child task hierarchy (Levels 1 & 2)
+        def fetch_children_batch(tasks_list):
+            def fetch_c(t):
+                tid = t.get('id')
+                if not tid:
+                    return []
+                child_cache_key = f"task_children:{tid}"
+                if not is_testing:
+                    cached_c = ttl_get(child_cache_key)
+                    if cached_c is not None:
+                        return cached_c
+                try:
+                    c_res = client.get_task_children(tid)
+                    c_data = c_res.get('data', []) if isinstance(c_res, dict) else []
+                    if not is_testing:
+                        ttl_set(child_cache_key, c_data, ttl_seconds=600)
+                    return c_data
+                except Exception:
+                    return []
 
-    # Exclude parent container tasks that have children so we only query leaf tasks for segment telemetry
-    parent_ids = set()
-    for i, root in enumerate(base_content):
-        c_list = level1_children_lists[i] if i < len(level1_children_lists) else []
-        if c_list and root.get('id'):
-            parent_ids.add(root.get('id'))
+            workers = min(max_workers_cfg, max(1, len(tasks_list))) if tasks_list else 1
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                return list(executor.map(fetch_c, tasks_list))
 
-    for idx, l1 in enumerate(level1_flat):
-        l2_list = level2_children_lists[idx] if idx < len(level2_children_lists) else []
-        if l2_list and l1.get('id'):
-            parent_ids.add(l1.get('id'))
+        level1_children_lists = fetch_children_batch(base_content)
+        
+        level1_flat = []
+        for i, root in enumerate(base_content):
+            c_list = level1_children_lists[i] if i < len(level1_children_lists) else []
+            level1_flat.extend(c_list)
 
-    seg_candidates = [
-        t for t in all_raw_tasks
-        if isinstance(t, dict) and t.get('id') not in parent_ids and (
-            str((t.get('routeSnapshot') if isinstance(t.get('routeSnapshot'), dict) else {}).get('level') or '').upper() == 'SEGMENT'
-            or t.get('depth') == 2
-            or (t.get('totalSegments') == 0)
-            or not t.get('totalSegments')
-        )
-    ]
+        level2_children_lists = fetch_children_batch(level1_flat)
 
-    def fetch_exec(t):
-        tid = t.get('id')
-        if not tid:
-            return (t, None)
+        # Parallel fetch execution telemetry for segment tasks to derive accurate covered length
+        all_raw_tasks = list(base_content) + list(level1_flat)
+        for l2_sub in level2_children_lists:
+            all_raw_tasks.extend(l2_sub)
 
-        exec_cache_key = f"task_exec:{tid}"
-        if not is_testing:
-            cached_exec = ttl_get(exec_cache_key)
-            if cached_exec is not None:
-                if isinstance(cached_exec, dict) and (cached_exec.get('_not_found') or cached_exec.get('_empty')):
-                    return (t, None)
-                return (t, cached_exec)
+        # Exclude parent container tasks that have children so we only query leaf tasks for segment telemetry
+        parent_ids = set()
+        for i, root in enumerate(base_content):
+            c_list = level1_children_lists[i] if i < len(level1_children_lists) else []
+            if c_list and root.get('id'):
+                parent_ids.add(root.get('id'))
 
-        t0 = time.time()
-        try:
-            e_res = client.get_task_execution(tid, timeout=exec_timeout)
-            elapsed_ms = round((time.time() - t0) * 1000, 2)
-            e_data = e_res.get('data') if isinstance(e_res, dict) else None
-            if not is_testing:
-                ttl_set(exec_cache_key, e_data or {'_empty': True}, ttl_seconds=300)
-            return (t, e_data)
-        except IlyncNotFoundException:
-            if not is_testing:
-                ttl_set(exec_cache_key, {'_not_found': True}, ttl_seconds=300)
-            return (t, None)
-        except (IlyncTimeoutException, requests.exceptions.Timeout) as exc:
-            elapsed_ms = round((time.time() - t0) * 1000, 2)
-            logger.warning(
-                "[TASK_EXECUTION] Timeout fetching telemetry for task_id=%s elapsed=%sms: %s",
-                tid,
-                elapsed_ms,
-                type(exc).__name__,
-            )
-            return (t, None)
-        except Exception as exc:
-            elapsed_ms = round((time.time() - t0) * 1000, 2)
-            logger.warning(
-                "[TASK_EXECUTION] Error fetching telemetry for task_id=%s elapsed=%sms: %s",
-                tid,
-                elapsed_ms,
-                type(exc).__name__,
-            )
-            return (t, None)
+        for idx, l1 in enumerate(level1_flat):
+            l2_list = level2_children_lists[idx] if idx < len(level2_children_lists) else []
+            if l2_list and l1.get('id'):
+                parent_ids.add(l1.get('id'))
 
-    if seg_candidates:
-        workers = min(max_workers_cfg, max(1, len(seg_candidates)))
-        future_to_task = {}
-        completed_futures = set()
-        exec_pairs = []
-
-        executor = ThreadPoolExecutor(max_workers=workers)
-        try:
-            for t in seg_candidates:
-                f = executor.submit(fetch_exec, t)
-                future_to_task[f] = t
-
-            wait_timeout = batch_timeout if (batch_timeout and batch_timeout > 0) else None
-            try:
-                for future in as_completed(future_to_task, timeout=wait_timeout):
-                    completed_futures.add(future)
-                    task_obj = future_to_task[future]
-                    try:
-                        res_task, e_data = future.result()
-                        exec_pairs.append((res_task, e_data))
-                    except Exception as exc:
-                        logger.warning(
-                            "[TASK_EXECUTION] Unexpected future error for task_id=%s: %s",
-                            task_obj.get('id'),
-                            type(exc).__name__,
-                        )
-                        exec_pairs.append((task_obj, None))
-            except concurrent.futures.TimeoutError:
-                logger.warning(
-                    "[TASK_EXECUTION] Batch timeout reached (%ss) for execution telemetry; remaining %s tasks will proceed without telemetry",
-                    batch_timeout,
-                    len(future_to_task) - len(completed_futures),
+        if include_telemetry:
+            seg_candidates = [
+                t for t in all_raw_tasks
+                if isinstance(t, dict) and t.get('id') not in parent_ids and (
+                    str((t.get('routeSnapshot') if isinstance(t.get('routeSnapshot'), dict) else {}).get('level') or '').upper() == 'SEGMENT'
+                    or t.get('depth') == 2
+                    or (t.get('totalSegments') == 0)
+                    or not t.get('totalSegments')
                 )
-                for f, t in future_to_task.items():
-                    if f not in completed_futures:
-                        f.cancel()
-                        exec_pairs.append((t, None))
-        finally:
-            executor.shutdown(wait=False)
+            ]
 
-        for task_obj, exec_data in exec_pairs:
-            if not task_obj or not isinstance(exec_data, dict) or exec_data.get('_not_found') or exec_data.get('_empty'):
-                continue
+            def fetch_exec(t):
+                tid = t.get('id')
+                if not tid:
+                    return (t, None)
 
-            
-            # Attach live iLync execution directly to task_obj in-memory (no DB writes)
-            task_obj['taskExecution'] = exec_data
-            
-            # Calculate latest activity timestamp directly from live iLync telemetry
-            latest_iso = resolve_latest_task_timestamp(task_obj, exec_data)
-            if latest_iso:
-                task_obj['updatedAt'] = latest_iso
-                task_obj['lastModified'] = latest_iso
+                exec_cache_key = f"task_exec:{tid}"
+                if not is_testing:
+                    cached_exec = ttl_get(exec_cache_key)
+                    if cached_exec is not None:
+                        if isinstance(cached_exec, dict) and (cached_exec.get('_not_found') or cached_exec.get('_empty')):
+                            return (t, None)
+                        return (t, cached_exec)
 
-            field_data = exec_data.get('fieldData') or exec_data.get('trenching') or exec_data
-            trenching = field_data.get('trenching') if isinstance(field_data, dict) else (field_data if isinstance(field_data, dict) else {})
-            shots = (trenching.get('hddShot') if isinstance(trenching, dict) else None) or exec_data.get('shots') or field_data.get('hddShot') or []
+                t0 = time.time()
+                try:
+                    e_res = client.get_task_execution(tid, timeout=exec_timeout)
+                    elapsed_ms = round((time.time() - t0) * 1000, 2)
+                    e_data = e_res.get('data') if isinstance(e_res, dict) else None
+                    if not is_testing:
+                        ttl_set(exec_cache_key, e_data or {'_empty': True}, ttl_seconds=300)
+                    return (t, e_data)
+                except IlyncNotFoundException:
+                    if not is_testing:
+                        ttl_set(exec_cache_key, {'_not_found': True}, ttl_seconds=300)
+                    return (t, None)
+                except (IlyncTimeoutException, requests.exceptions.Timeout) as exc:
+                    elapsed_ms = round((time.time() - t0) * 1000, 2)
+                    logger.warning(
+                        "[TASK_EXECUTION] Timeout fetching telemetry for task_id=%s elapsed=%sms: %s",
+                        tid,
+                        elapsed_ms,
+                        type(exc).__name__,
+                    )
+                    return (t, None)
+                except Exception as exc:
+                    elapsed_ms = round((time.time() - t0) * 1000, 2)
+                    logger.warning(
+                        "[TASK_EXECUTION] Error fetching telemetry for task_id=%s elapsed=%sms: %s",
+                        tid,
+                        elapsed_ms,
+                        type(exc).__name__,
+                    )
+                    return (t, None)
 
-            if isinstance(shots, list) and len(shots) > 0:
-                tot_m = sum(float(s.get('tentativeShotLength') or s.get('lengthMeters') or 0) for s in shots if isinstance(s, dict))
-                if tot_m > 0:
-                    task_obj['coveredLengthKm'] = round(tot_m / 1000.0, 3)
+            if seg_candidates:
+                workers = min(max_workers_cfg, max(1, len(seg_candidates)))
+                future_to_task = {}
+                completed_futures = set()
+                exec_pairs = []
+
+                executor = ThreadPoolExecutor(max_workers=workers)
+                try:
+                    for t in seg_candidates:
+                        f = executor.submit(fetch_exec, t)
+                        future_to_task[f] = t
+
+                    wait_timeout = batch_timeout if (batch_timeout and batch_timeout > 0) else None
+                    try:
+                        for future in as_completed(future_to_task, timeout=wait_timeout):
+                            completed_futures.add(future)
+                            task_obj = future_to_task[future]
+                            try:
+                                res_task, e_data = future.result()
+                                exec_pairs.append((res_task, e_data))
+                            except Exception as exc:
+                                logger.warning(
+                                    "[TASK_EXECUTION] Unexpected future error for task_id=%s: %s",
+                                    task_obj.get('id'),
+                                    type(exc).__name__,
+                                )
+                                exec_pairs.append((task_obj, None))
+                    except concurrent.futures.TimeoutError:
+                        logger.warning(
+                            "[TASK_EXECUTION] Batch timeout reached (%ss) for execution telemetry; remaining %s tasks will proceed without telemetry",
+                            batch_timeout,
+                            len(future_to_task) - len(completed_futures),
+                        )
+                        for f, t in future_to_task.items():
+                            if f not in completed_futures:
+                                f.cancel()
+                                exec_pairs.append((t, None))
+                finally:
+                    executor.shutdown(wait=False)
+
+                for task_obj, exec_data in exec_pairs:
+                    if not task_obj or not isinstance(exec_data, dict) or exec_data.get('_not_found') or exec_data.get('_empty'):
+                        continue
+
+                    # Attach live iLync execution directly to task_obj in-memory (no DB writes)
+                    task_obj['taskExecution'] = exec_data
+                    
+                    # Calculate latest activity timestamp directly from live iLync telemetry
+                    latest_iso = resolve_latest_task_timestamp(task_obj, exec_data)
+                    if latest_iso:
+                        task_obj['updatedAt'] = latest_iso
+                        task_obj['lastModified'] = latest_iso
+
+                    field_data = exec_data.get('fieldData') or exec_data.get('trenching') or exec_data
+                    trenching = field_data.get('trenching') if isinstance(field_data, dict) else (field_data if isinstance(field_data, dict) else {})
+                    shots = (trenching.get('hddShot') if isinstance(trenching, dict) else None) or exec_data.get('shots') or field_data.get('hddShot') or []
+
+                    if isinstance(shots, list) and len(shots) > 0:
+                        tot_m = sum(float(s.get('tentativeShotLength') or s.get('lengthMeters') or 0) for s in shots if isinstance(s, dict))
+                        if tot_m > 0:
+                            task_obj['coveredLengthKm'] = round(tot_m / 1000.0, 3)
+
 
     known_map = {
         str(ext_id).lower(): name
@@ -493,49 +536,54 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         expanded_results.append(t)
         return eff_vid, eff_vname
 
-    for i, root in enumerate(base_content):
-        l1_list = level1_children_lists[i] if i < len(level1_children_lists) else []
-        root_epochs = [parse_iso_epoch(root.get('updatedAt'))]
+    if expand_hierarchy:
+        for i, root in enumerate(base_content):
+            l1_list = level1_children_lists[i] if i < len(level1_children_lists) else []
+            root_epochs = [parse_iso_epoch(root.get('updatedAt'))]
 
-        for l1 in l1_list:
-            l1_epochs = [parse_iso_epoch(l1.get('updatedAt'))]
-            try:
-                idx = level1_flat.index(l1)
-                l2_list = level2_children_lists[idx] if idx < len(level2_children_lists) else []
-                for l2 in l2_list:
-                    l2_ep = parse_iso_epoch(l2.get('updatedAt'))
-                    if l2_ep is not None:
-                        l1_epochs.append(l2_ep)
-            except ValueError:
-                pass
+            for l1 in l1_list:
+                l1_epochs = [parse_iso_epoch(l1.get('updatedAt'))]
+                try:
+                    idx = level1_flat.index(l1)
+                    l2_list = level2_children_lists[idx] if idx < len(level2_children_lists) else []
+                    for l2 in l2_list:
+                        l2_ep = parse_iso_epoch(l2.get('updatedAt'))
+                        if l2_ep is not None:
+                            l1_epochs.append(l2_ep)
+                except ValueError:
+                    pass
 
-            valid_l1_eps = [e for e in l1_epochs if e is not None]
-            if valid_l1_eps:
-                max_l1 = max(valid_l1_eps)
-                dt = datetime.fromtimestamp(max_l1, tz=timezone.utc)
-                l1['updatedAt'] = dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
-                l1['lastModified'] = l1['updatedAt']
-                root_epochs.append(max_l1)
+                valid_l1_eps = [e for e in l1_epochs if e is not None]
+                if valid_l1_eps:
+                    max_l1 = max(valid_l1_eps)
+                    dt = datetime.fromtimestamp(max_l1, tz=timezone.utc)
+                    l1['updatedAt'] = dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+                    l1['lastModified'] = l1['updatedAt']
+                    root_epochs.append(max_l1)
 
-        valid_r_eps = [e for e in root_epochs if e is not None]
-        if valid_r_eps:
-            max_r = max(valid_r_eps)
-            dt = datetime.fromtimestamp(max_r, tz=timezone.utc)
-            root['updatedAt'] = dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
-            root['lastModified'] = root['updatedAt']
+            valid_r_eps = [e for e in root_epochs if e is not None]
+            if valid_r_eps:
+                max_r = max(valid_r_eps)
+                dt = datetime.fromtimestamp(max_r, tz=timezone.utc)
+                root['updatedAt'] = dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+                root['lastModified'] = root['updatedAt']
 
-        r_vid, r_vname = format_and_add(root)
+            r_vid, r_vname = format_and_add(root)
 
-        for l1 in l1_list:
-            l1_vid, l1_vname = format_and_add(l1, parent_vid=r_vid, parent_vname=r_vname)
+            for l1 in l1_list:
+                l1_vid, l1_vname = format_and_add(l1, parent_vid=r_vid, parent_vname=r_vname)
 
-            try:
-                idx = level1_flat.index(l1)
-                l2_list = level2_children_lists[idx] if idx < len(level2_children_lists) else []
-                for l2 in l2_list:
-                    format_and_add(l2, parent_vid=l1_vid, parent_vname=l1_vname)
-            except ValueError:
-                pass
+                try:
+                    idx = level1_flat.index(l1)
+                    l2_list = level2_children_lists[idx] if idx < len(level2_children_lists) else []
+                    for l2 in l2_list:
+                        format_and_add(l2, parent_vid=l1_vid, parent_vname=l1_vname)
+                except ValueError:
+                    pass
+    else:
+        for root in base_content:
+            format_and_add(root)
+
 
     # Scoping filter for vendor users or requested vendor_id
     allowed_vendor_ids = get_user_vendor_ids(user) if user else None

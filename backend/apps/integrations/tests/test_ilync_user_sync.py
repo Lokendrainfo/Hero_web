@@ -29,7 +29,7 @@ class IlyncUserSyncTestCase(TestCase):
             "districts": ["GANGANAGAR"]
         }
 
-        user = sync_ilync_user_to_django(ilync_data, set_password_if_new="TestPass@123")
+        user, _ = sync_ilync_user_to_django(ilync_data, set_password_if_new="TestPass@123")
         self.assertIsNotNone(user)
         self.assertEqual(user.username, "8764129290")
         self.assertEqual(user.employee_id, "8764129290")
@@ -42,5 +42,5 @@ class IlyncUserSyncTestCase(TestCase):
 
         # Test updating existing user
         ilync_data["designation"] = "Field-Supervisor"
-        updated_user = sync_ilync_user_to_django(ilync_data)
+        updated_user, _ = sync_ilync_user_to_django(ilync_data)
         self.assertEqual(updated_user.id, user.id)
