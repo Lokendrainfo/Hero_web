@@ -6,10 +6,11 @@ import concurrent.futures
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from django.conf import settings
-from apps.integrations.exceptions import IlyncTimeoutException, IlyncAPIException
+from apps.integrations.exceptions import IlyncTimeoutException, IlyncAPIException, IlyncNotFoundException
 from apps.integrations.ilync_client import IlyncClient
 from apps.common.vendor_scope import get_user_vendor_ids, check_vendor_access
 from apps.vendors.models import Vendor
+from apps.common.ttl_cache import ttl_get, ttl_set
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,25 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         req_vendor = q_params.get('vendor_id') or q_params.get('vendor')
     if not req_vendor:
         req_vendor = extra_params.get('vendor_id') or extra_params.get('vendor')
+
+    # Fast cache retrieval if not explicitly requesting refresh and not running test suite
+    import sys
+    is_testing = 'test' in sys.argv or getattr(settings, 'TESTING', False)
+
+    force_refresh = is_testing
+    if request and not force_refresh:
+        q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
+        force_refresh = str(q_params.get('refresh', '')).lower() in ('1', 'true') or str(q_params.get('nocache', '')).lower() in ('1', 'true')
+
+    auth_cache_key = None
+    if not force_refresh:
+        u_id = getattr(user, 'id', 'anon') if user else 'anon'
+        u_type = getattr(user, 'user_type', '') if user else ''
+        extra_tuple = tuple(sorted((str(k), str(v)) for k, v in extra_params.items())) if extra_params else ()
+        auth_cache_key = f"auth_tasks:{u_id}:{u_type}:{task_type}:{page}:{size}:{req_vendor}:{extra_tuple}"
+        cached_res = ttl_get(auth_cache_key)
+        if cached_res is not None:
+            return cached_res
 
     # If a specific vendor is requested or scoped, dynamically derive vendor search query for upstream iLync search
     if 'search' not in extra_params and 'query' not in extra_params:
@@ -226,19 +246,32 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         if not isinstance(base_content, list):
             base_content = []
 
+    exec_timeout = getattr(settings, 'ILYNC_TASK_EXECUTION_TIMEOUT', (2.0, 4.0))
+    batch_timeout = getattr(settings, 'ILYNC_TASK_EXECUTION_BATCH_TIMEOUT', 15.0)
+    max_workers_cfg = getattr(settings, 'ILYNC_TASK_EXECUTION_MAX_WORKERS', 10)
+
     # Parallel fetch child task hierarchy (Levels 1 & 2)
     def fetch_children_batch(tasks_list):
         def fetch_c(t):
             tid = t.get('id')
             if not tid:
                 return []
+            child_cache_key = f"task_children:{tid}"
+            if not is_testing:
+                cached_c = ttl_get(child_cache_key)
+                if cached_c is not None:
+                    return cached_c
             try:
                 c_res = client.get_task_children(tid)
-                return c_res.get('data', []) if isinstance(c_res, dict) else []
+                c_data = c_res.get('data', []) if isinstance(c_res, dict) else []
+                if not is_testing:
+                    ttl_set(child_cache_key, c_data, ttl_seconds=600)
+                return c_data
             except Exception:
                 return []
 
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        workers = min(max_workers_cfg, max(1, len(tasks_list))) if tasks_list else 1
+        with ThreadPoolExecutor(max_workers=workers) as executor:
             return list(executor.map(fetch_c, tasks_list))
 
     level1_children_lists = fetch_children_batch(base_content)
@@ -255,29 +288,53 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
     for l2_sub in level2_children_lists:
         all_raw_tasks.extend(l2_sub)
 
+    # Exclude parent container tasks that have children so we only query leaf tasks for segment telemetry
+    parent_ids = set()
+    for i, root in enumerate(base_content):
+        c_list = level1_children_lists[i] if i < len(level1_children_lists) else []
+        if c_list and root.get('id'):
+            parent_ids.add(root.get('id'))
+
+    for idx, l1 in enumerate(level1_flat):
+        l2_list = level2_children_lists[idx] if idx < len(level2_children_lists) else []
+        if l2_list and l1.get('id'):
+            parent_ids.add(l1.get('id'))
+
     seg_candidates = [
         t for t in all_raw_tasks
-        if isinstance(t, dict) and (
+        if isinstance(t, dict) and t.get('id') not in parent_ids and (
             str((t.get('routeSnapshot') if isinstance(t.get('routeSnapshot'), dict) else {}).get('level') or '').upper() == 'SEGMENT'
             or t.get('depth') == 2
+            or (t.get('totalSegments') == 0)
             or not t.get('totalSegments')
         )
     ]
-
-    exec_timeout = getattr(settings, 'ILYNC_TASK_EXECUTION_TIMEOUT', (2.0, 4.0))
-    batch_timeout = getattr(settings, 'ILYNC_TASK_EXECUTION_BATCH_TIMEOUT', 15.0)
-    max_workers_cfg = getattr(settings, 'ILYNC_TASK_EXECUTION_MAX_WORKERS', 10)
 
     def fetch_exec(t):
         tid = t.get('id')
         if not tid:
             return (t, None)
+
+        exec_cache_key = f"task_exec:{tid}"
+        if not is_testing:
+            cached_exec = ttl_get(exec_cache_key)
+            if cached_exec is not None:
+                if isinstance(cached_exec, dict) and (cached_exec.get('_not_found') or cached_exec.get('_empty')):
+                    return (t, None)
+                return (t, cached_exec)
+
         t0 = time.time()
         try:
             e_res = client.get_task_execution(tid, timeout=exec_timeout)
             elapsed_ms = round((time.time() - t0) * 1000, 2)
             e_data = e_res.get('data') if isinstance(e_res, dict) else None
+            if not is_testing:
+                ttl_set(exec_cache_key, e_data or {'_empty': True}, ttl_seconds=300)
             return (t, e_data)
+        except IlyncNotFoundException:
+            if not is_testing:
+                ttl_set(exec_cache_key, {'_not_found': True}, ttl_seconds=300)
+            return (t, None)
         except (IlyncTimeoutException, requests.exceptions.Timeout) as exc:
             elapsed_ms = round((time.time() - t0) * 1000, 2)
             logger.warning(
@@ -338,8 +395,9 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
             executor.shutdown(wait=False)
 
         for task_obj, exec_data in exec_pairs:
-            if not task_obj or not isinstance(exec_data, dict):
+            if not task_obj or not isinstance(exec_data, dict) or exec_data.get('_not_found') or exec_data.get('_empty'):
                 continue
+
             
             # Attach live iLync execution directly to task_obj in-memory (no DB writes)
             task_obj['taskExecution'] = exec_data
@@ -642,7 +700,7 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
                 final_tasks.append(t)
 
         calc_tot = len(final_tasks)
-        return {
+        final_payload = {
             "results": final_tasks,
             "content": final_tasks,
             "total": calc_tot,
@@ -653,9 +711,12 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
             "currentPage": current_page,
             "pageSize": page_size
         }
+        if auth_cache_key:
+            ttl_set(auth_cache_key, final_payload, ttl_seconds=60)
+        return final_payload
 
     calc_tot = len(expanded_results)
-    return {
+    final_payload = {
         "results": expanded_results,
         "content": expanded_results,
         "total": calc_tot,
@@ -666,6 +727,9 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         "currentPage": current_page,
         "pageSize": page_size
     }
+    if auth_cache_key:
+        ttl_set(auth_cache_key, final_payload, ttl_seconds=60)
+    return final_payload
 
 
 def is_task_authorized_for_user(user, task_id, request=None):

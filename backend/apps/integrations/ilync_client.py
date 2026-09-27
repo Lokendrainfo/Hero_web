@@ -2,6 +2,7 @@ import time
 import logging
 import requests
 from django.conf import settings
+from requests.adapters import HTTPAdapter
 from .ilync_auth import IlyncAuthManager
 from .exceptions import (
     IlyncAPIException,
@@ -18,6 +19,9 @@ class IlyncClient:
         self.base_url = IlyncAuthManager.get_base_url().rstrip('/')
         self.timeout = timeout
         self.session = requests.Session()
+        adapter = HTTPAdapter(pool_connections=25, pool_maxsize=25)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
         self.request = request
 
     def _request(self, method, endpoint, params=None, data=None, json=None, headers=None, timeout=None, _is_retry=False):
