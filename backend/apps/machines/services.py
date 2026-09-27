@@ -205,28 +205,26 @@ def collect_ilync_assigned_chassis(vendors):
     assigned = set()
     if not vendors:
         return assigned
+
+    # Fast path: retrieve bulk vendor list in one fast call
+    live_map = {}
     try:
-        from concurrent.futures import ThreadPoolExecutor
-        from apps.integrations.ilync_client import IlyncClient
+        from apps.attendance.views import get_live_ilync_vendors
+        live_list, _ = get_live_ilync_vendors(ttl=60)
+        if isinstance(live_list, list):
+            for v_data in live_list:
+                if isinstance(v_data, dict):
+                    v_id = str(v_data.get('id') or v_data.get('external_vendor_id') or '').strip()
+                    if v_id:
+                        live_map[v_id] = v_data
     except Exception:
-        return assigned
+        pass
 
     vendors = list(vendors)
+    remaining_vendors = []
 
-    def _one(v_obj):
+    def _extract_codes(payload):
         codes = set()
-        ext_v_id = getattr(v_obj, 'external_vendor_id', None) or getattr(v_obj, 'id', None)
-        if not ext_v_id:
-            return codes
-        try:
-            live_res = IlyncClient(timeout=(2.0, 5.0)).get_vendor_by_id(ext_v_id)
-        except Exception:
-            return codes
-        payload = (
-            live_res.get('data')
-            if (isinstance(live_res, dict) and live_res.get('success'))
-            else (live_res if isinstance(live_res, dict) else {})
-        )
         macs = (payload or {}).get('machines') or (payload or {}).get('assigned_machines') or []
         if not isinstance(macs, list):
             return codes
@@ -249,9 +247,43 @@ def collect_ilync_assigned_chassis(vendors):
                 codes.add(item.strip())
         return codes
 
-    workers = min(8, max(1, len(vendors)))
+    for v_obj in vendors:
+        ext_v_id = getattr(v_obj, 'external_vendor_id', None) or getattr(v_obj, 'id', None)
+        if not ext_v_id:
+            continue
+        ext_v_str = str(ext_v_id).strip()
+        if ext_v_str in live_map:
+            assigned.update(_extract_codes(live_map[ext_v_str]))
+        else:
+            remaining_vendors.append(v_obj)
+
+    if not remaining_vendors:
+        return assigned
+
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        from apps.integrations.ilync_client import IlyncClient
+    except Exception:
+        return assigned
+
+    def _one(v_obj):
+        ext_v_id = getattr(v_obj, 'external_vendor_id', None) or getattr(v_obj, 'id', None)
+        if not ext_v_id:
+            return set()
+        try:
+            live_res = IlyncClient(timeout=(3.0, 8.0)).get_vendor_by_id(ext_v_id)
+        except Exception:
+            return set()
+        payload = (
+            live_res.get('data')
+            if (isinstance(live_res, dict) and live_res.get('success'))
+            else (live_res if isinstance(live_res, dict) else {})
+        )
+        return _extract_codes(payload)
+
+    workers = min(4, max(1, len(remaining_vendors)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for codes in pool.map(_one, vendors):
+        for codes in pool.map(_one, remaining_vendors):
             assigned.update(codes)
     return assigned
 

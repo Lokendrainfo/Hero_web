@@ -207,10 +207,10 @@ CHANNEL_LAYERS = {
 
 # ILYNC Integration Configuration
 ILYNC_BASE_URL = os.environ.get('ILYNC_BASE_URL', 'https://ilync.tech')
-ILYNC_PHONE_NUMBER = os.environ.get('ILYNC_PHONE_NUMBER', '9654673404')
-ILYNC_PASSWORD = os.environ.get('ILYNC_PASSWORD', '9654673404')
-ILYNC_REFRESH_TOKEN = os.environ.get('ILYNC_REFRESH_TOKEN', '')
 ILYNC_API_TOKEN = os.environ.get('ILYNC_API_TOKEN', '')
+ILYNC_REFRESH_TOKEN = os.environ.get('ILYNC_REFRESH_TOKEN', '')
+ILYNC_PHONE_NUMBER = os.environ.get('ILYNC_PHONE_NUMBER', '')
+ILYNC_PASSWORD = os.environ.get('ILYNC_PASSWORD', '')
 
 # HDD Fiber Integration Configuration
 HDD_FIBER_BASE_URL = os.environ.get('HDD_FIBER_BASE_URL') or os.environ.get('FIBERFORCE_BASE_URL', 'https://api.hdd.fiberforce.in')

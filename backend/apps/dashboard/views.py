@@ -78,17 +78,39 @@ def _fetch_ilync_vendor_payloads(vendors):
     if not vendors:
         return []
 
+    live_map = {}
     try:
-        get_live_ilync_vendors(ttl=10)
+        live_list, _ = get_live_ilync_vendors(ttl=60)
+        if isinstance(live_list, list):
+            for v_data in live_list:
+                if isinstance(v_data, dict):
+                    v_id = str(v_data.get('id') or v_data.get('external_vendor_id') or '').strip()
+                    if v_id:
+                        live_map[v_id] = v_data
     except Exception:
         pass
 
-    def _get_one(v_obj):
-        detail = get_vendor_ilync_detail(v_obj, ttl=15) or {}
-        return (v_obj, detail if isinstance(detail, dict) else {})
+    results = []
+    missing_vendors = []
+    for v_obj in vendors:
+        ext_id = str(getattr(v_obj, 'external_vendor_id', None) or getattr(v_obj, 'id', None) or '').strip()
+        if ext_id and ext_id in live_map:
+            results.append((v_obj, live_map[ext_id]))
+        else:
+            missing_vendors.append(v_obj)
 
-    with ThreadPoolExecutor(max_workers=min(16, len(vendors))) as ex:
-        return list(ex.map(_get_one, vendors))
+    if missing_vendors:
+        def _get_one(v_obj):
+            try:
+                detail = get_vendor_ilync_detail(v_obj, ttl=60) or {}
+                return (v_obj, detail if isinstance(detail, dict) else {})
+            except Exception:
+                return (v_obj, {})
+
+        with ThreadPoolExecutor(max_workers=min(4, len(missing_vendors))) as ex:
+            results.extend(list(ex.map(_get_one, missing_vendors)))
+
+    return results
 
 
 def _ff_row_is_running(item):
