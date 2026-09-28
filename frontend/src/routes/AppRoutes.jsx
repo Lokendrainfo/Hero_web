@@ -48,6 +48,7 @@ const MachineShiftList = lazyComponent(() => import('../pages/machine_shift/Mach
 const MachineShiftCreate = lazyComponent(() => import('../pages/machine_shift/MachineShiftCreate'), 'MachineShiftCreate');
 const Notifications = lazyComponent(() => import('../pages/notifications/Notifications'), 'Notifications');
 const Profile = lazyComponent(() => import('../pages/settings/Profile'), 'Profile');
+const ApiDocs = lazyComponent(() => import('../pages/setup/ApiDocs'), 'ApiDocs');
 
 import { LoadingSpinner } from '../components/common/LoadingSpinner';
 
@@ -109,6 +110,8 @@ export const AppRoutes = () => {
             <Route path="/roles" element={<Roles />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/settings" element={<Profile />} />
+            <Route path="/setup/api" element={<ApiDocs />} />
+            <Route path="/api-docs" element={<Navigate to="/setup/api" replace />} />
           </Route>
           <Route element={<MapViewerLayout />}>
             <Route path="/map-view/:executionId" element={<HddExecutionMapPage />} />

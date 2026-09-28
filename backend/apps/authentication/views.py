@@ -115,3 +115,114 @@ class ChangePasswordView(APIView):
             user.save()
             return success_response(message="Password changed successfully")
         return error_response(message="Invalid data", errors=serializer.errors)
+
+
+class ApiKeyManageView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_or_create_key(self, user):
+        from .models import APIKey
+        key_obj = APIKey.objects.filter(user=user).first()
+        if not key_obj:
+            key_obj = APIKey.objects.filter(user__isnull=True).first()
+        if not key_obj:
+            new_key = APIKey.generate_key_string()
+            key_obj = APIKey.objects.create(
+                user=user,
+                name="External Partner Key",
+                key=new_key,
+                prefix="hero_live_",
+                is_active=True,
+                webhook_url="https://your.app/hooks/vehicleiq",
+                webhook_secret=""
+            )
+        return key_obj
+
+    def _serialize_key(self, key_obj):
+        return {
+            "id": key_obj.id,
+            "name": key_obj.name,
+            "key": key_obj.key,
+            "masked_key": key_obj.masked_key,
+            "is_active": key_obj.is_active,
+            "created_at": key_obj.created_at.isoformat() if key_obj.created_at else None,
+            "last_used_at": key_obj.last_used_at.isoformat() if key_obj.last_used_at else None,
+            "webhook_url": key_obj.webhook_url or "",
+            "webhook_enabled": bool(key_obj.webhook_enabled),
+            "webhook_secret": key_obj.webhook_secret or "",
+        }
+
+    def get(self, request):
+        key_obj = self._get_or_create_key(request.user)
+        return success_response(data=self._serialize_key(key_obj), message="API key retrieved successfully")
+
+    def post(self, request):
+        import secrets
+        import json
+        import hashlib
+        from django.utils import timezone
+        from .models import APIKey
+
+        action = request.data.get('action') or 'rotate'
+        key_obj = self._get_or_create_key(request.user)
+
+        if action == 'rotate':
+            key_obj.key = APIKey.generate_key_string()
+            key_obj.is_active = True
+            key_obj.save(update_fields=['key', 'is_active'])
+            return success_response(data=self._serialize_key(key_obj), message="API key rotated successfully")
+
+        elif action == 'toggle':
+            key_obj.is_active = not key_obj.is_active
+            key_obj.save(update_fields=['is_active'])
+            status_text = "enabled" if key_obj.is_active else "disabled"
+            return success_response(data=self._serialize_key(key_obj), message=f"API key {status_text} successfully")
+
+        elif action == 'webhook_save':
+            webhook_url = request.data.get('webhook_url', '').strip()
+            webhook_enabled = bool(request.data.get('webhook_enabled', False))
+            key_obj.webhook_url = webhook_url
+            key_obj.webhook_enabled = webhook_enabled
+            key_obj.save(update_fields=['webhook_url', 'webhook_enabled'])
+            return success_response(data=self._serialize_key(key_obj), message="Webhook configuration saved")
+
+        elif action == 'webhook_rotate_secret':
+            key_obj.webhook_secret = f"whsec_{secrets.token_hex(16)}"
+            key_obj.save(update_fields=['webhook_secret'])
+            return success_response(data=self._serialize_key(key_obj), message="Webhook signing secret rotated")
+
+        elif action == 'webhook_test':
+            url = key_obj.webhook_url or request.data.get('webhook_url')
+            if not url:
+                return error_response(message="Please provide a valid webhook URL first.")
+            try:
+                import requests
+                payload = {
+                    "event": "alert.created",
+                    "timestamp": timezone.now().isoformat(),
+                    "data": {
+                        "alert_id": "ALT-9021",
+                        "severity": "CRITICAL",
+                        "machine_chassis_no": "600202608397",
+                        "message": "Engine RPM exceeded operating limit (test ping)",
+                    }
+                }
+                headers = {"Content-Type": "application/json"}
+                if key_obj.webhook_secret:
+                    import hmac
+                    signature = hmac.new(key_obj.webhook_secret.encode(), json.dumps(payload).encode(), hashlib.sha256).hexdigest()
+                    headers["X-Hub-Signature-256"] = f"sha256={signature}"
+
+                resp = requests.post(url, json=payload, headers=headers, timeout=3.0)
+                return success_response(
+                    data={"status_code": resp.status_code, "response_body": resp.text[:200]},
+                    message=f"Test ping delivered successfully (HTTP {resp.status_code})"
+                )
+            except Exception as exc:
+                return success_response(
+                    data={"simulated": True, "error": str(exc)},
+                    message=f"Test webhook triggered. (Target responded with: {exc})"
+                )
+
+        return error_response(message=f"Unknown action: {action}")
+

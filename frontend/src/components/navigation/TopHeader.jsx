@@ -28,7 +28,9 @@ const ROUTE_TITLES = {
   '/users': 'Users',
   '/roles': 'Roles',
   '/notifications': 'Notifications',
-  '/settings': 'Profile'
+  '/settings': 'Profile',
+  '/setup/api': 'External API',
+  '/api-docs': 'API Docs'
 };
 
 export const TopHeader = ({ onToggleSidebar, onOpenDrawer }) => {

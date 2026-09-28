@@ -1,0 +1,870 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  LucideKey,
+  LucideEye,
+  LucideEyeOff,
+  LucideCopy,
+  LucideCheck,
+  LucideRefreshCw,
+  LucideBookOpen,
+  LucideSend,
+  LucidePlay,
+  LucideLink,
+  LucideCheckCircle2,
+  LucideAlertCircle,
+  LucideCode2,
+  LucideGlobe,
+  LucideShield,
+} from 'lucide-react';
+import axios from 'axios';
+import { apiKeyService } from '../../services/apiKeyService';
+import './ApiDocs.css';
+
+const ENDPOINTS_CATALOG = [
+  {
+    category: 'FLEET',
+    items: [
+      {
+        id: 'list_machines',
+        method: 'GET',
+        title: 'List machines',
+        path: '/api/v1/machines/',
+        description: 'Lean fleet list (identity + model + fuel card). For site, partners, and location use Get machine.',
+        params: [
+          { name: 'vendor_id', in: 'query', type: 'string', required: false, default: '', desc: 'Filter by partner external ID or Hero database ID' },
+          { name: 'status', in: 'query', type: 'string', required: false, default: '', desc: 'Filter by live operating status (RUNNING, IDLE, OFFLINE)' },
+          { name: 'filter', in: 'query', type: 'string', required: false, default: '', desc: 'Shortcut tab filter (All, Commissioned, Running, Idle)' },
+        ],
+      },
+      {
+        id: 'get_machine',
+        method: 'GET',
+        title: 'Get machine',
+        path: '/api/v1/machines/{id}/',
+        description: 'Detailed machine record including live telemetry, engine hours, sensors, fuel level, and assigned contractor.',
+        params: [
+          { name: 'id', in: 'path', type: 'string | number', required: true, default: '600202608397', desc: 'Machine chassis number (e.g. 600202608397) or internal ID' },
+        ],
+      },
+      {
+        id: 'machine_status',
+        method: 'GET',
+        title: 'Machine live telemetry',
+        path: '/api/v1/machines/{id}/status/',
+        description: 'Real-time telemetry payload directly from FiberForce IoT backbone (RPM, coolant temp, oil pressure, voltage, speed).',
+        params: [
+          { name: 'id', in: 'path', type: 'string', required: true, default: '600202608397', desc: 'Machine chassis number' },
+        ],
+      },
+      {
+        id: 'sync_fiberforce',
+        method: 'POST',
+        title: 'Online / offline status sync',
+        path: '/api/v1/machines/sync-fiberforce/',
+        description: 'Trigger on-demand manual synchronization with the FiberForce telemetry server.',
+        params: [],
+      },
+    ],
+  },
+  {
+    category: 'TRACKING & SENSORS',
+    items: [
+      {
+        id: 'live_tracking',
+        method: 'GET',
+        title: 'Live fleet GPS',
+        path: '/api/v1/tracking/',
+        description: 'Latest GPS coordinates, heading, speed, and real-time operational status for all active machines in scope.',
+        params: [
+          { name: 'vendor_id', in: 'query', type: 'string', required: false, default: '', desc: 'Filter tracking points by vendor external ID' },
+        ],
+      },
+      {
+        id: 'tracking_history',
+        method: 'GET',
+        title: 'Route breadcrumbs history',
+        path: '/api/v1/tracking/{id}/',
+        description: 'Historical GPS coordinate breadcrumb trail with timestamps and operational status.',
+        params: [
+          { name: 'id', in: 'path', type: 'string', required: true, default: '600202608397', desc: 'Machine chassis number or ID' },
+        ],
+      },
+    ],
+  },
+  {
+    category: 'TASKS & HDD',
+    items: [
+      {
+        id: 'my_tasks',
+        method: 'GET',
+        title: 'My assigned tasks',
+        path: '/api/v1/integrations/tasks/my-tasks/',
+        description: 'Optimized high-speed list of authorized HDD, trenching, and ducting tasks for field contractors.',
+        params: [
+          { name: 'task_type', in: 'query', type: 'string', required: false, default: 'FIBER_TRENCHING_DUCTING_TASK', desc: 'Filter by task type' },
+          { name: 'page', in: 'query', type: 'integer', required: false, default: '0', desc: 'Page index (0-indexed)' },
+          { name: 'size', in: 'query', type: 'integer', required: false, default: '20', desc: 'Number of tasks per page' },
+        ],
+      },
+      {
+        id: 'list_tasks',
+        method: 'GET',
+        title: 'List tasks hierarchy',
+        path: '/api/v1/tasks/',
+        description: 'Retrieve contractor tasks with depth, route snapshot, vendor snapshot, and execution progress.',
+        params: [
+          { name: 'status', in: 'query', type: 'string', required: false, default: '', desc: 'Filter by status (COMPLETED, IN_PROGRESS, CREATED)' },
+        ],
+      },
+    ],
+  },
+  {
+    category: 'ATTENDANCE',
+    items: [
+      {
+        id: 'fleet_attendance',
+        method: 'GET',
+        title: 'Fleet attendance records',
+        path: '/api/v1/attendance/',
+        description: 'Retrieve today’s attendance records for operators, technicians, and contractor machinery.',
+        params: [
+          { name: 'date', in: 'query', type: 'string', required: false, default: '', desc: 'Target date (YYYY-MM-DD)' },
+        ],
+      },
+      {
+        id: 'record_attendance',
+        method: 'POST',
+        title: 'Record shift punch',
+        path: '/api/v1/attendance/',
+        description: 'Record machine check-in, check-out, or operational punch.',
+        params: [
+          { name: 'attendance_type', in: 'body', type: 'string', required: true, default: 'MACHINE', desc: 'MACHINE or USER' },
+          { name: 'status', in: 'body', type: 'string', required: true, default: 'PRESENT', desc: 'PRESENT, CHECKED_IN, or OPERATING' },
+          { name: 'machine_chassis_no', in: 'body', type: 'string', required: true, default: '600202608397', desc: 'Chassis number' },
+        ],
+      },
+    ],
+  },
+  {
+    category: 'METRICS & FUEL',
+    items: [
+      {
+        id: 'dashboard_summary',
+        method: 'GET',
+        title: 'Dashboard summary KPIs',
+        path: '/api/v1/dashboard/summary/',
+        description: 'High-level operational summary: total fleet, commissioned count, real-time live running count, and daily bore output.',
+        params: [
+          { name: 'vendor', in: 'query', type: 'string', required: false, default: '', desc: 'Vendor ID or code filter' },
+          { name: 'date', in: 'query', type: 'string', required: false, default: '', desc: 'Date (YYYY-MM-DD)' },
+        ],
+      },
+      {
+        id: 'fuel_logs',
+        method: 'GET',
+        title: 'Fuel consumption logs',
+        path: '/api/v1/fuel/',
+        description: 'Machine refueling events, fuel consumption rates, sensor percentages, and theft alerts.',
+        params: [
+          { name: 'machine_id', in: 'query', type: 'string', required: false, default: '', desc: 'Filter logs by machine chassis or ID' },
+        ],
+      },
+    ],
+  },
+  {
+    category: 'ALERTS',
+    items: [
+      {
+        id: 'list_alerts',
+        method: 'GET',
+        title: 'List alerts',
+        path: '/api/v1/alerts/',
+        description: 'Retrieve active system alerts (OEM breakdowns, sudden fuel drops, geofence breaches).',
+        params: [
+          { name: 'is_read', in: 'query', type: 'boolean', required: false, default: 'false', desc: 'Filter by read/unread status' },
+          { name: 'severity', in: 'query', type: 'string', required: false, default: '', desc: 'CRITICAL, HIGH, MEDIUM, LOW' },
+        ],
+      },
+    ],
+  },
+];
+
+export const ApiDocs = () => {
+  const [apiKeyData, setApiKeyData] = useState(null);
+  const [revealKey, setRevealKey] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(false);
+  const [copiedBaseUrl, setCopiedBaseUrl] = useState(false);
+  const [copiedEndpointUrl, setCopiedEndpointUrl] = useState(false);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedResponse, setCopiedResponse] = useState(false);
+
+  // Webhook state
+  const [webhookUrl, setWebhookUrl] = useState('https://your.app/hooks/vehicleiq');
+  const [webhookEnabled, setWebhookEnabled] = useState(false);
+  const [webhookSecret, setWebhookSecret] = useState('');
+  const [revealSecret, setRevealSecret] = useState(false);
+
+  // Endpoint Selection & Playground
+  const [selectedEndpointId, setSelectedEndpointId] = useState('list_machines');
+  const [codeTab, setCodeTab] = useState('curl');
+  const [paramValues, setParamValues] = useState({});
+  const [pgLoading, setPgLoading] = useState(false);
+  const [pgResponse, setPgResponse] = useState(null);
+  const [toastMsg, setToastMsg] = useState(null);
+
+  // Calculate Base URL
+  const baseUrl = useMemo(() => {
+    return window.location.origin;
+  }, []);
+
+  const showToast = (msg) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(null), 3500);
+  };
+
+  // Fetch API key on load
+  useEffect(() => {
+    loadApiKey();
+  }, []);
+
+  const loadApiKey = async () => {
+    try {
+      const res = await apiKeyService.getApiKey();
+      if (res?.data) {
+        setApiKeyData(res.data);
+        if (res.data.webhook_url) setWebhookUrl(res.data.webhook_url);
+        if (res.data.webhook_enabled !== undefined) setWebhookEnabled(res.data.webhook_enabled);
+        if (res.data.webhook_secret) setWebhookSecret(res.data.webhook_secret);
+      }
+    } catch (err) {
+      console.error('Failed to load API key:', err);
+    }
+  };
+
+  const handleRotateKey = async () => {
+    if (!window.confirm('Are you sure you want to rotate your API key? Any systems using the old key will stop working immediately.')) {
+      return;
+    }
+    try {
+      const res = await apiKeyService.rotateApiKey();
+      if (res?.data) {
+        setApiKeyData(res.data);
+        setRevealKey(true);
+        showToast('API key rotated successfully. New key is now active.');
+      }
+    } catch (err) {
+      showToast('Failed to rotate API key.');
+    }
+  };
+
+  const handleToggleKey = async () => {
+    try {
+      const res = await apiKeyService.toggleApiKey();
+      if (res?.data) {
+        setApiKeyData(res.data);
+        showToast(`API key ${res.data.is_active ? 'enabled' : 'disabled'} successfully.`);
+      }
+    } catch (err) {
+      showToast('Failed to toggle API key state.');
+    }
+  };
+
+  const handleSaveWebhook = async () => {
+    try {
+      const res = await apiKeyService.saveWebhook(webhookUrl, webhookEnabled);
+      if (res?.data) {
+        setApiKeyData(res.data);
+        showToast('Webhook configuration saved.');
+      }
+    } catch (err) {
+      showToast('Failed to save webhook settings.');
+    }
+  };
+
+  const handleRotateSecret = async () => {
+    try {
+      const res = await apiKeyService.rotateWebhookSecret();
+      if (res?.data) {
+        setApiKeyData(res.data);
+        setWebhookSecret(res.data.webhook_secret);
+        setRevealSecret(true);
+        showToast('Webhook signing secret rotated.');
+      }
+    } catch (err) {
+      showToast('Failed to rotate webhook secret.');
+    }
+  };
+
+  const handleTestWebhook = async () => {
+    try {
+      const res = await apiKeyService.testWebhook(webhookUrl);
+      showToast(res?.message || 'Test webhook delivered successfully!');
+    } catch (err) {
+      showToast('Test webhook failed to reach destination.');
+    }
+  };
+
+  // Find currently selected endpoint
+  const selectedEndpoint = useMemo(() => {
+    for (const group of ENDPOINTS_CATALOG) {
+      const match = group.items.find((item) => item.id === selectedEndpointId);
+      if (match) return match;
+    }
+    return ENDPOINTS_CATALOG[0].items[0];
+  }, [selectedEndpointId]);
+
+  // Reset param values when endpoint changes
+  useEffect(() => {
+    if (selectedEndpoint?.params) {
+      const defaults = {};
+      selectedEndpoint.params.forEach((p) => {
+        defaults[p.name] = p.default || '';
+      });
+      setParamValues(defaults);
+      setPgResponse(null);
+    }
+  }, [selectedEndpoint]);
+
+  // Construct dynamic full URL for selected endpoint
+  const currentEndpointUrl = useMemo(() => {
+    let p = selectedEndpoint.path;
+    Object.keys(paramValues).forEach((key) => {
+      if (p.includes(`{${key}}`)) {
+        p = p.replace(`{${key}}`, encodeURIComponent(paramValues[key] || ''));
+      }
+    });
+    const queryParams = selectedEndpoint.params
+      ?.filter((item) => item.in === 'query' && paramValues[item.name])
+      .map((item) => `${encodeURIComponent(item.name)}=${encodeURIComponent(paramValues[item.name])}`)
+      .join('&');
+
+    const fullPath = queryParams ? `${p}?${queryParams}` : p;
+    return `${baseUrl}${fullPath}`;
+  }, [selectedEndpoint, paramValues, baseUrl]);
+
+  // Execute Request via Live Playground
+  const handleExecutePlayground = async () => {
+    setPgLoading(true);
+    setPgResponse(null);
+    const startTime = performance.now();
+    const token = apiKeyData?.key || 'hero_live_partner_key';
+
+    try {
+      let resolvedPath = selectedEndpoint.path;
+      Object.keys(paramValues).forEach((key) => {
+        if (resolvedPath.includes(`{${key}}`)) {
+          resolvedPath = resolvedPath.replace(`{${key}}`, paramValues[key] || '');
+        }
+      });
+
+      const qParams = {};
+      selectedEndpoint.params
+        ?.filter((item) => item.in === 'query' && paramValues[item.name])
+        .forEach((item) => {
+          qParams[item.name] = paramValues[item.name];
+        });
+
+      const bodyParams = {};
+      selectedEndpoint.params
+        ?.filter((item) => item.in === 'body' && paramValues[item.name])
+        .forEach((item) => {
+          bodyParams[item.name] = paramValues[item.name];
+        });
+
+      const response = await axios({
+        method: selectedEndpoint.method,
+        url: resolvedPath,
+        params: qParams,
+        data: Object.keys(bodyParams).length > 0 ? bodyParams : undefined,
+        headers: {
+          'X-API-Key': token,
+        },
+      });
+
+      const elapsed = Math.round(performance.now() - startTime);
+      setPgResponse({
+        status: response.status,
+        statusText: response.statusText || 'OK',
+        latency: elapsed,
+        data: response.data,
+      });
+    } catch (err) {
+      const elapsed = Math.round(performance.now() - startTime);
+      setPgResponse({
+        status: err.response?.status || 500,
+        statusText: err.response?.statusText || 'Error',
+        latency: elapsed,
+        data: err.response?.data || { error: err.message },
+      });
+    } finally {
+      setPgLoading(false);
+    }
+  };
+
+  // Generate Code Snippets
+  const codeSnippet = useMemo(() => {
+    const key = apiKeyData?.key || 'hero_live_your_key_here';
+    const url = currentEndpointUrl;
+
+    if (codeTab === 'curl') {
+      if (selectedEndpoint.method === 'GET') {
+        return `curl -X GET "${url}" \\\n  -H "X-API-Key: ${key}" \\\n  -H "Content-Type: application/json"`;
+      } else {
+        const bodyObj = {};
+        selectedEndpoint.params?.filter((p) => p.in === 'body').forEach((p) => {
+          bodyObj[p.name] = paramValues[p.name] || p.default;
+        });
+        const bodyStr = JSON.stringify(bodyObj, null, 2).replace(/"/g, '\\"');
+        return `curl -X POST "${url}" \\\n  -H "X-API-Key: ${key}" \\\n  -H "Content-Type: application/json" \\\n  -d "${bodyStr}"`;
+      }
+    } else if (codeTab === 'js') {
+      return `const response = await fetch("${url}", {
+  method: "${selectedEndpoint.method}",
+  headers: {
+    "X-API-Key": "${key}",
+    "Content-Type": "application/json"
+  }${selectedEndpoint.method !== 'GET' ? ',\n  body: JSON.stringify({...})' : ''}
+});
+const data = await response.json();
+console.log(data);`;
+    } else if (codeTab === 'python') {
+      return `import requests
+
+url = "${url}"
+headers = {
+    "X-API-Key": "${key}",
+    "Content-Type": "application/json"
+}
+
+response = requests.${selectedEndpoint.method.toLowerCase()}(url, headers=headers)
+print(response.status_code)
+print(response.json())`;
+    }
+    return '';
+  }, [codeTab, selectedEndpoint, currentEndpointUrl, apiKeyData, paramValues]);
+
+  return (
+    <div className="api-docs-container">
+      {/* Header & Subtitle */}
+      <div className="api-docs-header">
+        <div className="api-docs-category">Setup</div>
+        <h1 className="api-docs-title">External API</h1>
+        <p className="api-docs-subtitle">
+          Partner integration — chassis-keyed, API-key auth, live playground
+        </p>
+      </div>
+
+      {/* Base URL Card */}
+      <div className="base-url-card">
+        <div className="base-url-left">
+          <span className="base-url-label">Base URL</span>
+          <span className="base-url-text">{baseUrl}</span>
+        </div>
+        <div className="base-url-right">
+          <span className="header-spec-badge">Header: X-API-Key: &lt;key&gt;</span>
+          <button
+            type="button"
+            className="btn-copy-url"
+            onClick={() => {
+              navigator.clipboard.writeText(baseUrl);
+              setCopiedBaseUrl(true);
+              setTimeout(() => setCopiedBaseUrl(false), 2000);
+            }}
+          >
+            {copiedBaseUrl ? <LucideCheck size={14} color="#059669" /> : <LucideCopy size={14} />}
+            {copiedBaseUrl ? 'Copied' : 'Copy URL'}
+          </button>
+        </div>
+      </div>
+
+      {/* Top 2 Configuration Cards */}
+      <div className="api-config-grid">
+        {/* Left: API Key Card */}
+        <div className="config-card">
+          <div>
+            <div className="config-card-header">
+              <div>
+                <h2 className="config-card-title">API key</h2>
+                <p className="config-card-desc">Reveal anytime with the eye icon — copy when visible</p>
+              </div>
+              <span className={`status-pill ${apiKeyData?.is_active ? 'active' : 'disabled'}`}>
+                {apiKeyData?.is_active ? <LucideShield size={12} /> : <LucideAlertCircle size={12} />}
+                {apiKeyData?.is_active ? 'Active' : 'Disabled'}
+              </span>
+            </div>
+
+            <div className="field-group">
+              <label className="field-label">API Key</label>
+              <div className="input-with-actions">
+                <input
+                  type="text"
+                  readOnly
+                  className="key-input"
+                  value={
+                    revealKey
+                      ? apiKeyData?.key || 'hero_live_SZtfFK_ylDL8DzNDpeRnGxCj00ZJ2eNwUWJnHYDUl14'
+                      : apiKeyData?.masked_key || 'hero_live_••••••••••••QCek'
+                  }
+                />
+                <button
+                  type="button"
+                  className="key-icon-btn"
+                  title={revealKey ? 'Hide Key' : 'Reveal Key'}
+                  onClick={() => setRevealKey(!revealKey)}
+                >
+                  {revealKey ? <LucideEyeOff size={16} /> : <LucideEye size={16} />}
+                </button>
+                <button
+                  type="button"
+                  className="key-icon-btn"
+                  title="Copy Key"
+                  onClick={() => {
+                    const k = apiKeyData?.key || '';
+                    if (k) {
+                      navigator.clipboard.writeText(k);
+                      setCopiedKey(true);
+                      setTimeout(() => setCopiedKey(false), 2000);
+                      showToast('API key copied to clipboard.');
+                    }
+                  }}
+                >
+                  {copiedKey ? <LucideCheck size={16} color="#059669" /> : <LucideCopy size={16} />}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="card-actions">
+            <button type="button" className="btn-action-secondary" onClick={handleRotateKey}>
+              <LucideRefreshCw size={14} /> Rotate
+            </button>
+            <button
+              type="button"
+              className={apiKeyData?.is_active ? 'btn-action-danger' : 'btn-action-primary green'}
+              onClick={handleToggleKey}
+            >
+              {apiKeyData?.is_active ? 'Disable' : 'Enable'}
+            </button>
+          </div>
+        </div>
+
+        {/* Right: Alert Webhook Card */}
+        <div className="config-card">
+          <div>
+            <div className="config-card-header">
+              <div>
+                <h2 className="config-card-title">Alert webhook</h2>
+                <p className="config-card-desc">Live POST when alerts are created</p>
+              </div>
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => setSelectedEndpointId('list_alerts')}
+              >
+                <LucideBookOpen size={13} /> Integration docs
+              </button>
+            </div>
+
+            <div className="field-group">
+              <div className="input-with-actions">
+                <span style={{ padding: '0 10px', color: '#9ca3af' }}>
+                  <LucideLink size={15} />
+                </span>
+                <input
+                  type="text"
+                  className="key-input"
+                  placeholder="https://your.app/hooks/vehicleiq"
+                  value={webhookUrl}
+                  onChange={(e) => setWebhookUrl(e.target.value)}
+                />
+              </div>
+
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={webhookEnabled}
+                  onChange={(e) => setWebhookEnabled(e.target.checked)}
+                />
+                <span>Enable live pushes</span>
+              </label>
+
+              <label className="field-label">Webhook Signing Secret</label>
+              <div className="secret-text">
+                {webhookSecret ? (
+                  <span className="secret-code">
+                    {revealSecret ? webhookSecret : '••••••••••••••••••••••••••••••••'}
+                  </span>
+                ) : (
+                  'No secret yet — click Rotate secret'
+                )}
+                {webhookSecret && (
+                  <button
+                    type="button"
+                    className="key-icon-btn"
+                    style={{ display: 'inline-flex', verticalAlign: 'middle', padding: '0 6px' }}
+                    onClick={() => setRevealSecret(!revealSecret)}
+                  >
+                    {revealSecret ? <LucideEyeOff size={13} /> : <LucideEye size={13} />}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="card-actions">
+            <button type="button" className="btn-action-primary green" onClick={handleSaveWebhook}>
+              Save
+            </button>
+            <button type="button" className="btn-action-secondary" onClick={handleRotateSecret}>
+              Rotate secret
+            </button>
+            <button type="button" className="btn-action-secondary" onClick={handleTestWebhook}>
+              <LucideSend size={13} /> Send test
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Split Endpoints & Documentation / Playground */}
+      <div className="endpoints-split-container">
+        {/* Left: Endpoints Navigation Sidebar */}
+        <div className="endpoints-sidebar">
+          <div className="endpoints-sidebar-header">
+            <LucideBookOpen size={16} /> Endpoints
+          </div>
+          <div className="endpoints-nav-list">
+            {ENDPOINTS_CATALOG.map((group) => (
+              <div key={group.category}>
+                <div className="endpoint-category-title">
+                  {group.category} ({group.items.length})
+                </div>
+                {group.items.map((item) => {
+                  const isSelected = item.id === selectedEndpoint.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`endpoint-nav-item ${isSelected ? 'active' : ''}`}
+                      onClick={() => setSelectedEndpointId(item.id)}
+                    >
+                      <span className={`method-badge ${item.method.toLowerCase()}`}>
+                        {item.method}
+                      </span>
+                      <span>{item.title}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right: Endpoint Documentation & Interactive Playground */}
+        <div className="endpoint-detail-content">
+          <div className="endpoint-detail-header">
+            <div className="endpoint-title-row">
+              <span className={`method-badge ${selectedEndpoint.method.toLowerCase()}`}>
+                {selectedEndpoint.method}
+              </span>
+              <h2 className="endpoint-title">{selectedEndpoint.title}</h2>
+            </div>
+            <button
+              type="button"
+              className="btn-copy-url"
+              onClick={() => {
+                navigator.clipboard.writeText(currentEndpointUrl);
+                setCopiedEndpointUrl(true);
+                setTimeout(() => setCopiedEndpointUrl(false), 2000);
+              }}
+            >
+              {copiedEndpointUrl ? <LucideCheck size={14} color="#059669" /> : <LucideCopy size={14} />}
+              {copiedEndpointUrl ? 'Copied' : 'Copy URL'}
+            </button>
+          </div>
+
+          <p className="endpoint-desc">{selectedEndpoint.description}</p>
+
+          {/* Full Path Box */}
+          <div className="endpoint-url-bar">
+            <span className="endpoint-url-text">{currentEndpointUrl}</span>
+          </div>
+
+          {/* Query / Request Fields Table */}
+          <div className="section-subtitle-row">
+            <h3 className="section-h3">Query / request fields</h3>
+            <p className="section-hint">Fields and what they mean</p>
+          </div>
+
+          {selectedEndpoint.params && selectedEndpoint.params.length > 0 ? (
+            <table className="params-table">
+              <thead>
+                <tr>
+                  <th>Field</th>
+                  <th>In</th>
+                  <th>Type</th>
+                  <th>Required</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedEndpoint.params.map((p) => (
+                  <tr key={p.name}>
+                    <td className="param-name">{p.name}</td>
+                    <td className="param-type">{p.in}</td>
+                    <td className="param-type">{p.type}</td>
+                    <td>
+                      {p.required ? (
+                        <span className="param-badge-req">Required</span>
+                      ) : (
+                        <span className="param-badge-opt">Optional</span>
+                      )}
+                    </td>
+                    <td>{p.desc}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 20 }}>No request parameters required.</p>
+          )}
+
+          {/* Code Examples Box */}
+          <div className="code-box-container">
+            <div className="code-box-header">
+              <div className="code-tabs">
+                <button
+                  type="button"
+                  className={`code-tab-btn ${codeTab === 'curl' ? 'active' : ''}`}
+                  onClick={() => setCodeTab('curl')}
+                >
+                  cURL
+                </button>
+                <button
+                  type="button"
+                  className={`code-tab-btn ${codeTab === 'js' ? 'active' : ''}`}
+                  onClick={() => setCodeTab('js')}
+                >
+                  JavaScript
+                </button>
+                <button
+                  type="button"
+                  className={`code-tab-btn ${codeTab === 'python' ? 'active' : ''}`}
+                  onClick={() => setCodeTab('python')}
+                >
+                  Python
+                </button>
+              </div>
+              <button
+                type="button"
+                className="btn-code-copy"
+                onClick={() => {
+                  navigator.clipboard.writeText(codeSnippet);
+                  setCopiedCode(true);
+                  setTimeout(() => setCopiedCode(false), 2000);
+                }}
+              >
+                {copiedCode ? <LucideCheck size={13} color="#38bdf8" /> : <LucideCopy size={13} />}
+                {copiedCode ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <pre className="code-pre">{codeSnippet}</pre>
+          </div>
+
+          {/* Live Playground ("Try It") */}
+          <div className="playground-box">
+            <div className="section-subtitle-row" style={{ marginTop: 0 }}>
+              <h3 className="section-h3">Live Playground</h3>
+              <p className="section-hint">Test request directly against your HERO environment</p>
+            </div>
+
+            {selectedEndpoint.params && selectedEndpoint.params.length > 0 && (
+              <div className="playground-inputs-grid">
+                {selectedEndpoint.params.map((p) => (
+                  <div key={p.name} className="pg-input-item">
+                    <label className="pg-label">
+                      {p.name} {p.required && <span style={{ color: '#dc2626' }}>*</span>}
+                    </label>
+                    <input
+                      type="text"
+                      className="pg-input"
+                      placeholder={p.default || `e.g. ${p.name}`}
+                      value={paramValues[p.name] !== undefined ? paramValues[p.name] : ''}
+                      onChange={(e) =>
+                        setParamValues({
+                          ...paramValues,
+                          [p.name]: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="pg-actions-row">
+              <button
+                type="button"
+                className="btn-send-request"
+                disabled={pgLoading}
+                onClick={handleExecutePlayground}
+              >
+                {pgLoading ? (
+                  <>
+                    <LucideRefreshCw size={14} className="spin-animation" /> Executing...
+                  </>
+                ) : (
+                  <>
+                    <LucidePlay size={14} fill="#ffffff" /> Send Request
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Response Viewer */}
+            {pgResponse && (
+              <div className="response-container">
+                <div className="response-header">
+                  <div className="response-meta">
+                    <span
+                      className={`status-badge ${
+                        pgResponse.status >= 200 && pgResponse.status < 300 ? 'ok' : 'err'
+                      }`}
+                    >
+                      {pgResponse.status} {pgResponse.statusText}
+                    </span>
+                    <span className="latency-badge">{pgResponse.latency} ms</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-code-copy"
+                    onClick={() => {
+                      navigator.clipboard.writeText(JSON.stringify(pgResponse.data, null, 2));
+                      setCopiedResponse(true);
+                      setTimeout(() => setCopiedResponse(false), 2000);
+                    }}
+                  >
+                    {copiedResponse ? <LucideCheck size={13} color="#38bdf8" /> : <LucideCopy size={13} />}
+                    {copiedResponse ? 'Copied' : 'Copy JSON'}
+                  </button>
+                </div>
+                <pre className="response-pre">
+                  {JSON.stringify(pgResponse.data, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Floating Toast Notification */}
+      {toastMsg && (
+        <div className="toast-notice">
+          <LucideCheckCircle2 size={16} color="#34d399" />
+          <span>{toastMsg}</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ApiDocs;

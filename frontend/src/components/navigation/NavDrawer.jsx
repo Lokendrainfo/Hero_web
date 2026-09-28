@@ -6,7 +6,7 @@ import {
   LucideLayoutDashboard, LucideTruck, LucideNavigation, LucideCheckSquare, LucideUsers, LucideCalendarCheck,
   LucideDollarSign, LucideFuel, LucideRepeat, LucideFileText, LucideWrench, LucideAlertOctagon, LucideAlertTriangle,
   LucidePackage, LucideBuilding, LucideUserCheck, LucideShieldCheck, LucideBell, LucideSettings, LucideX, LucideGlobe,
-  LucideLayers, LucideTag, LucideLineChart, LucideArrowLeftRight
+  LucideLayers, LucideTag, LucideLineChart, LucideArrowLeftRight, LucideBookOpen
 } from 'lucide-react';
 
 export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) => {
@@ -71,6 +71,12 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
         { label: 'Vendors', path: '/vendors', icon: LucideBuilding, perm: 'vendors.view' },
         { label: 'Users', path: '/users', icon: LucideUserCheck, perm: 'users.view' },
         { label: 'Roles', path: '/roles', icon: LucideShieldCheck, perm: 'roles.view' }
+      ]
+    },
+    {
+      title: 'Setup',
+      items: [
+        { label: 'API Docs', path: '/setup/api', icon: LucideBookOpen, perm: null }
       ]
     },
     {

@@ -158,3 +158,36 @@ class User(AbstractUser):
         if self.vendor_id and self.vendor_id not in v_ids:
             v_ids.append(self.vendor_id)
         return v_ids
+
+
+class APIKey(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='api_keys', null=True, blank=True)
+    name = models.CharField(max_length=100, default='External Partner Key')
+    key = models.CharField(max_length=128, unique=True, db_index=True)
+    prefix = models.CharField(max_length=16, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    # Webhook integration
+    webhook_url = models.CharField(max_length=500, blank=True, null=True)
+    webhook_enabled = models.BooleanField(default=False)
+    webhook_secret = models.CharField(max_length=64, blank=True, null=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    @classmethod
+    def generate_key_string(cls, prefix='hero_live_'):
+        import secrets
+        return f"{prefix}{secrets.token_urlsafe(32)}"
+
+    @property
+    def masked_key(self):
+        if not self.key or len(self.key) < 12:
+            return "••••••••••••"
+        return f"{self.key[:10]}...{self.key[-4:]}"
+
+    def __str__(self):
+        return f"{self.name} ({self.masked_key})"
+
