@@ -14,7 +14,7 @@ class RoleViewSet(viewsets.ModelViewSet):
     pagination_class = None
 
     def get_queryset(self):
-        if Role.objects.count() == 0 or not Role.objects.filter(code='SUPER_ADMIN').exists() or Permission.objects.count() < len(SYSTEM_PERMISSIONS):
+        if Role.objects.count() == 0 or not Role.objects.filter(code='SUPER_ADMIN').exists() or Permission.objects.count() < len(SYSTEM_PERMISSIONS) or not Permission.objects.filter(code='api_docs.view', category='Integrations').exists():
             seed_roles_and_permissions()
         return Role.objects.all().order_by('id')
 
@@ -147,6 +147,6 @@ class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
     pagination_class = None
 
     def get_queryset(self):
-        if Permission.objects.count() < len(SYSTEM_PERMISSIONS):
+        if Permission.objects.count() < len(SYSTEM_PERMISSIONS) or not Permission.objects.filter(code='api_docs.view', category='Integrations').exists():
             seed_roles_and_permissions()
         return Permission.objects.all().order_by('category', 'id')

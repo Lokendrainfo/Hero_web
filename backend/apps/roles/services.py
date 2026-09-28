@@ -149,7 +149,8 @@ SYSTEM_PERMISSIONS = [
     # External Integrations
     ("integrations.view", "View External Integrations", "Integrations", "View iLync enterprise integration sync status"),
     ("integrations.manage", "Manage Integrations", "Integrations", "Trigger external data sync and API connections"),
-    ("api_docs.view", "View External API Docs", "Setup & Integrations", "Allows viewing external API documentation and managing partner API keys and webhooks"),
+    ("api_docs.view", "View External API Docs", "Integrations", "Allows viewing external API documentation and interactive playground"),
+    ("api_docs.manage", "Manage API Keys & Webhooks", "Integrations", "Allows generating, rotating, and managing external partner API keys and webhooks"),
 
     # System Audit Logs
     ("audit.view", "View Audit Logs", "Audit Logs", "View administrative change audit logs and security activity"),
