@@ -456,15 +456,21 @@ class DashboardSummaryView(APIView):
         target_vendors = list(v_qs)
 
         def _ff_machines():
-            cached_ff = ttl_get('dashboard:ff_machines')
+            cache_k = f"dashboard:ff_machines:{getattr(user, 'id', 'anon')}:{req_v or 'all'}"
+            cached_ff = ttl_get(cache_k)
             if cached_ff is not None:
                 return cached_ff
             try:
-                from apps.integrations.fiberforce.client import FiberForceClient
-                payload = FiberForceClient().get_machines()
-                data = payload.get('data') if isinstance(payload, dict) else []
-                rows = data if isinstance(data, list) else []
-                ttl_set('dashboard:ff_machines', rows, ttl_seconds=30)
+                from apps.machines.services import fetch_live_fiberforce_machines
+                p = {"vendor": req_v} if (req_v and str(req_v).strip() and str(req_v).lower() != 'all') else None
+                ff_res = fetch_live_fiberforce_machines(user, p)
+                rows = ff_res.get('results') or ff_res.get('data') or []
+                if not rows:
+                    from apps.integrations.fiberforce.client import FiberForceClient
+                    payload = FiberForceClient().get_machines()
+                    data = payload.get('data') if isinstance(payload, dict) else []
+                    rows = data if isinstance(data, list) else []
+                ttl_set(cache_k, rows, ttl_seconds=20)
                 return rows
             except Exception as exc:
                 print("[Dashboard] FiberForce machines list error:", exc)
@@ -567,28 +573,48 @@ class DashboardSummaryView(APIView):
         total_machines = machines_qs.count()
         active_alerts = Alert.objects.filter(is_read=False).count() if total_machines > 0 else 0
 
-        active_m = (
-            machines_qs.filter(status='RUNNING').first() or
-            machines_qs.filter(is_online=True).first() or
-            machines_qs.filter(current_fuel_level__gt=0).first() or
-            machines_qs.first()
-        )
+        live_running_chassis = [
+            str(m.get('machine_chassis_no') or '').strip()
+            for m in (ff_machines or [])
+            if _ff_row_is_running(m)
+        ]
+        active_m = None
+        if live_running_chassis:
+            active_m = machines_qs.filter(
+                Q(machine_chassis_no__in=live_running_chassis) | Q(serial_number__in=live_running_chassis)
+            ).first()
 
-        fuel_litres = safe_float(active_m.current_fuel_level if active_m else 0)
-        state_label = active_m.status if active_m else 'IDLE'
-        is_online = active_m.is_online if active_m else False
-        today_consumption = safe_float(active_m.today_consumption if active_m else 0)
-        engine_hours_today = safe_float(active_m.engine_hours_today if active_m else 0.0)
+        if not active_m:
+            active_m = (
+                machines_qs.filter(status='RUNNING').first() or
+                machines_qs.filter(is_online=True).first() or
+                machines_qs.filter(current_fuel_level__gt=0).first() or
+                machines_qs.first()
+            )
+
+        live_active_data = None
+        if active_m:
+            for item in (ff_machines or []):
+                if isinstance(item, dict) and str(item.get('machine_chassis_no') or '').strip() == str(active_m.machine_chassis_no).strip():
+                    live_active_data = item
+                    break
+
+        fuel_litres = safe_float(live_active_data.get('current_fuel_level') if live_active_data else (active_m.current_fuel_level if active_m else 0))
+        is_online = bool(live_active_data.get('is_online')) if (live_active_data and 'is_online' in live_active_data) else (active_m.is_online if active_m else False)
+        state_label = (live_active_data.get('state_label') or live_active_data.get('status')) if live_active_data else (active_m.status if active_m else 'IDLE')
+        status_val = 'RUNNING' if (_ff_row_is_running(live_active_data) if live_active_data else (is_online or (active_m and active_m.status == 'RUNNING'))) else (active_m.status if active_m else 'IDLE')
+        today_consumption = safe_float(live_active_data.get('today_consumption') if live_active_data else (active_m.today_consumption if active_m else 0))
+        engine_hours_today = safe_float(live_active_data.get('engine_hours_today') if live_active_data else (active_m.engine_hours_today if active_m else 0.0))
         hrs = int(engine_hours_today)
         mins = int((engine_hours_today % 1) * 60)
-        runtime_display = active_m.runtime_str if (active_m and active_m.runtime_str and active_m.runtime_str != '00h 00m') else f"{hrs:02d}h {mins:02d}m"
+        runtime_display = (live_active_data.get('runtime_str') if live_active_data else None) or (active_m.runtime_str if (active_m and active_m.runtime_str and active_m.runtime_str != '00h 00m') else f"{hrs:02d}h {mins:02d}m")
 
         machine_status_widget = {
-            "id": active_m.id if active_m else None,
-            "name": active_m.name if active_m else "No Machine Available",
-            "chassis_no": active_m.machine_chassis_no if active_m else "N/A",
+            "id": (live_active_data.get('id') if live_active_data else None) or (active_m.id if active_m else None),
+            "name": (live_active_data.get('name') if live_active_data else None) or (active_m.name if active_m else "No Machine Available"),
+            "chassis_no": (live_active_data.get('machine_chassis_no') if live_active_data else None) or (active_m.machine_chassis_no if active_m else "N/A"),
             "is_online": is_online,
-            "status": "RUNNING" if is_online or (active_m and active_m.status == 'RUNNING') else (active_m.status if active_m else "IDLE"),
+            "status": status_val,
             "state_label": state_label,
             "runtime": runtime_display,
             "current_fuel_level": f"{fuel_litres:.2f} L",
