@@ -201,15 +201,48 @@ class MachineShiftRequestSerializer(serializers.ModelSerializer):
             belongs = True
         elif vendor.external_vendor_id and machine.vendor and machine.vendor.external_vendor_id == vendor.external_vendor_id:
             belongs = True
-        elif machine.vendor_id is None:
+        elif machine.vendor_id is None or (machine.vendor and machine.vendor.name.upper() in ('HERO INFRASTRUCTURE', 'HERO', 'UNASSIGNED')):
             machine.vendor = vendor
             machine.save(update_fields=['vendor'])
             belongs = True
+        else:
+            # Check normalized partner name match (e.g. "Premium infra solutions" vs "Premium infra solutions 1")
+            import re
+            norm_v = re.sub(r'[\d\s\-_]+', '', (vendor.name or '').lower())
+            norm_mv = re.sub(r'[\d\s\-_]+', '', (machine.vendor.name or '').lower()) if machine.vendor else ''
+            if norm_v and norm_mv and (norm_v == norm_mv or norm_v in norm_mv or norm_mv in norm_v):
+                machine.vendor = vendor
+                machine.save(update_fields=['vendor'])
+                belongs = True
+            else:
+                # Live iLync assignment verification
+                try:
+                    from apps.attendance.views import get_live_ilync_vendors
+                    chassis = str(machine.machine_chassis_no or machine.serial_number or '').strip()
+                    vendors_list, _ = get_live_ilync_vendors(ttl=60)
+                    for v_data in (vendors_list or []):
+                        v_ext = str(v_data.get('id') or v_data.get('external_vendor_id') or '').strip()
+                        v_pname = str(v_data.get('partnerName') or v_data.get('name') or '').strip().lower()
+                        norm_pname = re.sub(r'[\d\s\-_]+', '', v_pname)
+                        if (vendor.external_vendor_id and v_ext == str(vendor.external_vendor_id).strip()) or (norm_v and norm_pname and norm_v == norm_pname):
+                            assigned_m = v_data.get('assigned_machines') or v_data.get('machines') or []
+                            for m_item in assigned_m:
+                                m_code = str(m_item.get('machine_chassis_no') or m_item.get('machineNo') or m_item.get('serial_number') or m_item.get('chassis_no') or '') if isinstance(m_item, dict) else str(m_item)
+                                if chassis and (chassis in m_code or m_code in chassis):
+                                    machine.vendor = vendor
+                                    machine.save(update_fields=['vendor'])
+                                    belongs = True
+                                    break
+                        if belongs:
+                            break
+                except Exception:
+                    pass
 
         if not belongs:
             raise serializers.ValidationError({
                 "machine": f"Machine '{machine.name}' ({machine.machine_chassis_no or machine.serial_number}) does not belong to vendor '{vendor.name}'."
             })
+
 
         # Coordinate validations
         for prefix in ['a_point', 'b_point']:
