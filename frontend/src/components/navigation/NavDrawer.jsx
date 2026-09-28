@@ -76,7 +76,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
     {
       title: 'Setup',
       items: [
-        { label: 'API Docs', path: '/setup/api', icon: LucideBookOpen, perm: null }
+        { label: 'API Docs', path: '/setup/api', icon: LucideBookOpen, perm: 'api_docs.view' }
       ]
     },
     {

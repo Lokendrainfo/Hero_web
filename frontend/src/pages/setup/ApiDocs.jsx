@@ -17,6 +17,8 @@ import {
   LucideShield,
 } from 'lucide-react';
 import axios from 'axios';
+import { Navigate } from 'react-router-dom';
+import { useAuth } from '../../hooks/useAuth';
 import { apiKeyService } from '../../services/apiKeyService';
 import './ApiDocs.css';
 
@@ -190,6 +192,12 @@ const ENDPOINTS_CATALOG = [
 ];
 
 export const ApiDocs = () => {
+  const { hasPermission, isAdmin } = useAuth();
+
+  if (!isAdmin && !hasPermission('api_docs.view')) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   const [apiKeyData, setApiKeyData] = useState(null);
   const [revealKey, setRevealKey] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);

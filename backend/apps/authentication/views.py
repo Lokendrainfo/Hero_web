@@ -120,6 +120,15 @@ class ChangePasswordView(APIView):
 class ApiKeyManageView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    def _check_permission(self, request):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_superuser or 'ADMIN' in [r.upper() for r in user.get_role_list()]:
+            return True
+        perm_codes = user.get_permission_codes()
+        return 'api_docs.view' in perm_codes or 'roles.view' in perm_codes
+
     def _get_or_create_key(self, user):
         from .models import APIKey
         key_obj = APIKey.objects.filter(user=user).first()
@@ -153,10 +162,14 @@ class ApiKeyManageView(APIView):
         }
 
     def get(self, request):
+        if not self._check_permission(request):
+            return error_response(message="Permission denied: Requires api_docs.view permission.", status_code=403)
         key_obj = self._get_or_create_key(request.user)
         return success_response(data=self._serialize_key(key_obj), message="API key retrieved successfully")
 
     def post(self, request):
+        if not self._check_permission(request):
+            return error_response(message="Permission denied: Requires api_docs.view permission.", status_code=403)
         import secrets
         import json
         import hashlib

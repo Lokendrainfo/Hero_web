@@ -65,6 +65,14 @@ const DefaultRedirect = () => {
   return <Navigate to={defaultRoute} replace />;
 };
 
+const PermissionRoute = ({ perm, children }) => {
+  const { hasPermission, isAdmin } = useAuth();
+  if (isAdmin || (perm && hasPermission(perm))) {
+    return children;
+  }
+  return <Navigate to="/dashboard" replace />;
+};
+
 export const AppRoutes = () => {
   return (
     <Suspense fallback={<LoadingFallback />}>
@@ -110,7 +118,7 @@ export const AppRoutes = () => {
             <Route path="/roles" element={<Roles />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/settings" element={<Profile />} />
-            <Route path="/setup/api" element={<ApiDocs />} />
+            <Route path="/setup/api" element={<PermissionRoute perm="api_docs.view"><ApiDocs /></PermissionRoute>} />
             <Route path="/api-docs" element={<Navigate to="/setup/api" replace />} />
           </Route>
           <Route element={<MapViewerLayout />}>
