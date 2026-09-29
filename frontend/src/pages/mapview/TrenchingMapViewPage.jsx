@@ -108,27 +108,21 @@ export const TrenchingMapViewPage = () => {
         const existingDataScore = (existing.shots?.length || 0) + (existing.pits?.length || 0) + (existing.depthPoints?.length || 0);
         const currentDataScore = (ex.shots?.length || 0) + (ex.pits?.length || 0) + (ex.depthPoints?.length || 0);
 
-        const dExisting = parseAnyDate(existing.updatedAt || existing.lastModified);
-        const dCurrent = parseAnyDate(ex.updatedAt || ex.lastModified);
+        const dExisting = parseAnyDate(existing.lastModified || existing.updatedAt);
+        const dCurrent = parseAnyDate(ex.lastModified || ex.updatedAt);
         const tExisting = dExisting ? dExisting.getTime() : 0;
         const tCurrent = dCurrent ? dCurrent.getTime() : 0;
-        const latestTime = Math.max(tExisting, tCurrent);
-
-        const latestUpdatedAt = latestTime > 0 ? new Date(latestTime).toISOString() : (existing.updatedAt || ex.updatedAt);
-        const latestLastModified = latestTime > 0 ? new Date(latestTime).toLocaleString() : (existing.lastModified || ex.lastModified);
 
         // Check if either task specifically has execution or activity on selectedDate
         const targetDateYMD = parseDateToYMD(selectedDate) || selectedDate;
         const currentHasSelectedDate = Boolean(targetDateYMD && (
           (ex.availableDates || []).includes(targetDateYMD) ||
-          parseDateToYMD(ex.updatedAt) === targetDateYMD ||
-          parseDateToYMD(ex.lastModified) === targetDateYMD ||
+          parseDateToYMD(ex.lastModified || ex.updatedAt) === targetDateYMD ||
           parseDateToYMD(ex.date) === targetDateYMD
         ));
         const existingHasSelectedDate = Boolean(targetDateYMD && (
           (existing.availableDates || []).includes(targetDateYMD) ||
-          parseDateToYMD(existing.updatedAt) === targetDateYMD ||
-          parseDateToYMD(existing.lastModified) === targetDateYMD ||
+          parseDateToYMD(existing.lastModified || existing.updatedAt) === targetDateYMD ||
           parseDateToYMD(existing.date) === targetDateYMD
         ));
 
@@ -138,10 +132,8 @@ export const TrenchingMapViewPage = () => {
         } else if (existingHasSelectedDate && !currentHasSelectedDate) {
           preferCurrent = false;
         } else if (tCurrent !== tExisting) {
-          // Prefer the newer active task
           preferCurrent = tCurrent > tExisting;
         } else {
-          // If equal timestamps, prefer the one with richer telemetry
           preferCurrent = currentDataScore >= existingDataScore;
         }
 
@@ -171,6 +163,32 @@ export const TrenchingMapViewPage = () => {
 
         const mergedDates = Array.from(new Set([...(existing.availableDates || []), ...(ex.availableDates || [])])).sort();
 
+        // Determine green bulb timestamp (latest physical depth point or pit) across all merged telemetry
+        let greenBulbTimestamp = null;
+        let maxBulbTime = -Infinity;
+        mergedShots.forEach(s => {
+          (s.depthReadings || []).forEach(dp => {
+            const d = parseAnyDate(dp.capturedAt || dp.createdAt);
+            if (d && d.getTime() > maxBulbTime) {
+              maxBulbTime = d.getTime();
+              greenBulbTimestamp = d.toISOString();
+            }
+          });
+        });
+        if (!greenBulbTimestamp) {
+          mergedPits.forEach(p => {
+            const d = parseAnyDate(p.diggingTime || p.createdAt);
+            if (d && d.getTime() > maxBulbTime) {
+              maxBulbTime = d.getTime();
+              greenBulbTimestamp = d.toISOString();
+            }
+          });
+        }
+        if (!greenBulbTimestamp) {
+          const latestTime = Math.max(tExisting, tCurrent);
+          greenBulbTimestamp = latestTime > 0 ? new Date(latestTime).toISOString() : (ex.lastModified || existing.lastModified);
+        }
+
         // Use the ID of the primary task matching the selected date / active execution
         const targetId = (primary.shots?.length || primary.pits?.length || currentHasSelectedDate || existingHasSelectedDate)
           ? primary.id
@@ -180,8 +198,8 @@ export const TrenchingMapViewPage = () => {
           ...primary,
           id: targetId,
           user: existing.user || ex.user,
-          updatedAt: latestUpdatedAt,
-          lastModified: latestLastModified,
+          updatedAt: greenBulbTimestamp,
+          lastModified: greenBulbTimestamp,
           shots: mergedShots,
           pits: mergedPits,
           availableDates: mergedDates,
@@ -205,12 +223,11 @@ export const TrenchingMapViewPage = () => {
         params.vendor_id = selectedVendorId;
       }
 
-      // Step 1: Immediately fetch root tasks
-      const res = await taskService.getMyTasks(params);
-      const resData = res?.data || res;
+      // Fetch 100% real-time live execution tasks directly from upstream iLync API in-memory
+      const res = await taskService.getMapViewExecutions(params);
+      const resData = res?.data?.data || res?.data || res;
       const rawTasks = resData?.results || resData?.content || (Array.isArray(resData) ? resData : []);
 
-      // Step 2: Instantly process and display root tasks without firing hundreds of automatic background calls
       setRawTasksList(rawTasks);
       processAndSetExecutions(rawTasks);
       setLoading(false);
@@ -218,7 +235,16 @@ export const TrenchingMapViewPage = () => {
 
     } catch (err) {
       console.error('[TrenchingMapViewPage] Error fetching HDD execution data:', err);
-      setError(err?.message || 'Failed to load HDD execution data from server.');
+      // Fallback with live parameters if dedicated endpoint errors
+      try {
+        const fallbackRes = await taskService.getMyTasks({ ...params, live: true, telemetry: true });
+        const fbData = fallbackRes?.data?.data || fallbackRes?.data || fallbackRes;
+        const fbTasks = fbData?.results || fbData?.content || (Array.isArray(fbData) ? fbData : []);
+        setRawTasksList(fbTasks);
+        processAndSetExecutions(fbTasks);
+      } catch (fbErr) {
+        setError(err?.message || 'Failed to load live HDD execution data from server.');
+      }
       setLoading(false);
       setIsBackgroundLoading(false);
     }
@@ -266,8 +292,8 @@ export const TrenchingMapViewPage = () => {
     const grouped = {};
 
     filteredExecutions.forEach(ex => {
-      if (ex.district) dSet.add(ex.district);
-      if (ex.district && ex.block) bSet.add(`${ex.district}_${ex.block}`);
+      if (ex.district && ex.district !== 'OTHER') dSet.add(ex.district);
+      if (ex.district && ex.block && ex.district !== 'OTHER') bSet.add(`${ex.district}_${ex.block}`);
       if (ex.user) uSet.add(ex.user);
 
       const dName = ex.district || 'OTHER';
@@ -291,66 +317,12 @@ export const TrenchingMapViewPage = () => {
   }, [filteredExecutions]);
 
 
-  const fetchChildrenForTasks = async (targetTasks) => {
-    if (!targetTasks || targetTasks.length === 0) return;
-    const tasksToFetch = targetTasks.filter(t => t && t.id && !fetchedChildrenTaskIds.has(t.id));
-    if (tasksToFetch.length === 0) return;
-
-    setIsBackgroundLoading(true);
-    const newChildTasks = [];
-    const nextFetchedIds = new Set(fetchedChildrenTaskIds);
-
-    for (const rootTask of tasksToFetch) {
-      nextFetchedIds.add(rootTask.id);
-      try {
-        const childRes = await taskService.getTaskChildren(rootTask.id);
-        const childData = childRes?.data || childRes;
-        const children = Array.isArray(childData) ? childData : (childData?.results || childData?.content || []);
-        if (children.length > 0) {
-          newChildTasks.push(...children);
-        }
-      } catch (e) {
-        // Ignore individual errors
-      }
-    }
-
-    setFetchedChildrenTaskIds(nextFetchedIds);
-    if (newChildTasks.length > 0) {
-      setRawTasksList(prev => {
-        const updated = [...prev, ...newChildTasks];
-        processAndSetExecutions(updated);
-        return updated;
-      });
-    }
-    setIsBackgroundLoading(false);
-  };
-
-  const toggleDistrict = async (dName) => {
-    const isOpening = !expandedDistricts[dName];
+  const toggleDistrict = (dName) => {
     setExpandedDistricts(prev => ({ ...prev, [dName]: !prev[dName] }));
-
-    if (isOpening) {
-      const districtTasks = rawTasksList.filter(t => {
-        const dist = (t.district || t.circle || t.address?.district || '').toUpperCase();
-        return dist === dName.toUpperCase() || dName === 'OTHER';
-      });
-      await fetchChildrenForTasks(districtTasks);
-    }
   };
 
-  const toggleBlock = async (bKey) => {
-    const isOpening = !expandedBlocks[bKey];
+  const toggleBlock = (bKey) => {
     setExpandedBlocks(prev => ({ ...prev, [bKey]: !prev[bKey] }));
-
-    if (isOpening) {
-      const [dName, bName] = bKey.split('_');
-      const blockTasks = rawTasksList.filter(t => {
-        const dist = (t.district || t.circle || '').toUpperCase();
-        const blk = (t.block || '').toUpperCase();
-        return (dist === (dName || '').toUpperCase() || dName === 'OTHER') && (blk === (bName || '').toUpperCase() || bName === 'OTHER');
-      });
-      await fetchChildrenForTasks(blockTasks);
-    }
   };
 
 
@@ -541,27 +513,27 @@ export const TrenchingMapViewPage = () => {
                                       <tr key={ex.id}>
                                         <td><strong>{ex.user || '—'}</strong></td>
                                         <td>
-                                          {ex.workExecutionMode && ex.workExecutionMode !== 'N/A' ? (
-                                            <span className="badge-pill badge-neutral">{ex.workExecutionMode}</span>
-                                          ) : (
-                                            <span style={{ color: 'var(--text-muted)' }}>—</span>
-                                          )}
-                                        </td>
-                                        <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                                          {compactWhen(ex.updatedAt || ex.lastModified, ex.id, ex.updatedAt ? 'updatedAt' : 'lastModified')}
-                                        </td>
-                                        <td style={{ textAlign: 'right' }}>
-                                          <a
-                                            className="exec-tree-map"
-                                            href={`/map-view/${ex.id}${selectedDate ? `?date=${selectedDate}` : ''}`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            onClick={(e) => e.stopPropagation()}
-                                          >
-                                            Open map
-                                          </a>
-                                        </td>
-                                      </tr>
+                                            {ex.workExecutionMode && ex.workExecutionMode !== 'N/A' ? (
+                                              <span className="badge-pill badge-neutral">{ex.workExecutionMode}</span>
+                                            ) : (
+                                              <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                            )}
+                                          </td>
+                                          <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                            {compactWhen(ex.updatedAt || ex.lastModified, ex.id, ex.updatedAt ? 'updatedAt' : 'lastModified')}
+                                          </td>
+                                          <td style={{ textAlign: 'right' }}>
+                                            <a
+                                              className="exec-tree-map"
+                                              href={`/map-view/${ex.id}${selectedDate && (ex.availableDates || []).includes(selectedDate) ? `?date=${selectedDate}` : ''}`}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              Open map
+                                            </a>
+                                          </td>
+                                        </tr>
                                     ))}
                                   </tbody>
                                 </table>

@@ -24,6 +24,16 @@ export const taskService = {
     return promise;
   },
 
+  getMapViewExecutions: (params) => {
+    return api.get('/integrations/tasks/map-view-executions/', {
+      params: { ...params, live: true, telemetry: true }
+    });
+  },
+
+  getTrenchingDashboardSummary: (params) => {
+    return api.get('/integrations/tasks/trenching-dashboard-summary/', { params });
+  },
+
   getTypeCounts: () => api.get('/integrations/tasks/my-tasks/type-counts/'),
   getTaskDetail: (id) => api.get(`/integrations/tasks/${id}/`),
   getTaskExecution: (id) => api.get(`/integrations/tasks/${id}/execution/`),

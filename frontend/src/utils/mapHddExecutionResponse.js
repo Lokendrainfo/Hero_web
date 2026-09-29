@@ -143,15 +143,20 @@ export const filterHddExecutionByDate = (data, selectedDate) => {
 
   const depthRangeStr = (minDepth !== Infinity && maxDepth !== -Infinity) ? `${minDepth.toFixed(2)}m – ${maxDepth.toFixed(2)}m` : 'N/A';
 
-  // Determine Latest Position for selectedDateYMD
+  // Determine Latest Position & Green Bulb Timestamp for selectedDateYMD
   let latestPosition = null;
+  let greenBulbTime = null;
   if (filteredDepthPoints.length > 0) {
     const lastDp = filteredDepthPoints[filteredDepthPoints.length - 1];
-    latestPosition = { lat: lastDp.lat, lng: lastDp.lng, label: `Latest Depth Dt ${lastDp.pointNo} (${lastDp.depth}m)` };
+    latestPosition = { lat: lastDp.lat, lng: lastDp.lng, label: `Latest Depth Pt ${lastDp.pointNo} (${lastDp.depth}m)` };
+    greenBulbTime = lastDp.capturedAt || lastDp.createdAt || null;
   } else if (filteredPits.length > 0) {
     const lastPit = filteredPits[filteredPits.length - 1];
     latestPosition = { lat: lastPit.lat, lng: lastPit.lng, label: `Latest Pit ${lastPit.id}` };
+    greenBulbTime = lastPit.diggingTime || lastPit.createdAt || null;
   }
+
+  const greenBulbIso = greenBulbTime ? (parseAnyDate(greenBulbTime)?.toISOString() || greenBulbTime) : (data.lastModified || data.updatedAt);
 
   return {
     ...data,
@@ -159,6 +164,8 @@ export const filterHddExecutionByDate = (data, selectedDate) => {
     shots: filteredShots,
     pits: filteredPits,
     depthPoints: filteredDepthPoints,
+    updatedAt: greenBulbIso,
+    lastModified: greenBulbIso,
     trench: {
       lengthMeters: totalTrenchMeters,
       formattedDistance: formattedTrenchDistance,
@@ -413,56 +420,51 @@ export const mapHddExecutionResponse = (task, execution = null) => {
   const depthRangeStr = (minDepth !== Infinity && maxDepth !== -Infinity) ? `${minDepth.toFixed(2)}m – ${maxDepth.toFixed(2)}m` : 'N/A';
 
   let latestPosition = null;
+  let greenBulbTime = null;
   if (allDepthReadings.length > 0) {
     const lastDp = allDepthReadings[allDepthReadings.length - 1];
     latestPosition = { lat: lastDp.lat, lng: lastDp.lng, label: `Latest Depth Pt ${lastDp.pointNo} (${lastDp.depth}m)` };
+    greenBulbTime = lastDp.capturedAt || lastDp.createdAt || null;
   } else if (pits.length > 0) {
     const lastPit = pits[pits.length - 1];
     latestPosition = { lat: lastPit.lat, lng: lastPit.lng, label: `Latest Pit ${lastPit.id}` };
+    greenBulbTime = lastPit.diggingTime || lastPit.createdAt || null;
   }
 
   const availableDates = Array.from(availableDatesSet).sort();
 
-  // Compute the true latest modified timestamp from all available live telemetry
-  const candidateDates = [
-    task.updatedAt,
-    task.lastModified,
-    task.modifiedAt,
-    task.createdAt,
-    execution?.updatedAt,
-    execution?.createdAt,
-    task.taskExecution?.updatedAt,
-    task.taskExecution?.createdAt,
-    execData?.updatedAt,
-    execData?.createdAt,
-    fieldData?.submittedAt,
-  ];
+  // Last Modified is strictly based on the green bulb (latest physical depth point / pit)
+  let latestDateObj = parseAnyDate(greenBulbTime);
 
-  shots.forEach(s => {
-    candidateDates.push(s.endTime, s.startTime, s.updatedAt, s.createdAt);
-    if (Array.isArray(s.depthReadings)) {
-      s.depthReadings.forEach(dp => candidateDates.push(dp.capturedAt, dp.createdAt));
-    }
-  });
+  // Fallback to shots or task dates only if no physical depth points or pits exist
+  if (!latestDateObj) {
+    const candidateDates = [
+      task.updatedAt,
+      task.lastModified,
+      task.modifiedAt,
+      task.createdAt,
+      execution?.updatedAt,
+      execution?.createdAt,
+      task.taskExecution?.updatedAt,
+      task.taskExecution?.createdAt,
+      execData?.updatedAt,
+      execData?.createdAt,
+      fieldData?.submittedAt,
+    ];
 
-  pits.forEach(p => {
-    candidateDates.push(p.diggingTime, p.createdAt, p.updatedAt);
-  });
+    shots.forEach(s => {
+      candidateDates.push(s.endTime, s.startTime, s.updatedAt, s.createdAt);
+    });
 
-  allDepthReadings.forEach(dp => {
-    candidateDates.push(dp.capturedAt, dp.createdAt);
-  });
-
-  let latestDateObj = null;
-  let maxTime = -Infinity;
-
-  candidateDates.forEach(val => {
-    const d = parseAnyDate(val);
-    if (d && d.getTime() > maxTime) {
-      maxTime = d.getTime();
-      latestDateObj = d;
-    }
-  });
+    let maxTime = -Infinity;
+    candidateDates.forEach(val => {
+      const d = parseAnyDate(val);
+      if (d && d.getTime() > maxTime) {
+        maxTime = d.getTime();
+        latestDateObj = d;
+      }
+    });
+  }
 
   const finalUpdatedAt = latestDateObj ? latestDateObj.toISOString() : (task.updatedAt || null);
   const finalLastModified = latestDateObj ? latestDateObj.toISOString() : (task.updatedAt || null);
@@ -475,9 +477,9 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     taskCode: readableTaskCode,
     displayName: taskDisplayName || loc.locationName || 'HDD Execution Task',
     taskName: taskDisplayName,
-    state: loc.circle || 'RAJASTHAN',
-    district: loc.district || 'GANGANAGAR',
-    block: loc.blockName || loc.block || 'KARANPUR',
+    state: loc.circle || task.circle || task.state || loc.state || 'RAJASTHAN',
+    district: loc.district || task.district || loc.districtName || 'OTHER',
+    block: loc.blockName || loc.block || task.block || task.blockName || 'OTHER',
     user: task.assigneeSnapshot?.name || task.assigneeName || task.assignee?.name || task.assignedTo?.name || task.user?.name || task.username || 'Field Supervisor',
     userRole: task.assigneeSnapshot?.designation || task.assignee?.designation || 'Project Manager',
     vendorId: task.vendorId,

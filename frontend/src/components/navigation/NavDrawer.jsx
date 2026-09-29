@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { isNavPathActive } from '../../utils/navActive';
@@ -6,7 +6,7 @@ import {
   LucideLayoutDashboard, LucideTruck, LucideNavigation, LucideCheckSquare, LucideUsers, LucideCalendarCheck,
   LucideDollarSign, LucideFuel, LucideRepeat, LucideFileText, LucideWrench, LucideAlertOctagon, LucideAlertTriangle,
   LucidePackage, LucideBuilding, LucideUserCheck, LucideShieldCheck, LucideBell, LucideSettings, LucideX, LucideGlobe,
-  LucideLayers, LucideTag, LucideLineChart, LucideArrowLeftRight, LucideBookOpen
+  LucideLayers, LucideTag, LucideLineChart, LucideArrowLeftRight, LucideBookOpen, LucideChevronDown
 } from 'lucide-react';
 
 export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) => {
@@ -14,7 +14,26 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
   const { pathname } = useLocation();
   const activeMobile = isMobileOpen !== undefined ? isMobileOpen : isOpen;
   const activeVisible = isVisible !== undefined ? isVisible : true;
-  const canSee = (perm) => isAdmin || !perm || hasPermission(perm);
+  const canSee = (perm) => isAdmin || !perm || (Array.isArray(perm) ? perm.some(p => hasPermission(p)) : hasPermission(perm));
+
+  const [collapsedSections, setCollapsedSections] = useState(() => {
+    try {
+      const saved = localStorage.getItem('hero_collapsed_nav_sections');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const toggleSection = (title) => {
+    setCollapsedSections(prev => {
+      const next = { ...prev, [title]: !prev[title] };
+      try {
+        localStorage.setItem('hero_collapsed_nav_sections', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
 
   const menuSections = [
     {
@@ -31,9 +50,15 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
         { label: 'Refuel', path: '/refuel', icon: LucideFuel, perm: 'refuel.view' },
         { label: 'Tasks', path: '/tasks', icon: LucideCheckSquare, perm: 'tasks.view' },
         { label: 'Machine Shift Request', path: '/machine-shift', icon: LucideArrowLeftRight, perm: 'machine_shift.view' },
-        { label: 'Map View', path: '/map-view', icon: LucideGlobe, perm: 'mapview.view' },
         { label: 'Depth View', path: '/chart-view', icon: LucideLineChart, perm: 'chartview.view' },
         { label: 'Attendance', path: '/attendance', icon: LucideCalendarCheck, perm: 'attendance.view' }
+      ]
+    },
+    {
+      title: 'Map View',
+      items: [
+        { label: 'Dashboard', path: '/map-view', icon: LucideLayoutDashboard, perm: ['mapview.dashboard', 'mapview.view'] },
+        { label: 'Trenching', path: '/map-view/trenching', icon: LucideGlobe, perm: 'mapview.view' }
       ]
     },
     {
@@ -88,6 +113,22 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
     }
   ];
 
+  // Auto-expand section if active route is inside it
+  useEffect(() => {
+    menuSections.forEach(section => {
+      const hasActiveChild = section.items.some(item => isNavPathActive(pathname, item.path));
+      if (hasActiveChild && collapsedSections[section.title]) {
+        setCollapsedSections(prev => {
+          const next = { ...prev, [section.title]: false };
+          try {
+            localStorage.setItem('hero_collapsed_nav_sections', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+      }
+    });
+  }, [pathname]);
+
   return (
     <>
       {activeMobile && <div className="drawer-backdrop" onClick={onClose} />}
@@ -108,28 +149,41 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
             const visibleItems = section.items.filter(item => canSee(item.perm));
             if (visibleItems.length === 0) return null;
 
+            const isCollapsed = Boolean(collapsedSections[section.title]);
+
             return (
-              <div key={idx} className="nav-section">
-                <div className="nav-section-title">{section.title}</div>
-                <div className="nav-section-items">
-                  {visibleItems.map((item) => {
-                    const Icon = item.icon;
-                    const isActive = isNavPathActive(pathname, item.path);
-                    return (
-                      <NavLink
-                        key={item.path}
-                        to={item.path}
-                        className={`nav-link-item ${isActive ? 'active' : ''}`}
-                        onClick={() => {
-                          if (isMobileOpen && onClose) onClose();
-                        }}
-                      >
-                        <Icon size={18} className="nav-icon" />
-                        <span className="nav-label">{item.label}</span>
-                      </NavLink>
-                    );
-                  })}
-                </div>
+              <div key={idx} className={`nav-section ${isCollapsed ? 'is-collapsed' : ''}`}>
+                <button
+                  type="button"
+                  className={`nav-section-header ${isCollapsed ? 'is-collapsed' : ''}`}
+                  onClick={() => toggleSection(section.title)}
+                  aria-expanded={!isCollapsed}
+                  title={`${isCollapsed ? 'Expand' : 'Collapse'} ${section.title}`}
+                >
+                  <span className="nav-section-title-text">{section.title}</span>
+                  <LucideChevronDown size={14} className="nav-section-chevron" />
+                </button>
+                {!isCollapsed && (
+                  <div className="nav-section-items">
+                    {visibleItems.map((item) => {
+                      const Icon = item.icon;
+                      const isActive = isNavPathActive(pathname, item.path);
+                      return (
+                        <NavLink
+                          key={item.path}
+                          to={item.path}
+                          className={`nav-link-item ${isActive ? 'active' : ''}`}
+                          onClick={() => {
+                            if (isMobileOpen && onClose) onClose();
+                          }}
+                        >
+                          <Icon size={18} className="nav-icon" />
+                          <span className="nav-label">{item.label}</span>
+                        </NavLink>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}

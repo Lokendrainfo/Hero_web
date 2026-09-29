@@ -51,3 +51,19 @@ class Machine(models.Model):
 
     def __str__(self):
         return f"{self.name} [{self.machine_chassis_no or self.serial_number}]"
+
+
+class MachineVendorAssignmentHistory(models.Model):
+    machine = models.ForeignKey(Machine, on_delete=models.CASCADE, related_name='vendor_history')
+    vendor = models.ForeignKey(Vendor, on_delete=models.SET_NULL, null=True, blank=True, related_name='machine_history')
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    source = models.CharField(max_length=100, default='ILYNC_SYNC')
+    notes = models.TextField(blank=True, default='')
+
+    class Meta:
+        ordering = ['-assigned_at']
+        verbose_name = 'Machine Vendor Assignment History'
+        verbose_name_plural = 'Machine Vendor Assignment Histories'
+
+    def __str__(self):
+        return f"{self.machine.name} -> {self.vendor.name if self.vendor else 'Unassigned'} at {self.assigned_at}"

@@ -231,6 +231,10 @@ class MachineShiftRequestViewSet(viewsets.ModelViewSet):
             obj.status = MachineShiftRequest.STATUS_APPROVED_SCM
             obj.scm_approved_by = user
             obj.scm_approved_at = timezone.now()
+            obj.invoice_file = serializer.validated_data['invoice_file']
+            obj.invoice_number = serializer.validated_data['invoice_number']
+            obj.invoice_date = serializer.validated_data['invoice_date']
+            obj.invoice_amount = serializer.validated_data['invoice_amount']
             obj.rejected_by = None
             obj.rejected_at = None
             obj.rejection_reason = ''
@@ -242,7 +246,7 @@ class MachineShiftRequestViewSet(viewsets.ModelViewSet):
                 performed_by=user,
                 previous_status=prev_status,
                 new_status=obj.status,
-                remarks=remarks or "Approved by SCM."
+                remarks=f"Approved by SCM. Attached Invoice {obj.invoice_number} (Amount: ₹{obj.invoice_amount}). {remarks}".strip()
             )
 
         return success_response(

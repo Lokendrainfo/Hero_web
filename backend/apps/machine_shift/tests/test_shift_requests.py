@@ -212,16 +212,25 @@ class MachineShiftRequestTests(TestCase):
         req = self._create_sample_request(status_val="PENDING_SHIFTING")
         self.client.force_authenticate(user=self.scm_user)
 
+        dummy_pdf = SimpleUploadedFile("invoice.pdf", b"%PDF-1.4 dummy content", content_type="application/pdf")
         res = self.client.post(
             f"/api/v1/machine-shift/machine-shift-requests/{req.id}/scm-approve/",
-            {"remarks": "Approved by SCM Parvej"},
-            format="json"
+            {
+                "invoice_number": "INV-TEST-001",
+                "invoice_date": "2026-09-29",
+                "invoice_amount": "1500.00",
+                "invoice_file": dummy_pdf,
+                "remarks": "Approved by SCM Parvej"
+            },
+            format="multipart"
         )
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         req.refresh_from_db()
         self.assertEqual(req.status, "APPROVED_BY_SCM")
         self.assertEqual(req.scm_approved_by, self.scm_user)
         self.assertIsNotNone(req.scm_approved_at)
+        self.assertEqual(req.invoice_number, "INV-TEST-001")
+        self.assertEqual(float(req.invoice_amount), 1500.00)
 
         # Audit log verified
         audit = req.audit_logs.filter(action="SCM_APPROVED").first()
@@ -467,9 +476,17 @@ class MachineShiftRequestTests(TestCase):
         initial_audits = MachineShiftRequestAudit.objects.filter(request=req).count()
 
         self.client.force_authenticate(user=self.scm_user)
+        dummy_pdf = SimpleUploadedFile("invoice.pdf", b"%PDF-1.4 dummy content", content_type="application/pdf")
         self.client.post(
             f"/api/v1/machine-shift/machine-shift-requests/{req.id}/scm-approve/",
-            {"remarks": "Audit check remarks"}
+            {
+                "invoice_number": "INV-AUDIT-001",
+                "invoice_date": "2026-09-29",
+                "invoice_amount": "2500.00",
+                "invoice_file": dummy_pdf,
+                "remarks": "Audit check remarks"
+            },
+            format="multipart"
         )
 
         after_audits = MachineShiftRequestAudit.objects.filter(request=req).count()

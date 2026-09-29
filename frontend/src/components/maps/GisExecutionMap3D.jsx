@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Map, Marker, NavigationControl, Popup } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { buildGis3dScene, depthPoleHtml, flagMarkerHtml, gisPopupHtml } from '../../utils/gisMapMarkers';
+import { buildGis3dScene, depthPoleHtml, flagMarkerHtml, gisPopupHtml, escapeHtml } from '../../utils/gisMapMarkers';
 import { formatDepthM } from '../../utils/formatters';
 
 const SAT_MAX_ZOOM = 20;
@@ -249,6 +249,42 @@ const addSceneLayers = (map, scene) => {
     if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none');
   });
 
+  upsertSource(map, 'depth-segments', scene.depthSegments || { type: 'FeatureCollection', features: [] });
+  if (!map.getLayer('depth-segments-hit')) {
+    map.addLayer({
+      id: 'depth-segments-hit',
+      type: 'line',
+      source: 'depth-segments',
+      paint: {
+        'line-width': 30,
+        'line-opacity': 0.001,
+      },
+    });
+    map.addLayer({
+      id: 'depth-segments-highlight',
+      type: 'line',
+      source: 'depth-segments',
+      filter: ['==', 'segmentId', ''],
+      paint: {
+        'line-color': '#06b6d4',
+        'line-width': 4.5,
+        'line-opacity': 0.95,
+      },
+    });
+    map.addLayer({
+      id: 'depth-segments-glow',
+      type: 'line',
+      source: 'depth-segments',
+      filter: ['==', 'segmentId', ''],
+      paint: {
+        'line-color': '#ffffff',
+        'line-width': 2,
+        'line-dasharray': [2, 2],
+        'line-opacity': 0.9,
+      },
+    });
+  }
+
 };
 
 const enableAtmosphere = (map) => {
@@ -434,8 +470,180 @@ export default function GisExecutionMap3D({
       map.on('mouseleave', layer, hideHover);
     });
 
+    // 3D Depth-to-Depth Measurement popup and midpoint badge
+    const segmentPopup = new Popup({
+      closeButton: false,
+      closeOnClick: false,
+      offset: 16,
+      className: 'gis-popup gis-segment-popup',
+    });
+
+    let currentMidMarker = null;
+    let activeSegId = null;
+
+    const pointToSegmentDistancePx = (px, py, x1, y1, x2, y2) => {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const lenSq = dx * dx + dy * dy;
+      if (lenSq === 0) {
+        const ddx = px - x1;
+        const ddy = py - y1;
+        return { dist: Math.sqrt(ddx * ddx + ddy * ddy), t: 0 };
+      }
+      let t = ((px - x1) * dx + (py - y1) * dy) / lenSq;
+      t = Math.max(0, Math.min(1, t));
+      const projX = x1 + t * dx;
+      const projY = y1 + t * dy;
+      const ddx = px - projX;
+      const ddy = py - projY;
+      return { dist: Math.sqrt(ddx * ddx + ddy * ddy), t, projX, projY };
+    };
+
+    const activateSegment = (feature, lngLat) => {
+      const p = feature.properties;
+      const segId = p.segmentId;
+      if (activeSegId === segId && currentMidMarker) {
+        return;
+      }
+      activeSegId = segId;
+
+      map.getCanvas().style.cursor = 'crosshair';
+
+      if (map.getLayer('depth-segments-highlight')) {
+        map.setFilter('depth-segments-highlight', ['==', 'segmentId', segId]);
+      }
+      if (map.getLayer('depth-segments-glow')) {
+        map.setFilter('depth-segments-glow', ['==', 'segmentId', segId]);
+      }
+
+      // Display midpoint 3D Depth-to-Depth length badge marker matching user screenshot
+      if (!currentMidMarker) {
+        const badgeEl = document.createElement('div');
+        badgeEl.className = 'gis-3d-depth-badge-anchor';
+        badgeEl.innerHTML = `
+          <div class="gis-3d-depth-badge">
+            <span class="gis-3d-depth-badge-val"></span>
+          </div>
+          <div class="gis-3d-depth-badge-stem"></div>
+          <div class="gis-3d-depth-badge-dot"></div>
+        `;
+        currentMidMarker = new Marker({ element: badgeEl, anchor: 'bottom' });
+      }
+
+      const valEl = currentMidMarker.getElement().querySelector('.gis-3d-depth-badge-val');
+      if (valEl) {
+        valEl.textContent = p.slantDistFormatted || `${Number(p.slant3dM || p.distM).toFixed(2)}m`;
+      }
+      currentMidMarker.setLngLat([Number(p.midLng), Number(p.midLat)]).addTo(map);
+
+      segmentPopup
+        .setLngLat(lngLat || [Number(p.midLng), Number(p.midLat)])
+        .setHTML(`
+          <div style="padding: 10px 14px; font-family: Inter, system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; border-radius: 10px; border: 1px solid rgba(56, 189, 248, 0.4); box-shadow: 0 12px 28px rgba(0,0,0,0.65); min-width: 220px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.12); padding-bottom: 5px;">
+              <span style="font-size: 0.72rem; font-weight: 800; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.05em; display: inline-flex; align-items: center; gap: 4px;">
+                📐 3D Depth-to-Depth Length
+              </span>
+              <span style="font-size: 0.7rem; color: #94a3b8; font-weight: 600;">${escapeHtml(p.p1Name)} ➔ ${escapeHtml(p.p2Name)}</span>
+            </div>
+            <div style="display: flex; align-items: baseline; gap: 6px; margin: 4px 0 6px 0;">
+              <span style="font-size: 1.4rem; font-weight: 800; color: #38bdf8; letter-spacing: -0.02em;">
+                ${escapeHtml(p.slantDistFormatted)}
+              </span>
+              <span style="font-size: 0.72rem; color: #94a3b8;">(3D Slant Bore Length)</span>
+            </div>
+            <div style="font-size: 0.75rem; color: #cbd5e1; line-height: 1.55; background: rgba(255,255,255,0.05); padding: 6px 8px; border-radius: 6px;">
+              <div style="display: flex; justify-content: space-between;">
+                <span>Surface Horizontal Span:</span>
+                <strong style="color: #e2e8f0;">${escapeHtml(p.distFormatted)}</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-top: 2px;">
+                <span>${escapeHtml(p.p1Name)} Depth:</span>
+                <strong style="color: #c084fc;">${Number(p.depth1).toFixed(2)} m</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-top: 2px;">
+                <span>${escapeHtml(p.p2Name)} Depth:</span>
+                <strong style="color: #c084fc;">${Number(p.depth2).toFixed(2)} m</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; margin-top: 4px; padding-top: 4px; border-top: 1px dashed rgba(255,255,255,0.1); color: #94a3b8; font-size: 0.7rem;">
+                <span>Depth Delta (Δd):</span>
+                <strong style="color: #38bdf8;">Δ ${escapeHtml(p.deltaDepthFormatted)}</strong>
+              </div>
+            </div>
+          </div>
+        `)
+        .addTo(map);
+    };
+
+    const hideSegmentHover = () => {
+      if (!activeSegId) return;
+      activeSegId = null;
+      map.getCanvas().style.cursor = '';
+      if (map.getLayer('depth-segments-highlight')) {
+        map.setFilter('depth-segments-highlight', ['==', 'segmentId', '']);
+      }
+      if (map.getLayer('depth-segments-glow')) {
+        map.setFilter('depth-segments-glow', ['==', 'segmentId', '']);
+      }
+      if (currentMidMarker) {
+        currentMidMarker.remove();
+      }
+      segmentPopup.remove();
+    };
+
+    const onMapMouseMove = (e) => {
+      const scene = sceneRef.current;
+      const features = scene?.depthSegments?.features;
+      if (!features || !features.length) {
+        hideSegmentHover();
+        return;
+      }
+
+      const { x, y } = e.point;
+      let closestFeature = null;
+      let minDistance = 45; // screen pixel detection threshold
+
+      for (let i = 0; i < features.length; i++) {
+        const f = features[i];
+        const coords = f.geometry.coordinates;
+        if (!coords || coords.length < 2) continue;
+        const p1 = map.project(coords[0]);
+        const p2 = map.project(coords[1]);
+
+        // Fast bounding box check
+        const minX = Math.min(p1.x, p2.x) - 45;
+        const maxX = Math.max(p1.x, p2.x) + 45;
+        const minY = Math.min(p1.y, p2.y) - 45;
+        const maxY = Math.max(p1.y, p2.y) + 45;
+        if (x < minX || x > maxX || y < minY || y > maxY) continue;
+
+        const res = pointToSegmentDistancePx(x, y, p1.x, p1.y, p2.x, p2.y);
+        if (res.dist < minDistance) {
+          minDistance = res.dist;
+          closestFeature = f;
+        }
+      }
+
+      if (closestFeature) {
+        activateSegment(closestFeature, e.lngLat);
+      } else {
+        hideSegmentHover();
+      }
+    };
+
+    map.on('mousemove', onMapMouseMove);
+    map.on('mouseout', hideSegmentHover);
+    map.on('mouseleave', hideSegmentHover);
+
     return () => {
       clearInterval(readyPoll);
+      map.off('mousemove', onMapMouseMove);
+      map.off('mouseout', hideSegmentHover);
+      map.off('mouseleave', hideSegmentHover);
+      if (currentMidMarker) {
+        try { currentMidMarker.remove(); } catch (e) {}
+      }
+      try { segmentPopup.remove(); } catch (e) {}
       markersRef.current.forEach((m) => m.remove());
       markersRef.current = [];
       map.remove();

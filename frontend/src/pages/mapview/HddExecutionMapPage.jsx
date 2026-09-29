@@ -31,6 +31,27 @@ import {
 
 const GisExecutionMap3D = lazy(() => import('../../components/maps/GisExecutionMap3D'));
 
+const formatLastModified = (val) => {
+  if (!val || val === '—' || val === 'N/A') return '—';
+  const d = parseAnyDate(val) || new Date(val);
+  if (!d || isNaN(d.getTime())) return String(val);
+  const parts = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).formatToParts(d);
+  const day = parts.find(p => p.type === 'day')?.value || '';
+  let month = parts.find(p => p.type === 'month')?.value || '';
+  if (month === 'Sep') month = 'Sept';
+  const hour = parts.find(p => p.type === 'hour')?.value || '';
+  const minute = parts.find(p => p.type === 'minute')?.value || '';
+  const dayPeriod = (parts.find(p => p.type === 'dayPeriod')?.value || '').toLowerCase();
+  return `${day} ${month}, ${hour}:${minute} ${dayPeriod}`;
+};
+
 class Map3dBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -810,6 +831,20 @@ export const HddExecutionMapPage = () => {
           } catch (e) { /* ignore */ }
         }
 
+        const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+        let isStale = false;
+        if (isLast) {
+          const capTime = parseAnyDate(dp.capturedAt || dp.createdAt);
+          if (capTime && !isNaN(capTime.getTime())) {
+            isStale = (Date.now() - capTime.getTime()) > SIX_HOURS_MS;
+          } else {
+            const execTime = parseAnyDate(executionData?.lastModified || executionData?.updatedAt);
+            if (execTime && !isNaN(execTime.getTime())) {
+              isStale = (Date.now() - execTime.getTime()) > SIX_HOURS_MS;
+            }
+          }
+        }
+
         const size = depthDotSize(z);
         const m = L.marker([dp.lat, dp.lng], {
           icon: depthPointIcon({
@@ -818,6 +853,7 @@ export const HddExecutionMapPage = () => {
             showLabel,
             isKey,
             isLive: isLast,
+            isStale,
             side: idx % 2 === 0 ? 'right' : 'left',
           }),
           zIndexOffset: isLast ? 600 : 200,
@@ -960,8 +996,16 @@ export const HddExecutionMapPage = () => {
           </button>
           <div style={{ minWidth: 0 }}>
             <div className="page-title" style={{ fontSize: '0.9375rem' }}>Execution map</div>
-            <div className="page-subtitle" style={{ marginTop: 0 }}>
-              {executionData.user || 'Supervisor'} · {executionData.district || executionData.state || '—'}
+            <div className="page-subtitle" style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span>{executionData.user || 'Supervisor'} · {executionData.district || executionData.state || '—'}</span>
+              {(executionData.lastModified || executionData.updatedAt) && (
+                <>
+                  <span>·</span>
+                  <span style={{ color: 'var(--text-muted)' }}>
+                    Last modified: <strong style={{ color: 'var(--text-main, #0f172a)' }}>{formatLastModified(executionData.lastModified || executionData.updatedAt)}</strong>
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -68,12 +68,33 @@ export const MachineShiftDetailModal = ({
     }
   };
 
-  // Action Handlers
-  const handleApprove = async () => {
+  const handleApprove = async (e) => {
+    if (e) e.preventDefault();
+    if (!invoiceForm.invoice_number.trim()) {
+      showToast('Invoice Number is required for SCM Approval.', 'error');
+      return;
+    }
+    if (!invoiceForm.invoice_amount || Number(invoiceForm.invoice_amount) < 0) {
+      showToast('Please enter a valid invoice amount.', 'error');
+      return;
+    }
+    if (!invoiceForm.invoice_file && !request.invoice_file) {
+      showToast('Invoice File (PDF or Image) is required for SCM Approval.', 'error');
+      return;
+    }
     try {
       setSubmitting(true);
-      await machineShiftService.scmApprove(request.id, formRemarks);
-      showToast('Machine Shift Request approved successfully.', 'success');
+      const fd = new FormData();
+      if (invoiceForm.invoice_file) {
+        fd.append('invoice_file', invoiceForm.invoice_file);
+      }
+      fd.append('invoice_number', invoiceForm.invoice_number.trim());
+      fd.append('invoice_date', invoiceForm.invoice_date);
+      fd.append('invoice_amount', invoiceForm.invoice_amount);
+      if (formRemarks) fd.append('remarks', formRemarks);
+
+      await machineShiftService.scmApprove(request.id, fd);
+      showToast('Machine Shift Request approved with attached invoice.', 'success');
       setDialogAction(null);
       onUpdated();
     } catch (err) {
@@ -515,11 +536,57 @@ export const MachineShiftDetailModal = ({
               
               {/* SCM APPROVE DIALOG */}
               {dialogAction === 'approve' && (
-                <div>
-                  <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9375rem', color: 'var(--text-primary)' }}>Approve Machine Shift Request</h4>
+                <form onSubmit={handleApprove}>
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '0.9375rem', color: 'var(--text-primary)' }}>Approve Machine Shift Request & Attach Invoice</h4>
                   <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', margin: '0 0 12px 0' }}>
-                    Are you sure you want to approve request <strong>{request.request_id}</strong>? The shifting team will be authorized to begin relocation.
+                    Attaching invoice details and document is mandatory for SCM approval of request <strong>{request.request_id}</strong>.
                   </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 12 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Invoice Number *</label>
+                      <input
+                        type="text"
+                        required
+                        className="form-control"
+                        value={invoiceForm.invoice_number}
+                        onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })}
+                        placeholder="e.g. INV-2026-0042"
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Invoice Date *</label>
+                      <input
+                        type="date"
+                        required
+                        className="form-control"
+                        value={invoiceForm.invoice_date}
+                        onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_date: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Invoice Amount (₹) *</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        required
+                        className="form-control"
+                        value={invoiceForm.invoice_amount}
+                        onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_amount: e.target.value })}
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Invoice File (PDF/Image) *</label>
+                      <input
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png"
+                        required={!request.invoice_file}
+                        className="form-control"
+                        onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_file: e.target.files[0] })}
+                      />
+                    </div>
+                  </div>
                   <div style={{ marginBottom: 12 }}>
                     <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>Optional Remarks</label>
                     <input
@@ -533,11 +600,11 @@ export const MachineShiftDetailModal = ({
                   </div>
                   <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
                     <button type="button" className="btn btn-secondary" onClick={() => setDialogAction(null)} disabled={submitting}>Cancel</button>
-                    <button type="button" className="btn btn-primary" onClick={handleApprove} disabled={submitting}>
-                      {submitting ? 'Approving...' : 'Confirm Approval'}
+                    <button type="submit" className="btn btn-primary" disabled={submitting}>
+                      {submitting ? 'Approving...' : 'Approve & Attach Invoice'}
                     </button>
                   </div>
-                </div>
+                </form>
               )}
 
               {/* SCM REJECT DIALOG */}

@@ -1,5 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { LucideX, LucideChevronLeft, LucideChevronRight, LucideDownload, LucideCalendar, LucideMapPin, LucideRuler, LucideRefreshCw, LucideFileText } from 'lucide-react';
+import {
+  LucideX,
+  LucideChevronLeft,
+  LucideChevronRight,
+  LucideCalendar,
+  LucideMapPin,
+  LucideRuler,
+  LucideRefreshCw,
+  LucideFileText,
+  LucideMaximize2,
+  LucideMinimize2
+} from 'lucide-react';
 import { taskService } from '../../services/taskService';
 
 export const formatImageUrl = (url) => {
@@ -10,10 +21,20 @@ export const formatImageUrl = (url) => {
 
 export const isMongoHexId = (val) => typeof val === 'string' && /^[0-9a-fA-F]{24}$/.test(val.trim());
 
-export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId = '', taskCode = '', taskName = '', onNavigate }) => {
+export const PhotoLightbox = ({
+  photos = [],
+  initialIndex = 0,
+  onClose,
+  taskId = '',
+  taskCode = '',
+  taskName = '',
+  onNavigate,
+  defaultExpanded = false
+}) => {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [resolvedUrls, setResolvedUrls] = useState({});
   const [loadingMedia, setLoadingMedia] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
 
   if (!photos || photos.length === 0) return null;
 
@@ -117,10 +138,9 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
     } catch (e) {}
   }
 
-  return (
-    <div
-      onClick={onClose}
-      style={{
+  // Floating side panel styles vs Expanded full screen styles
+  const containerStyle = isExpanded
+    ? {
         position: 'fixed',
         top: 0,
         left: 0,
@@ -138,28 +158,54 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
         maxWidth: '100vw',
         maxHeight: '100vh',
         overflow: 'hidden'
-      }}
+      }
+    : {
+        position: 'fixed',
+        top: '76px',
+        right: '16px',
+        bottom: '16px',
+        width: 'min(480px, calc(100vw - 32px))',
+        maxHeight: 'calc(100vh - 92px)',
+        background: 'rgba(15, 23, 42, 0.95)',
+        backdropFilter: 'blur(16px)',
+        borderRadius: '16px',
+        border: '1px solid rgba(255, 255, 255, 0.15)',
+        boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.1)',
+        zIndex: 99999,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-between',
+        padding: '12px',
+        boxSizing: 'border-box',
+        overflow: 'hidden'
+      };
+
+  return (
+    <div
+      onClick={isExpanded ? onClose : undefined}
+      style={containerStyle}
     >
       {/* Lightbox Header */}
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
           width: '100%',
-          maxWidth: '1000px',
+          maxWidth: isExpanded ? '1000px' : '100%',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
           color: '#ffffff',
-          padding: '8px 14px',
-          background: 'rgba(30, 41, 59, 0.75)',
+          padding: '8px 12px',
+          background: 'rgba(30, 41, 59, 0.85)',
           borderRadius: '12px',
           border: '1px solid rgba(255, 255, 255, 0.1)',
-          boxSizing: 'border-box'
+          boxSizing: 'border-box',
+          gap: '8px'
         }}
       >
-        <div style={{ flex: 1, minWidth: 0, paddingRight: '12px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: '700', fontSize: '0.95rem', color: '#f8fafc' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: '700', fontSize: isExpanded ? '0.95rem' : '0.88rem', color: '#f8fafc' }}>
               {currentPhoto.label || currentPhoto.title || `Media ${currentIndex + 1}`}
             </span>
             {activeTaskId && (
@@ -167,16 +213,16 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
                 background: 'rgba(59, 130, 246, 0.22)',
                 border: '1px solid rgba(96, 165, 250, 0.45)',
                 color: '#93c5fd',
-                fontSize: '0.72rem',
+                fontSize: '0.68rem',
                 fontWeight: '700',
-                padding: '2px 8px',
-                borderRadius: '6px',
+                padding: '1px 6px',
+                borderRadius: '5px',
                 letterSpacing: '0.02em',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '4px'
+                gap: '3px'
               }}>
-                <LucideFileText size={11} /> {activeTaskId.startsWith('TASK-') ? activeTaskId : `Task: ${activeTaskId}`}
+                <LucideFileText size={10} /> {activeTaskId.startsWith('TASK-') ? activeTaskId : `Task: ${activeTaskId}`}
               </span>
             )}
             {activeTaskName && activeTaskName !== activeTaskId && (
@@ -184,11 +230,11 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
                 background: 'rgba(16, 185, 129, 0.2)',
                 border: '1px solid rgba(52, 211, 153, 0.4)',
                 color: '#6ee7b7',
-                fontSize: '0.72rem',
+                fontSize: '0.68rem',
                 fontWeight: '600',
-                padding: '2px 8px',
-                borderRadius: '6px',
-                maxWidth: '260px',
+                padding: '1px 6px',
+                borderRadius: '5px',
+                maxWidth: '180px',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis'
@@ -197,58 +243,59 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
               </span>
             )}
           </div>
-          <div style={{ fontSize: '0.72rem', color: '#94a3b8', marginTop: '3px' }}>
+          <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px' }}>
             {isVideo ? 'Video' : 'Photo'} {currentIndex + 1} of {photos.length}
             {(activeTaskId || activeTaskName) && (
-              <span style={{ marginLeft: '8px', color: '#cbd5e1' }}>
+              <span style={{ marginLeft: '6px', color: '#cbd5e1' }}>
                 · <span style={{ color: '#60a5fa', fontWeight: '600' }}>Task:</span> {activeTaskId}{activeTaskName && activeTaskName !== activeTaskId ? ` (${activeTaskName})` : ''}
               </span>
             )}
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-          {activeUrl && (
-            <a
-              href={activeUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              download
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                background: 'rgba(255, 255, 255, 0.15)',
-                color: '#ffffff',
-                border: 'none',
-                padding: '6px 10px',
-                borderRadius: '8px',
-                fontSize: '0.75rem',
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '4px',
-                textDecoration: 'none'
-              }}
-            >
-              <LucideDownload size={13} /> <span>Download</span>
-            </a>
-          )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
           <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsExpanded((prev) => !prev);
+            }}
+            title={isExpanded ? 'Collapse to floating side panel' : 'Expand to full screen'}
+            style={{
+              background: 'rgba(255, 255, 255, 0.12)',
+              color: '#ffffff',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              padding: '6px 9px',
+              borderRadius: '8px',
+              fontSize: '0.75rem',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+          >
+            {isExpanded ? <LucideMinimize2 size={13} /> : <LucideMaximize2 size={13} />}
+            <span>{isExpanded ? 'Collapse' : 'Expand'}</span>
+          </button>
+
+          <button
+            type="button"
             onClick={onClose}
             style={{
               background: 'rgba(239, 68, 68, 0.25)',
               color: '#f87171',
               border: '1px solid rgba(239, 68, 68, 0.4)',
               borderRadius: '8px',
-              padding: '6px 12px',
+              padding: '6px 10px',
               cursor: 'pointer',
               display: 'inline-flex',
               alignItems: 'center',
               gap: '4px',
               fontWeight: '700',
-              fontSize: '0.8rem'
+              fontSize: '0.78rem'
             }}
           >
-            <LucideX size={16} /> Close
+            <LucideX size={15} /> Close
           </button>
         </div>
       </div>
@@ -260,27 +307,29 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
           position: 'relative',
           flex: 1,
           width: '100%',
-          maxWidth: '1000px',
+          maxWidth: isExpanded ? '1000px' : '100%',
+          minHeight: 0,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          margin: '12px 0',
+          margin: '8px 0',
           overflow: 'hidden'
         }}
       >
         {photos.length > 1 && (
           <button
+            type="button"
             onClick={handlePrev}
             style={{
               position: 'absolute',
-              left: '8px',
+              left: '6px',
               zIndex: 10,
-              background: 'rgba(15, 23, 42, 0.8)',
+              background: 'rgba(15, 23, 42, 0.85)',
               color: '#ffffff',
               border: '1px solid rgba(255, 255, 255, 0.25)',
               borderRadius: '50%',
-              width: '42px',
-              height: '42px',
+              width: '36px',
+              height: '36px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -288,14 +337,14 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
               boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
             }}
           >
-            <LucideChevronLeft size={22} />
+            <LucideChevronLeft size={20} />
           </button>
         )}
 
         {loadingMedia ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', color: '#38bdf8' }}>
-            <LucideRefreshCw size={28} className="animate-spin" />
-            <span style={{ fontSize: '0.82rem' }}>Resolving S3 survey media URL...</span>
+            <LucideRefreshCw size={26} className="animate-spin" />
+            <span style={{ fontSize: '0.8rem' }}>Resolving media URL...</span>
           </div>
         ) : activeUrl ? (
           isVideo ? (
@@ -306,9 +355,9 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
               autoPlay
               referrerPolicy="no-referrer"
               style={{
-                width: 'min(100%, 860px)',
-                height: 'auto',
-                maxHeight: 'min(62vh, 480px)',
+                width: '100%',
+                height: '100%',
+                maxHeight: isExpanded ? 'min(62vh, 520px)' : '100%',
                 maxWidth: '100%',
                 objectFit: 'contain',
                 borderRadius: '8px',
@@ -325,11 +374,12 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
               alt={currentPhoto.label || 'Survey Inspection Photo'}
               referrerPolicy="no-referrer"
               style={{
-                maxHeight: 'calc(80vh - 110px)',
+                maxHeight: '100%',
                 maxWidth: '100%',
+                height: 'auto',
                 objectFit: 'contain',
-                borderRadius: '12px',
-                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
+                borderRadius: '10px',
+                boxShadow: '0 20px 40px -10px rgba(0, 0, 0, 0.7)',
                 border: '1px solid rgba(255, 255, 255, 0.1)'
               }}
               onError={(e) => {
@@ -351,11 +401,12 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: '30px',
+            padding: '24px',
             background: 'rgba(30, 41, 59, 0.85)',
             borderRadius: '12px',
             color: '#94a3b8',
-            border: '1px dashed #475569'
+            border: '1px dashed #475569',
+            fontSize: '0.82rem'
           }}
         >
           Photo/Video unavailable or failed to load.
@@ -363,17 +414,18 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
 
         {photos.length > 1 && (
           <button
+            type="button"
             onClick={handleNext}
             style={{
               position: 'absolute',
-              right: '8px',
+              right: '6px',
               zIndex: 10,
-              background: 'rgba(15, 23, 42, 0.8)',
+              background: 'rgba(15, 23, 42, 0.85)',
               color: '#ffffff',
               border: '1px solid rgba(255, 255, 255, 0.25)',
               borderRadius: '50%',
-              width: '42px',
-              height: '42px',
+              width: '36px',
+              height: '36px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -381,7 +433,7 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
               boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
             }}
           >
-            <LucideChevronRight size={22} />
+            <LucideChevronRight size={20} />
           </button>
         )}
       </div>
@@ -391,51 +443,51 @@ export const PhotoLightbox = ({ photos = [], initialIndex = 0, onClose, taskId =
         onClick={(e) => e.stopPropagation()}
         style={{
           width: '100%',
-          maxWidth: '1000px',
+          maxWidth: isExpanded ? '1000px' : '100%',
           background: 'rgba(30, 41, 59, 0.85)',
           border: '1px solid rgba(255, 255, 255, 0.1)',
           borderRadius: '12px',
-          padding: '10px 16px',
+          padding: '8px 12px',
           color: '#cbd5e1',
-          fontSize: '0.78rem',
+          fontSize: '0.74rem',
           display: 'flex',
           flexWrap: 'wrap',
           justifyContent: 'space-between',
           alignItems: 'center',
-          gap: '10px',
+          gap: '8px',
           boxSizing: 'border-box'
         }}
       >
         {(activeTaskId || activeTaskName) && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#e2e8f0', fontSize: '0.8rem' }}>
-            <LucideFileText size={14} color="#60a5fa" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#e2e8f0', fontSize: '0.75rem' }}>
+            <LucideFileText size={13} color="#60a5fa" />
             <span>Task: <strong style={{ color: '#93c5fd' }}>{activeTaskId}</strong>{activeTaskName && activeTaskName !== activeTaskId ? ` · ${activeTaskName}` : ''}</span>
           </div>
         )}
 
         {currentPhoto.depth !== undefined && currentPhoto.depth !== null && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#60a5fa', fontWeight: '800', fontSize: '0.85rem' }}>
-            <LucideRuler size={14} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#60a5fa', fontWeight: '800', fontSize: '0.8rem' }}>
+            <LucideRuler size={13} />
             <span>Depth: {currentPhoto.depth} m</span>
           </div>
         )}
 
         {formattedTime && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <LucideCalendar size={14} color="#38bdf8" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <LucideCalendar size={13} color="#38bdf8" />
             <span>Captured: <strong>{formattedTime}</strong></span>
           </div>
         )}
 
         {currentPhoto.latitude && currentPhoto.longitude && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <LucideMapPin size={14} color="#34d399" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+            <LucideMapPin size={13} color="#34d399" />
             <span>GPS: <strong>{Number(currentPhoto.latitude).toFixed(6)}, {Number(currentPhoto.longitude).toFixed(6)}</strong></span>
           </div>
         )}
 
         {currentPhoto.remarks && (
-          <div style={{ width: '100%', color: '#fef08a', fontStyle: 'italic', marginTop: '2px' }}>
+          <div style={{ width: '100%', color: '#fef08a', fontStyle: 'italic', marginTop: '2px', fontSize: '0.72rem' }}>
             Remarks: {currentPhoto.remarks}
           </div>
         )}

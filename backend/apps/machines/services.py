@@ -70,6 +70,14 @@ def sync_fiberforce_machines():
                             if val:
                                 norm = normalize_machine_identifier(val)
                                 if norm:
+                                    if norm in vendor_map and vendor_map[norm].id != v_obj.id:
+                                        # Conflict: Machine returned under multiple vendors in upstream iLync!
+                                        # Protect existing DB vendor assignment if already valid
+                                        db_m = Machine.objects.filter(
+                                            Q(machine_chassis_no=str(val).strip()) | Q(serial_number=str(val).strip())
+                                        ).first()
+                                        if db_m and db_m.vendor_id == vendor_map[norm].id:
+                                            continue
                                     vendor_map[norm] = v_obj
     except Exception:
         pass
@@ -140,6 +148,16 @@ def sync_fiberforce_machines():
         filled_by_name = "Ravi Kumar"
         if isinstance(operator, dict) and operator.get('name'):
             filled_by_name = operator.get('name')
+
+        existing_m = Machine.objects.filter(machine_chassis_no=chassis_no).first()
+        if existing_m and target_vendor and existing_m.vendor_id != target_vendor.id:
+            from apps.machines.models import MachineVendorAssignmentHistory
+            MachineVendorAssignmentHistory.objects.create(
+                machine=existing_m,
+                vendor=target_vendor,
+                source='ILYNC_SYNC',
+                notes=f"Vendor updated from {existing_m.vendor.name if existing_m.vendor else 'Unassigned'} to {target_vendor.name}"
+            )
 
         Machine.objects.update_or_create(
             machine_chassis_no=chassis_no,

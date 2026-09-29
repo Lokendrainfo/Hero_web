@@ -271,7 +271,16 @@ class MachineShiftRequestSerializer(serializers.ModelSerializer):
 
 
 class SCMApprovalSerializer(serializers.Serializer):
+    invoice_file = serializers.FileField(required=True)
+    invoice_number = serializers.CharField(required=True, max_length=100)
+    invoice_date = serializers.DateField(required=True)
+    invoice_amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.00'), required=True)
     remarks = serializers.CharField(required=False, allow_blank=True, default='')
+
+    def validate_invoice_file(self, value):
+        if value:
+            validate_uploaded_file(value, ['pdf', 'jpg', 'jpeg', 'png'], 15, 'invoice_file')
+        return value
 
 
 class SCMRejectionSerializer(serializers.Serializer):

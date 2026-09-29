@@ -139,16 +139,19 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         if request is not None:
             q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
             telem_val = q_params.get('telemetry') or q_params.get('include_telemetry')
+            live_val = q_params.get('live')
             if telem_val is not None:
                 include_telemetry = str(telem_val).lower() in ('1', 'true')
+            elif live_val is not None and str(live_val).lower() in ('1', 'true'):
+                include_telemetry = True
             else:
                 path = getattr(request, 'path', '') or ''
                 if 'tasks/my-tasks' in path:
                     include_telemetry = False
                 else:
                     include_telemetry = True
-        elif extra_params and ('include_telemetry' in extra_params or 'telemetry' in extra_params):
-            telem_val = extra_params.get('include_telemetry') or extra_params.get('telemetry')
+        elif extra_params and ('include_telemetry' in extra_params or 'telemetry' in extra_params or 'live' in extra_params):
+            telem_val = extra_params.get('include_telemetry') or extra_params.get('telemetry') or extra_params.get('live')
             include_telemetry = str(telem_val).lower() in ('1', 'true')
         else:
             include_telemetry = True
@@ -160,7 +163,17 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
     force_refresh = is_testing
     if request and not force_refresh:
         q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
-        force_refresh = str(q_params.get('refresh', '')).lower() in ('1', 'true') or str(q_params.get('nocache', '')).lower() in ('1', 'true')
+        force_refresh = (
+            str(q_params.get('refresh', '')).lower() in ('1', 'true')
+            or str(q_params.get('nocache', '')).lower() in ('1', 'true')
+            or str(q_params.get('live', '')).lower() in ('1', 'true')
+        )
+    if not force_refresh and extra_params:
+        force_refresh = (
+            str(extra_params.get('refresh', '')).lower() in ('1', 'true')
+            or str(extra_params.get('nocache', '')).lower() in ('1', 'true')
+            or str(extra_params.get('live', '')).lower() in ('1', 'true')
+        )
 
     auth_cache_key = None
     if not force_refresh:
@@ -468,11 +481,23 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
     expanded_results = []
     seen_task_ids = set()
 
-    def format_and_add(t, parent_vid=None, parent_vname=None):
+    def format_and_add(t, parent_vid=None, parent_vname=None, parent_loc=None):
         tid = str(t.get('id') or t.get('taskCode') or '')
         if tid in seen_task_ids:
-            return None, None
+            return None, None, None
         seen_task_ids.add(tid)
+
+        loc = t.get('locationSnapshot') or t.get('location') or parent_loc or {}
+        if not t.get('circle') and loc.get('circle'):
+            t['circle'] = loc.get('circle')
+        if not t.get('district') and loc.get('district'):
+            t['district'] = loc.get('district')
+        if not t.get('block') and (loc.get('blockName') or loc.get('block')):
+            t['block'] = loc.get('blockName') or loc.get('block')
+        if not t.get('state') and (loc.get('state') or loc.get('circle')):
+            t['state'] = loc.get('state') or loc.get('circle')
+        if not t.get('location') and loc:
+            t['location'] = loc
 
         v_snap = t.get('vendorSnapshot') if isinstance(t.get('vendorSnapshot'), dict) else {}
         v_obj = t.get('vendor') if isinstance(t.get('vendor'), dict) else {}
@@ -534,7 +559,7 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
             t['vendorName'] = eff_vname
 
         expanded_results.append(t)
-        return eff_vid, eff_vname
+        return eff_vid, eff_vname, loc
 
     if expand_hierarchy:
         for i, root in enumerate(base_content):
@@ -568,16 +593,16 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
                 root['updatedAt'] = dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
                 root['lastModified'] = root['updatedAt']
 
-            r_vid, r_vname = format_and_add(root)
+            r_vid, r_vname, r_loc = format_and_add(root)
 
             for l1 in l1_list:
-                l1_vid, l1_vname = format_and_add(l1, parent_vid=r_vid, parent_vname=r_vname)
+                l1_vid, l1_vname, l1_loc = format_and_add(l1, parent_vid=r_vid, parent_vname=r_vname, parent_loc=r_loc)
 
                 try:
                     idx = level1_flat.index(l1)
                     l2_list = level2_children_lists[idx] if idx < len(level2_children_lists) else []
                     for l2 in l2_list:
-                        format_and_add(l2, parent_vid=l1_vid, parent_vname=l1_vname)
+                        format_and_add(l2, parent_vid=l1_vid, parent_vname=l1_vname, parent_loc=l1_loc)
                 except ValueError:
                     pass
     else:

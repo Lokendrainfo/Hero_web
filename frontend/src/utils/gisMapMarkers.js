@@ -9,6 +9,18 @@ export function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
+export function haversineDistanceM(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLon = (lon2 - lon1) * rad;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 export function truncateLabel(value, max = 22) {
   const text = String(value || '').trim();
   if (!text) return '';
@@ -110,11 +122,24 @@ const PURPLE_DEPTH_PIN = `
 `;
 
 const GREEN_LIVE_PIN = `
-  <div style="position:relative;display:inline-flex;align-items:center;justify-content:center;">
-    <svg class="gis-pin-svg" width="26" height="34" viewBox="0 0 24 32" fill="none">
+  <div class="gis-live-bulb-wrapper">
+    <div class="gis-wave-ring gis-wave-ring--1"></div>
+    <div class="gis-wave-ring gis-wave-ring--2"></div>
+    <div class="gis-wave-ring gis-wave-ring--3"></div>
+    <svg class="gis-pin-svg gis-live-pin-pulse" width="28" height="36" viewBox="0 0 24 32" fill="none">
       <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="#10b981" stroke="#ffffff" stroke-width="2"/>
-      <circle cx="12" cy="11" r="5" fill="none" stroke="#ffffff" stroke-width="2"/>
-      <circle cx="12" cy="11" r="2" fill="#ffffff"/>
+      <circle cx="12" cy="11" r="5" fill="#047857" stroke="#ffffff" stroke-width="2"/>
+      <circle class="gis-live-core-bulb" cx="12" cy="11" r="2.8" fill="#a7f3d0"/>
+    </svg>
+  </div>
+`;
+
+const RED_STALE_PIN = `
+  <div class="gis-stale-bulb-wrapper" style="position:relative;display:inline-flex;align-items:center;justify-content:center;">
+    <svg class="gis-pin-svg" width="28" height="36" viewBox="0 0 24 32" fill="none">
+      <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="#ef4444" stroke="#ffffff" stroke-width="2"/>
+      <circle cx="12" cy="11" r="5" fill="#991b1b" stroke="#ffffff" stroke-width="2"/>
+      <circle cx="12" cy="11" r="2.8" fill="#fecaca"/>
     </svg>
   </div>
 `;
@@ -125,12 +150,13 @@ export function depthPointIcon({
   showLabel = false,
   isKey = false,
   isLive = false,
+  isStale = false,
   side = 'right',
 }) {
-  const pinSvg = isLive ? GREEN_LIVE_PIN : PURPLE_DEPTH_PIN;
+  const pinSvg = isLive ? (isStale ? RED_STALE_PIN : GREEN_LIVE_PIN) : PURPLE_DEPTH_PIN;
   const classes = [
     'gis-dp-container',
-    isLive ? 'gis-dp--live' : 'gis-dp--purple',
+    isLive ? (isStale ? 'gis-dp--stale' : 'gis-dp--live') : 'gis-dp--purple',
     showLabel ? 'gis-dp--labeled' : 'gis-dp--unlabeled',
     side === 'left' ? 'gis-dp--left' : 'gis-dp--right',
   ].filter(Boolean).join(' ');
@@ -340,6 +366,61 @@ export function buildGis3dScene(executionData) {
     })),
   };
 
+  // Build measurement segments between consecutive depth points
+  const validDepthPoints = depthPoints.filter(
+    (dp) => dp.lat != null && dp.lng != null && !Number.isNaN(Number(dp.lat)) && !Number.isNaN(Number(dp.lng))
+  );
+
+  const segmentFeatures = [];
+  for (let i = 0; i < validDepthPoints.length - 1; i++) {
+    const p1 = validDepthPoints[i];
+    const p2 = validDepthPoints[i + 1];
+    const lat1 = Number(p1.lat);
+    const lon1 = Number(p1.lng);
+    const lat2 = Number(p2.lat);
+    const lon2 = Number(p2.lng);
+
+    const dist = haversineDistanceM(lat1, lon1, lat2, lon2);
+    if (dist <= 600) {
+      const d1 = Number(p1.depth) || 0;
+      const d2 = Number(p2.depth) || 0;
+      const deltaDepth = Math.abs(d2 - d1);
+      const slant3dDist = Math.sqrt(dist * dist + deltaDepth * deltaDepth);
+
+      segmentFeatures.push({
+        type: 'Feature',
+        properties: {
+          segmentId: `seg-${i}`,
+          index1: i,
+          index2: i + 1,
+          p1Name: p1.pointNo ? `Point ${p1.pointNo}` : `DP #${i + 1}`,
+          p2Name: p2.pointNo ? `Point ${p2.pointNo}` : `DP #${i + 2}`,
+          depth1: d1,
+          depth2: d2,
+          distM: dist,
+          slant3dM: slant3dDist,
+          distFormatted: dist >= 1000 ? `${(dist / 1000).toFixed(2)} km` : `${dist.toFixed(2)}m`,
+          slantDistFormatted: slant3dDist >= 1000 ? `${(slant3dDist / 1000).toFixed(2)} km` : `${slant3dDist.toFixed(2)}m`,
+          deltaDepthFormatted: `${deltaDepth.toFixed(2)}m`,
+          midLng: (lon1 + lon2) / 2,
+          midLat: (lat1 + lat2) / 2,
+        },
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [lon1, lat1],
+            [lon2, lat2],
+          ],
+        },
+      });
+    }
+  }
+
+  const depthSegments = {
+    type: 'FeatureCollection',
+    features: segmentFeatures,
+  };
+
   const startPitIds = new Set();
   const endPitIds = new Set();
   (executionData?.shots || []).forEach((shot) => {
@@ -445,21 +526,30 @@ export function buildGis3dScene(executionData) {
         ['Time', namedEnd.diggingTime],
       ],
     } : null,
-    lastDepth && lastDepth.lat != null ? {
-      role: 'live',
-      lng: lastDepth.lng,
-      lat: lastDepth.lat,
-      tag: '',
-      title: formatDepthM(lastDepth.depth),
-      value: '',
-      photos: lastDepth.photos || [],
-      photoIndex: lastDepthIdx,
-      rows: [
-        ['Depth', formatDepthM(lastDepth.depth)],
-        ['Point', lastDepth.pointNo || lastDepthIdx + 1],
-        ['Captured', lastDepth.capturedAt || ''],
-      ],
-    } : null,
+    lastDepth && lastDepth.lat != null ? (() => {
+      const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+      let isLastStale = false;
+      const dTime = parseAnyDate(lastDepth.capturedAt || lastDepth.createdAt || executionData?.lastModified);
+      if (dTime && !isNaN(dTime.getTime())) {
+        isLastStale = (Date.now() - dTime.getTime()) > SIX_HOURS_MS;
+      }
+      return {
+        role: isLastStale ? 'stale' : 'live',
+        lng: lastDepth.lng,
+        lat: lastDepth.lat,
+        tag: '',
+        title: formatDepthM(lastDepth.depth),
+        value: '',
+        photos: lastDepth.photos || [],
+        photoIndex: lastDepthIdx,
+        rows: [
+          ['Depth', formatDepthM(lastDepth.depth)],
+          ['Point', lastDepth.pointNo || lastDepthIdx + 1],
+          ['Captured', lastDepth.capturedAt || ''],
+          ['Status', isLastStale ? 'Inactive (>6h)' : 'Active live (<6h)'],
+        ],
+      };
+    })() : null,
   ].filter(Boolean);
 
   let bearing = 0;
@@ -516,6 +606,7 @@ export function buildGis3dScene(executionData) {
       })),
     },
     depthLabels,
+    depthSegments,
     landmarks,
     flags,
     poles,
@@ -537,6 +628,21 @@ export function depthPoleHtml({ depth, label }) {
 
 export function flagMarkerHtml({ role = 'start', tag = '', title = '' }) {
   const main = title || tag;
+  if (role === 'live') {
+    return `<div class="gis-flag gis-flag--live gis-live-bulb-wrapper" style="position:relative;">
+      <div class="gis-wave-ring gis-wave-ring--1" style="top:10px;left:10px;"></div>
+      <div class="gis-wave-ring gis-wave-ring--2" style="top:10px;left:10px;"></div>
+      <div class="gis-wave-ring gis-wave-ring--3" style="top:10px;left:10px;"></div>
+      <span class="gis-flag-cloth gis-live-pin-pulse" style="background:#10b981;border-color:#059669;color:#ffffff;box-shadow:0 0 12px rgba(16,185,129,0.7);"><strong>${escapeHtml(truncateLabel(main, 14))}</strong></span>
+      <span class="gis-flag-mast" style="background:#10b981;"></span>
+    </div>`;
+  }
+  if (role === 'stale') {
+    return `<div class="gis-flag gis-flag--stale" style="position:relative;">
+      <span class="gis-flag-cloth" style="background:#ef4444;border-color:#dc2626;color:#ffffff;box-shadow:0 0 8px rgba(239,68,68,0.5);"><strong>${escapeHtml(truncateLabel(main, 14))}</strong></span>
+      <span class="gis-flag-mast" style="background:#ef4444;"></span>
+    </div>`;
+  }
   return `<div class="gis-flag gis-flag--${role}">
     <span class="gis-flag-cloth"><strong>${escapeHtml(truncateLabel(main, 14))}</strong></span>
     <span class="gis-flag-mast"></span>

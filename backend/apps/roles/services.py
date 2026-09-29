@@ -31,6 +31,7 @@ SYSTEM_PERMISSIONS = [
     ("tasks.manage", "Manage Tasks System", "Tasks", "Full management of work tasks"),
 
     # Map View & GIS Topology
+    ("mapview.dashboard", "View Map View Dashboard", "Map View", "View T&D execution dashboard and operational analytics"),
     ("mapview.view", "View Map View & Topology", "Map View", "View GIS map view and trenching / HDD execution topology"),
     ("mapview.export", "Export Map Data", "Map View", "Export spatial and execution topology data"),
 
@@ -199,7 +200,7 @@ DEFAULT_ROLES = {
         "is_system": True,
         "data_scope": "OWN_GEOGRAPHY",
         "permission_codes": [
-            "dashboard.view", "dashboard.export", "mapview.view", "chartview.view", "mapview.export",
+            "dashboard.view", "dashboard.export", "mapview.dashboard", "mapview.view", "chartview.view", "mapview.export",
             "tasks.view", "tasks.create", "tasks.edit", "tasks.approve", "tasks.reject", "tasks.assign", "tasks.reassign", "tasks.export",
             "vendors.view", "machines.view", "machines.edit", "machines.assign",
             "team.view", "team.create", "team.edit", "team.assign", "tracking.view",
@@ -215,7 +216,7 @@ DEFAULT_ROLES = {
         "is_system": True,
         "data_scope": "OWN_GEOGRAPHY",
         "permission_codes": [
-            "dashboard.view", "mapview.view", "chartview.view",
+            "dashboard.view", "mapview.dashboard", "mapview.view", "chartview.view",
             "tasks.view", "tasks.edit", "tasks.approve", "tasks.assign", "tasks.export",
             "vendors.view", "machines.view", "team.view", "team.edit", "tracking.view",
             "attendance.view", "attendance.approve", "expenses.view", "expenses.approve",
@@ -228,7 +229,7 @@ DEFAULT_ROLES = {
         "is_system": True,
         "data_scope": "REPORTING_HIERARCHY",
         "permission_codes": [
-            "dashboard.view", "mapview.view", "chartview.view",
+            "dashboard.view", "mapview.dashboard", "mapview.view", "chartview.view",
             "tasks.view", "tasks.edit", "tasks.assign",
             "team.view", "team.edit", "attendance.view", "attendance.approve", "attendance.create",
             "expenses.view", "expenses.create", "expenses.approve",
@@ -241,7 +242,7 @@ DEFAULT_ROLES = {
         "is_system": True,
         "data_scope": "OWN_VENDOR",
         "permission_codes": [
-            "dashboard.view", "mapview.view", "chartview.view",
+            "dashboard.view", "mapview.dashboard", "mapview.view", "chartview.view",
             "tasks.view", "tasks.edit", "tasks.export",
             "machines.view", "team.view", "team.create", "team.edit", "team.assign", "tracking.view",
             "attendance.view", "attendance.create", "attendance.approve", "attendance.export",
@@ -256,7 +257,7 @@ DEFAULT_ROLES = {
         "is_system": True,
         "data_scope": "OWN_VENDOR",
         "permission_codes": [
-            "dashboard.view", "mapview.view", "chartview.view",
+            "dashboard.view", "mapview.dashboard", "mapview.view", "chartview.view",
             "tasks.view", "tasks.edit", "machines.view", "team.view",
             "attendance.view", "attendance.create", "expenses.view", "expenses.create",
             "fuel.view", "refuel.view", "refuel.create", "breakdowns.view", "breakdowns.create",
@@ -280,7 +281,7 @@ DEFAULT_ROLES = {
         "is_system": True,
         "data_scope": "OWN_TASKS",
         "permission_codes": [
-            "dashboard.view", "mapview.view", "chartview.view", "tasks.view", "tasks.edit",
+            "dashboard.view", "mapview.dashboard", "mapview.view", "chartview.view", "tasks.view", "tasks.edit",
             "attendance.view", "attendance.create", "fuel.view", "refuel.view", "refuel.create"
         ]
     },
@@ -298,7 +299,7 @@ DEFAULT_ROLES = {
         "description": "Read-only Viewer account with view-only access across all operational modules",
         "is_system": True,
         "data_scope": "ALL_DATA",
-        "permission_codes": [p[0] for p in SYSTEM_PERMISSIONS if p[0].endswith('.view')]
+        "permission_codes": [p[0] for p in SYSTEM_PERMISSIONS if p[0].endswith('.view') or p[0] == 'mapview.dashboard']
     },
     "SCM": {
         "code": "SCM",

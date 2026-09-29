@@ -235,10 +235,96 @@ code {
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.28), 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
-.gis-pulse-ring {
-  display: none !important;
-  animation: none !important;
+/* Live Green Bulb Wave-Form Pulse Animation */
+.gis-live-bulb-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
+
+.gis-wave-ring {
+  position: absolute;
+  top: 11px;
+  left: 12px;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  margin-left: -7px;
+  border-radius: 50%;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.gis-wave-ring--1 {
+  border: 2px solid rgba(16, 185, 129, 0.9);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.7);
+  animation: gisWavePulse 2.4s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+.gis-wave-ring--2 {
+  border: 2px solid rgba(52, 211, 153, 0.75);
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.55);
+  animation: gisWavePulse 2.4s cubic-bezier(0.215, 0.61, 0.355, 1) 0.75s infinite;
+}
+
+.gis-wave-ring--3 {
+  border: 1.5px solid rgba(110, 231, 183, 0.6);
+  box-shadow: 0 0 14px rgba(110, 231, 183, 0.45);
+  animation: gisWavePulse 2.4s cubic-bezier(0.215, 0.61, 0.355, 1) 1.5s infinite;
+}
+
+@keyframes gisWavePulse {
+  0% {
+    transform: scale(0.65);
+    opacity: 0.95;
+  }
+  35% {
+    opacity: 0.8;
+  }
+  75% {
+    transform: scale(3.2);
+    opacity: 0.18;
+  }
+  100% {
+    transform: scale(4.0);
+    opacity: 0;
+  }
+}
+
+.gis-live-pin-pulse {
+  position: relative;
+  z-index: 2;
+  filter: drop-shadow(0 2px 8px rgba(16, 185, 129, 0.8));
+  animation: gisBulbBlink 1.8s ease-in-out infinite;
+}
+
+@keyframes gisBulbBlink {
+  0%, 100% {
+    filter: drop-shadow(0 2px 6px rgba(16, 185, 129, 0.7));
+    transform: scale(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 16px rgba(52, 211, 153, 1)) drop-shadow(0 0 24px rgba(16, 185, 129, 0.8));
+    transform: scale(1.08);
+  }
+}
+
+.gis-live-core-bulb {
+  animation: gisCoreGlow 1.8s ease-in-out infinite;
+}
+
+@keyframes gisCoreGlow {
+  0%, 100% {
+    fill: #a7f3d0;
+    opacity: 0.85;
+  }
+  50% {
+    fill: #ffffff;
+    opacity: 1;
+  }
+}
+
 
 .gis-dp-container {
   position: relative;
@@ -271,6 +357,22 @@ code {
   border-color: #059669;
   color: #ffffff;
 }
+
+.gis-dp--stale .gis-dp-label {
+  background: #ef4444;
+  border-color: #dc2626;
+  color: #ffffff;
+  box-shadow: 0 2px 5px rgba(239, 68, 68, 0.4);
+}
+
+.gis-stale-bulb-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 2px 6px rgba(239, 68, 68, 0.6));
+}
+
 
 .gis-dp--unlabeled .gis-dp-label {
   display: none !important;
@@ -858,3 +960,68 @@ h1 {
   background: var(--bg-surface);
   border: 1px solid var(--border);
 }
+
+/* 3D Depth-to-Depth Measurement Badge & Stem */
+.gis-3d-depth-badge-anchor {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  z-index: 50;
+  transform: translate(-50%, -100%);
+  animation: gisBadgeFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes gisBadgeFadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -85%) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -100%) scale(1);
+  }
+}
+
+.gis-3d-depth-badge {
+  background: #ffffff;
+  color: #0f172a;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1.5px solid rgba(15, 23, 42, 0.2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.2);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.gis-3d-depth-badge-unit {
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.gis-3d-depth-badge-stem {
+  width: 2px;
+  height: 32px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(56, 189, 248, 0.9) 100%);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
+  border-radius: 1px;
+}
+
+.gis-3d-depth-badge-dot {
+  width: 6px;
+  height: 6px;
+  background: #0284c7;
+  border: 1.5px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 6px #38bdf8;
+  margin-top: -3px;
+}

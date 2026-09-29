@@ -387,8 +387,17 @@ export const Attendance = () => {
     });
 
     // 3. Map assigned machines into vendor groups
+    const seenMachineChassis = new Set();
     assignedMachines.forEach(mac => {
       if (!mac) return;
+      const chassisKey = String(mac.chassis_no || mac.machine_no || mac.code || mac.machine_id || '').trim();
+      if (chassisKey) {
+        if (seenMachineChassis.has(chassisKey)) {
+          // Machine already assigned to its primary vendor; prevent duplicate vendor cards
+          return;
+        }
+        seenMachineChassis.add(chassisKey);
+      }
       const resolvedName = resolveVendorName(mac.vendor_name);
       if (!groups[resolvedName]) {
         const details = vendorDetailsMap[resolvedName.toLowerCase()] || {};
@@ -1395,7 +1404,7 @@ export const Attendance = () => {
                                 flexWrap: 'wrap',
                               }}>
                                 <LucideTruck size={18} style={{ color: hasNotWorking ? '#dc2626' : '#d97706' }} />
-                                <span>Assigned Machines & Equipment Attendance ({teamGroup.machines.length})</span>
+                                <span>Assigned Machines & Equipment Attendance ({teamGroup.machines.length}) &bull; <strong style={{ color: hasNotWorking ? '#7f1d1d' : '#1e293b' }}>{teamGroup.vendorName}</strong></span>
                                 {hasNotWorking && (
                                   <span style={{
                                     fontSize: '0.72rem',

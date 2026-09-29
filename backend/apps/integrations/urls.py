@@ -17,7 +17,9 @@ from .views import (
     IlyncTaskExecutionView,
     IlyncTaskChildrenView,
     IlyncTaskExportView,
-    IlyncSurveyPhotoUrlsView
+    IlyncSurveyPhotoUrlsView,
+    IlyncMapViewExecutionsView,
+    IlyncTrenchingDashboardSummaryView
 )
 
 urlpatterns = [
@@ -34,6 +36,8 @@ urlpatterns = [
 
     path('inventory/stock-balance/', IlyncStockBalanceSearchView.as_view(), name='ilync_stock_balance_search'),
     path('inventory/items/', IlyncStockItemSearchView.as_view(), name='ilync_stock_items_search'),
+    path('tasks/map-view-executions/', IlyncMapViewExecutionsView.as_view(), name='ilync_map_view_executions'),
+    path('tasks/trenching-dashboard-summary/', IlyncTrenchingDashboardSummaryView.as_view(), name='ilync_trenching_dashboard_summary'),
     path('tasks/my-tasks/', IlyncMyTasksListView.as_view(), name='ilync_my_tasks_list'),
     path('tasks/my-tasks/type-counts/', IlyncTaskTypeCountsView.as_view(), name='ilync_task_type_counts'),
     path('tasks/type-counts/', IlyncTaskTypeCountsView.as_view(), name='ilync_task_type_counts_alias'),

@@ -1938,6 +1938,16 @@ class AttendanceViewSet(viewsets.ModelViewSet):
 
         oem_by_chassis, ops_by_chassis = _index_open_machine_issues()
 
+        # Build canonical machine registry from Hero DB
+        from apps.machines.models import Machine
+        db_machines = Machine.objects.select_related('vendor').all()
+        db_machine_by_chassis = {}
+        for m in db_machines:
+            if m.machine_chassis_no:
+                db_machine_by_chassis[m.machine_chassis_no.strip()] = m
+            if m.serial_number:
+                db_machine_by_chassis[m.serial_number.strip()] = m
+
         if not is_today:
             # Auto-ensure NOT_MARKED records exist for this past date if missing
             if not AttendanceRecord.objects.filter(date=req_date).exists():
@@ -2067,8 +2077,21 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'marked_by_name': rec.marked_by.get_full_name() if rec.marked_by else ''
                 })
 
+            seen_hist_chassis = set()
             for m_rec in machine_records:
                 chassis_val = m_rec.machine_chassis_no or m_rec.machine_id or ''
+                if not chassis_val:
+                    continue
+
+                # Enforce single-vendor canonical assignment
+                db_m = db_machine_by_chassis.get(chassis_val)
+                if db_m and db_m.vendor_id and m_rec.vendor_id and db_m.vendor_id != m_rec.vendor_id:
+                    continue
+
+                if chassis_val in seen_hist_chassis:
+                    continue
+                seen_hist_chassis.add(chassis_val)
+
                 m_status = (m_rec.status or 'NOT_MARKED').upper()
                 working_meta = _machine_working_payload(
                     m_status, chassis_val, oem_by_chassis, ops_by_chassis
@@ -2122,6 +2145,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         # Source of truth: LIVE iLync Vendor API + today's Hero attendance records.
         # ------------------------------------------------------------------
         seen_record_ids = set()
+        seen_live_chassis = set()
 
         for v_obj in target_vendors:
             v_ext = getattr(v_obj, 'external_vendor_id', None)
@@ -2162,10 +2186,16 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 for m_item in v_macs:
                     if isinstance(m_item, dict):
                         m_code = str(m_item.get('machineNo') or m_item.get('name') or m_item.get('code') or '').strip()
-                        if m_code and m_code not in v_mac_list:
-                            v_mac_list.append(m_code)
                     elif isinstance(m_item, str) and m_item.strip():
-                        v_mac_list.append(m_item.strip())
+                        m_code = m_item.strip()
+                    else:
+                        m_code = ''
+                    if m_code:
+                        db_m = db_machine_by_chassis.get(m_code)
+                        if db_m and db_m.vendor_id and db_m.vendor_id != v_obj.id:
+                            continue
+                        if m_code not in v_mac_list:
+                            v_mac_list.append(m_code)
             v_vendor_machine = ', '.join(v_mac_list)
 
             raw_users = v_payload.get('users') or []
@@ -2201,11 +2231,6 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 if not isinstance(u_info, dict):
                     continue
 
-                # Respect active status: If active is False, exclude from current Attendance Roster
-                u_active = u_info.get('active')
-                if u_active is False:
-                    continue
-
                 ext_u_id = str(u_info.get('userId') or u_info.get('id') or '').strip()
                 if ext_u_id.lower() in ('none', 'null', ''):
                     ext_u_id = None
@@ -2217,6 +2242,13 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 name = str(u_info.get('name') or u_info.get('contactName') or 'Team Member').strip()
                 designation = str(u_info.get('designation') or u_info.get('role') or 'OPERATOR').strip()
                 norm_role = normalize_attendance_role(designation)
+                is_vendor_role = (norm_role == 'VENDOR' or 'VENDOR' in designation.upper())
+
+                # Respect active status: If active is False, exclude from current Attendance Roster
+                # BUT never exclude the VENDOR user (team head) even if marked active=False in iLync
+                u_active = u_info.get('active')
+                if u_active is False and not is_vendor_role:
+                    continue
 
                 if ext_u_id:
                     synced_active_uids.add(ext_u_id)
@@ -2355,11 +2387,74 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                     'norm_role': norm_role
                 })
 
-            # Section 20: Keep CURRENT ATTENDANCE AUTHORIZATION separate from HERO USER MASTER STATUS.
-            # Active roster members for today are drawn from iLync vendor users[],
-            # but missing users are NEVER deactivated or stripped of Hero assignments.
-            if not is_fallback and raw_users is not None:
-                pass
+            # Ensure every active vendor has a VENDOR user in the roster
+            has_vendor_user = any(item.get('norm_role') == 'VENDOR' for item in active_users_for_roster)
+            if not has_vendor_user:
+                v_contact = str(v_obj.contact_person or v_payload.get('contactName') or '').strip()
+                v_phone = str(v_obj.phone or v_payload.get('phoneNumber') or '').strip()
+                v_email = str(v_obj.email or v_payload.get('email') or '').strip()
+                v_ext_user_id = None
+                for raw_u in raw_users:
+                    if isinstance(raw_u, dict) and ('VENDOR' in str(raw_u.get('designation') or '').upper() or 'VENDOR' in str(raw_u.get('role') or '').upper()):
+                        v_contact = v_contact or str(raw_u.get('name') or raw_u.get('contactName') or '').strip()
+                        v_phone = v_phone or str(raw_u.get('mobile') or raw_u.get('phone') or '').strip()
+                        v_email = v_email or str(raw_u.get('email') or '').strip()
+                        v_ext_user_id = str(raw_u.get('userId') or raw_u.get('id') or '').strip() or None
+                        break
+
+                if v_contact or v_phone:
+                    display_name = v_contact or f"{v_obj.name} Vendor"
+                    emp_code = f"VND-{v_phone}" if v_phone else f"VND-{v_obj.id}"
+                    matched_vendor_user = None
+                    if v_ext_user_id:
+                        matched_vendor_user = User.objects.filter(external_user_id=v_ext_user_id).first()
+                    if not matched_vendor_user and v_phone:
+                        matched_vendor_user = User.objects.filter(phone_number=v_phone).first()
+                    if not matched_vendor_user:
+                        matched_vendor_user = User.objects.filter(vendor=v_obj, role='VENDOR').first()
+                    if not matched_vendor_user:
+                        base_u = emp_code or f"vnd_{v_obj.id}"
+                        u_name = base_u
+                        idx = 1
+                        while User.objects.filter(username=u_name).exists():
+                            u_name = f"{base_u}_{idx}"
+                            idx += 1
+                        try:
+                            parts = display_name.split(None, 1)
+                            first = parts[0]
+                            last = parts[1] if len(parts) > 1 else ''
+                            user_kwargs = {
+                                'username': u_name,
+                                'external_user_id': v_ext_user_id,
+                                'employee_id': emp_code,
+                                'phone_number': v_phone,
+                                'email': v_email or f"{u_name}@ilync.tech",
+                                'first_name': first,
+                                'last_name': last,
+                                'role': 'VENDOR',
+                                'vendor': v_obj,
+                                'is_active': True
+                            }
+                            if hasattr(User, 'designation'):
+                                user_kwargs['designation'] = 'VENDOR'
+                            matched_vendor_user = User.objects.create(**user_kwargs)
+                        except Exception as e:
+                            print(f"[AttendanceRosterSync] Could not create fallback vendor user for {v_obj.name}: {e}")
+
+                    active_users_for_roster.insert(0, {
+                        'u_info': {'userId': v_ext_user_id, 'name': display_name, 'mobile': v_phone, 'email': v_email, 'role': 'VENDOR', 'designation': 'VENDOR'},
+                        'matched_user': matched_vendor_user,
+                        'ext_u_id': v_ext_user_id,
+                        'emp_id_str': emp_code,
+                        'mobile': v_phone,
+                        'email': v_email,
+                        'name': display_name,
+                        'designation': 'VENDOR',
+                        'norm_role': 'VENDOR'
+                    })
+
+            # Sort active roster so VENDOR always appears first in the card
+            active_users_for_roster.sort(key=lambda x: 0 if x.get('norm_role') == 'VENDOR' else 1)
 
             # Audit Log
             print(f"[AttendanceRosterSync] vendor={getattr(v_obj, 'external_vendor_id', v_obj.id)} ({v_obj.name}) iLync_users={len(raw_users)} active={len(active_users_for_roster)} new={new_count} updated={updated_count} removed={removed_count}")
@@ -2505,6 +2600,22 @@ class AttendanceViewSet(viewsets.ModelViewSet):
                 mac_name = m_info.get('model_name') or m_info.get('name') or m_info.get('model') or 'Machine'
                 mac_code = m_info.get('code') or m_info.get('model_code') or f"MAC-{mac_id or 1}"
                 chassis_val = str(m_info.get('machineNo') or m_info.get('machine_no') or m_info.get('serial_number') or m_info.get('machine_chassis_no') or '').strip()
+                if not chassis_val:
+                    continue
+
+                # 1. Canonical DB Vendor Protection:
+                # If this machine is canonically assigned to a vendor in Hero DB, ensure it ONLY ever appears under that vendor.
+                # Never let an erroneous upstream API duplicate it under another vendor.
+                db_m = db_machine_by_chassis.get(chassis_val)
+                if db_m and db_m.vendor_id and db_m.vendor_id != v_obj.id:
+                    continue
+
+                # 2. Deduplication Protection:
+                # A machine cannot be assigned to more than one vendor simultaneously.
+                if chassis_val in seen_live_chassis:
+                    continue
+                seen_live_chassis.add(chassis_val)
+
                 op_name = m_info.get('operator_name') or (m_info.get('operator', {}).get('name') if isinstance(m_info.get('operator'), dict) else '')
 
                 m_rec = AttendanceRecord.objects.filter(date=req_date, attendance_type='MACHINE').filter(

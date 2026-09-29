@@ -8,7 +8,9 @@ export const machineShiftService = {
   cancelRequest: (id, remarks = '') => api.post(`/machine-shift/machine-shift-requests/${id}/cancel/`, { remarks }),
   
   // SCM Actions
-  scmApprove: (id, remarks = '') => api.post(`/machine-shift/machine-shift-requests/${id}/scm-approve/`, { remarks }),
+  scmApprove: (id, formData) => api.post(`/machine-shift/machine-shift-requests/${id}/scm-approve/`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
   scmReject: (id, rejection_reason, remarks = '') => api.post(`/machine-shift/machine-shift-requests/${id}/scm-reject/`, { rejection_reason, remarks }),
   attachInvoice: (id, formData) => api.post(`/machine-shift/machine-shift-requests/${id}/attach-invoice/`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
