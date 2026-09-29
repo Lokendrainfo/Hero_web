@@ -345,8 +345,9 @@ export const TaskRouteMap = ({
       });
     }
 
-    // Render Pits / Joints cleanly
-    if (pits.length > 0) {
+    // Render Pits / Joints cleanly only if HDD shot / trenching has started
+    const hasTrenchingStarted = (depthCaptures && depthCaptures.length > 0) || (effectivePct > 0);
+    if (hasTrenchingStarted && pits.length > 0) {
       pits.forEach((pit, idx) => {
         const pt = parseLatLng(pit);
         if (!pt) return;

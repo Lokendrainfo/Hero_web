@@ -70,6 +70,82 @@ export const parseDateToYMD = (dateVal) => {
   return null;
 };
 
+export const isShotStarted = (shot) => {
+  if (!shot) return false;
+  if ((shot.depthReadings && shot.depthReadings.length > 0) || (shot.depthReadingsCount > 0)) {
+    return true;
+  }
+  if (Array.isArray(shot.depthCapture) && shot.depthCapture.length > 0) {
+    return true;
+  }
+  if (shot.startTime || shot.hddStartTime || shot.endTime || shot.hddEndTime) {
+    return true;
+  }
+  if (shot.photos && shot.photos.length > 0) {
+    return true;
+  }
+  const status = String(shot.status || shot.taskStage || '').toUpperCase();
+  if (status && !['PENDING', 'NOT_STARTED', 'LOCKED', 'PLANNED'].includes(status)) {
+    return true;
+  }
+  return false;
+};
+
+export const hasHddShotOrTrenchingStarted = (executionData) => {
+  if (!executionData) return false;
+  if (Array.isArray(executionData.depthPoints) && executionData.depthPoints.length > 0) {
+    return true;
+  }
+  const shots = executionData.shots || [];
+  return shots.some(isShotStarted);
+};
+
+export const getVisiblePitsForMap = (executionData) => {
+  if (!executionData) return [];
+  // If HDD shot or trenching has NOT started, do not show pits on map
+  if (!hasHddShotOrTrenchingStarted(executionData)) {
+    return [];
+  }
+
+  const shots = executionData.shots || [];
+  const startedShots = shots.filter(isShotStarted);
+
+  if (startedShots.length > 0) {
+    const startedPitKeys = new Set();
+    startedShots.forEach(s => {
+      if (s.startPit) {
+        if (s.startPit.id) startedPitKeys.add(String(s.startPit.id));
+        if (s.startPit.name) startedPitKeys.add(String(s.startPit.name));
+        if (s.startPit.serialNo) startedPitKeys.add(String(s.startPit.serialNo));
+      }
+      if (s.startPitId) startedPitKeys.add(String(s.startPitId));
+      if (s.startPitName) startedPitKeys.add(String(s.startPitName));
+
+      if (s.endPit) {
+        if (s.endPit.id) startedPitKeys.add(String(s.endPit.id));
+        if (s.endPit.name) startedPitKeys.add(String(s.endPit.name));
+        if (s.endPit.serialNo) startedPitKeys.add(String(s.endPit.serialNo));
+      }
+      if (s.endPitId) startedPitKeys.add(String(s.endPitId));
+      if (s.endPitName) startedPitKeys.add(String(s.endPitName));
+    });
+
+    const allPits = executionData.pits || [];
+    const connected = allPits.filter(pit => {
+      if (!pit) return false;
+      const pid = String(pit.id || '');
+      const pname = String(pit.name || '');
+      const pser = String(pit.serialNo || '');
+      return startedPitKeys.has(pid) || startedPitKeys.has(pname) || startedPitKeys.has(pser);
+    });
+    if (connected.length > 0) {
+      return connected;
+    }
+  }
+
+  return executionData.pits || [];
+};
+
 export const filterHddExecutionByDate = (data, selectedDate) => {
   if (!data) return null;
   if (!selectedDate || selectedDate === 'ALL') return data;
@@ -115,19 +191,26 @@ export const filterHddExecutionByDate = (data, selectedDate) => {
     };
   });
 
-  // Filter Pits created from selectedDate onwards or connected to filteredShots
-  const activePitIds = new Set();
-  filteredShots.forEach(s => {
-    if (s.startPit && s.startPit.id) activePitIds.add(s.startPit.id);
-    if (s.endPit && s.endPit.id) activePitIds.add(s.endPit.id);
-  });
+  // Filter Pits: only include pits if HDD shot / trenching has started on or before this window!
+  const hddStartedOnDate = filteredShots.some(isShotStarted) || filteredDepthPoints.length > 0;
+  let filteredPits = [];
+  if (hddStartedOnDate) {
+    const activePitIds = new Set();
+    filteredShots.forEach(s => {
+      if (s.startPit && s.startPit.id) activePitIds.add(String(s.startPit.id));
+      if (s.startPit && s.startPit.name) activePitIds.add(String(s.startPit.name));
+      if (s.endPit && s.endPit.id) activePitIds.add(String(s.endPit.id));
+      if (s.endPit && s.endPit.name) activePitIds.add(String(s.endPit.name));
+    });
 
-  const filteredPits = (data.pits || []).filter(pit => {
-    const pDate = pit.executionDate || parseDateToYMD(pit.diggingTime);
-    if (!pDate || pDate >= targetDateYMD) return true;
-    if (activePitIds.has(pit.id)) return true;
-    return false;
-  });
+    filteredPits = (data.pits || []).filter(pit => {
+      if (activePitIds.has(String(pit.id)) || activePitIds.has(String(pit.name)) || activePitIds.has(String(pit.serialNo))) {
+        return true;
+      }
+      const pDate = pit.executionDate || parseDateToYMD(pit.diggingTime);
+      return Boolean(pDate && pDate >= targetDateYMD);
+    });
+  }
 
   // Recalculate Statistics for selectedDateYMD
   let totalTrenchMeters = filteredShots.reduce((sum, s) => sum + s.lengthMeters, 0);
@@ -425,7 +508,7 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     const lastDp = allDepthReadings[allDepthReadings.length - 1];
     latestPosition = { lat: lastDp.lat, lng: lastDp.lng, label: `Latest Depth Pt ${lastDp.pointNo} (${lastDp.depth}m)` };
     greenBulbTime = lastDp.capturedAt || lastDp.createdAt || null;
-  } else if (pits.length > 0) {
+  } else if (pits.length > 0 && hasHddShotOrTrenchingStarted({ shots, depthPoints: allDepthReadings })) {
     const lastPit = pits[pits.length - 1];
     latestPosition = { lat: lastPit.lat, lng: lastPit.lng, label: `Latest Pit ${lastPit.id}` };
     greenBulbTime = lastPit.diggingTime || lastPit.createdAt || null;

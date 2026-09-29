@@ -11,7 +11,15 @@ import {
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 import { useAuth } from '../../hooks/useAuth';
-import { mapHddExecutionResponse, filterHddExecutionByDate, parseDateToYMD, parseAnyDate, isMongoHexId } from '../../utils/mapHddExecutionResponse';
+import {
+  mapHddExecutionResponse,
+  filterHddExecutionByDate,
+  parseDateToYMD,
+  parseAnyDate,
+  isMongoHexId,
+  hasHddShotOrTrenchingStarted,
+  getVisiblePitsForMap
+} from '../../utils/mapHddExecutionResponse';
 import { PhotoLightbox, formatImageUrl } from '../../components/common/PhotoLightbox';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -667,8 +675,8 @@ export const HddExecutionMapPage = () => {
       }
     });
 
-    // 2. Pits — all pits rendered uniformly with standard pit pin marker & hover tooltip
-    const pits = executionData.pits || [];
+    // 2. Pits — only show if HDD shot / trenching has started
+    const pits = getVisiblePitsForMap(executionData);
 
     pits.forEach((pit) => {
       const pt = [pit.lat, pit.lng];
@@ -967,9 +975,11 @@ export const HddExecutionMapPage = () => {
     );
   }
 
-  const hasGpsData = (executionData.shots && executionData.shots.length > 0) ||
-    (executionData.pits && executionData.pits.length > 0) ||
-    (executionData.depthPoints && executionData.depthPoints.length > 0);
+  const displayPits = getVisiblePitsForMap(executionData);
+  const hddStarted = hasHddShotOrTrenchingStarted(executionData);
+  const hasGpsData = (executionData.depthPoints && executionData.depthPoints.length > 0) ||
+    (hddStarted && displayPits.length > 0) ||
+    (hddStarted && executionData.shots && executionData.shots.length > 0);
 
   const activeTaskCode = [executionData?.taskCode, executionData?.taskId].find(v => v && !isMongoHexId(v)) || '';
   const activeTaskName = [executionData?.displayName, executionData?.taskName].find(v => v && !isMongoHexId(v)) || '';
@@ -1020,7 +1030,7 @@ export const HddExecutionMapPage = () => {
           <span className="map-viewer-toolbar-stats">
             {executionData.statistics.totalShots} trenches
             {' · '}
-            {executionData.statistics.totalPits} pits
+            {displayPits.length} pits
             {' · '}
             {executionData.statistics.formattedDistance}
             {' · '}
@@ -1098,8 +1108,8 @@ export const HddExecutionMapPage = () => {
         {!hasGpsData && (
           <div className="gis-empty-overlay">
             <EmptyState
-              title="No execution on this date"
-              subtitle={`No pits, trenches, or depth points for ${selectedDate || 'the selected day'}.`}
+              title={!hddStarted ? "HDD Shot / Trenching Not Started" : "No execution on this date"}
+              subtitle={!hddStarted ? "HDD shot / trenching has not started yet. Pits will be displayed on the map once execution begins." : `No pits, trenches, or depth points for ${selectedDate || 'the selected day'}.`}
             />
           </div>
         )}

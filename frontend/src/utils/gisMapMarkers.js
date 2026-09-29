@@ -1,5 +1,6 @@
 import L from 'leaflet';
 import { formatDepthM } from './formatters';
+import { parseAnyDate, getVisiblePitsForMap, hasHddShotOrTrenchingStarted, isShotStarted } from './mapHddExecutionResponse';
 
 export function escapeHtml(value) {
   return String(value ?? '')
@@ -430,7 +431,7 @@ export function buildGis3dScene(executionData) {
     if (shot.endPit?.name) endPitIds.add(shot.endPit.name);
   });
 
-  const pits = executionData?.pits || [];
+  const pits = getVisiblePitsForMap(executionData);
   const { namedStart, namedEnd } = namedPitEndpoints(pits, startPitIds, endPitIds);
   const pitMarkers = pits.map((pit) => {
     if (pit.lat != null && pit.lng != null) bounds.push([pit.lng, pit.lat]);
@@ -443,6 +444,7 @@ export function buildGis3dScene(executionData) {
     if (coords.length > 1) pitLinks.push(coords);
   };
   (executionData?.shots || []).forEach((shot) => {
+    if (!isShotStarted(shot)) return;
     const a = shot.startPit;
     const b = shot.endPit;
     if (a?.lng != null && a?.lat != null && b?.lng != null && b?.lat != null) {
