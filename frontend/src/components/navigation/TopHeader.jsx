@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { LucideMenu, LucideBell, LucideLogOut, LucideSettings, LucideUser } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { VendorSwitcher } from '../common/VendorSwitcher';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 
 const ROUTE_TITLES = {
@@ -103,8 +102,6 @@ export const TopHeader = ({ onToggleSidebar, onOpenDrawer }) => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <VendorSwitcher />
-
         <button type="button" className="header-icon-btn" onClick={() => navigate('/notifications')} aria-label="Notifications">
           <LucideBell size={18} />
         </button>

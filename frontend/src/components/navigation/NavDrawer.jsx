@@ -57,7 +57,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
     {
       title: 'Map View',
       items: [
-        { label: 'Dashboard', path: '/map-view', icon: LucideLayoutDashboard, perm: ['mapview.dashboard', 'mapview.view'] },
+        { label: 'Dashboard', path: '/map-view', icon: LucideLayoutDashboard, perm: 'mapview.dashboard' },
         { label: 'Trenching', path: '/map-view/trenching', icon: LucideGlobe, perm: 'mapview.view' }
       ]
     },

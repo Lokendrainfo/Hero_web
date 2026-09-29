@@ -31,7 +31,15 @@ export const MapViewPage = () => {
   const { roles, isAdmin, hasPermission, selectedVendorId } = useAuth();
   const { showToast } = useToast();
 
-  const hasAccess = isAdmin || hasPermission('mapview.dashboard') || hasPermission('mapview.view');
+  const hasAccess = isAdmin || hasPermission('mapview.dashboard');
+  const hasTrenchingAccess = hasPermission('mapview.view');
+
+  // If user lacks dashboard permission but has trenching map permission, redirect to trenching list
+  useEffect(() => {
+    if (!isAdmin && !hasPermission('mapview.dashboard') && hasPermission('mapview.view')) {
+      navigate('/map-view/trenching', { replace: true });
+    }
+  }, [isAdmin, hasPermission, navigate]);
 
   // State
   const [loading, setLoading] = useState(true);
@@ -51,6 +59,7 @@ export const MapViewPage = () => {
 
   // Fetch summary data from backend
   const fetchSummary = async (showRefreshIndicator = false) => {
+    if (!hasAccess) return;
     if (showRefreshIndicator) setRefreshing(true);
     else setLoading(true);
 
@@ -163,6 +172,9 @@ export const MapViewPage = () => {
   }, [summaryData, searchQuery]);
 
   if (!hasAccess) {
+    if (hasTrenchingAccess) {
+      return null;
+    }
     return (
       <div className="screen-container">
         <EmptyState

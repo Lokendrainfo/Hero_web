@@ -17,7 +17,7 @@ export const getDefaultRoute = (permissions = [], isAdmin = false) => {
   if (perms.length === 0) return '/dashboard';
   if (perms.includes('dashboard.view')) return '/dashboard';
   if (perms.includes('mapview.dashboard')) return '/map-view';
-  if (perms.includes('mapview.view')) return '/map-view';
+  if (perms.includes('mapview.view')) return '/map-view/trenching';
   if (perms.includes('chartview.view')) return '/chart-view';
   if (perms.includes('machines.view')) return '/machines';
   if (perms.includes('tracking.view')) return '/tracking';
