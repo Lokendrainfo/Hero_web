@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     'apps.reports',
     'apps.integrations',
     'apps.machine_shift',
+    'apps.planner',
 ]
 
 MIDDLEWARE = [

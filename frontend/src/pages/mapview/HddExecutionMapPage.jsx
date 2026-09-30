@@ -24,6 +24,8 @@ import { PhotoLightbox, formatImageUrl } from '../../components/common/PhotoLigh
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
 import { DateField } from '../../components/common/DateField';
+import { AlignPlanMapButton } from '../../components/planner/AlignPlanMapButton';
+import { renderPlannerLayersOnLeaflet } from '../../utils/plannerMapUtils';
 import { formatDepthM } from '../../utils/formatters';
 import {
   applyGisZoomLabels,
@@ -121,8 +123,35 @@ export const HddExecutionMapPage = () => {
   const mapInstanceRef = useRef(null);
   const layerGroupRef = useRef(null);
   const depthLayerRef = useRef(null);
+  const plannerLayerRef = useRef(null);
   const tileLayerRef = useRef(null);
   const wrapperRef = useRef(null);
+
+  const [activePlanSummary, setActivePlanSummary] = useState(null);
+
+  const handleAlignPlan = (planSummary) => {
+    if (!planSummary) return;
+    setActivePlanSummary(planSummary);
+
+    if (mapInstanceRef.current) {
+      if (!plannerLayerRef.current) {
+        plannerLayerRef.current = L.featureGroup().addTo(mapInstanceRef.current);
+      }
+      renderPlannerLayersOnLeaflet(
+        plannerLayerRef.current,
+        planSummary.paths,
+        planSummary.nodes
+      );
+
+      if (planSummary.bounds) {
+        mapInstanceRef.current.fitBounds(planSummary.bounds, {
+          padding: [40, 40],
+          maxZoom: 18,
+          animate: true
+        });
+      }
+    }
+  };
 
   // Batch resolve S3 Presigned URLs via POST /api/survey/photo-urls
   const resolvePhotoUrlsForExecution = async (normalized) => {
@@ -525,6 +554,15 @@ export const HddExecutionMapPage = () => {
       mapInstanceRef.current = map;
       layerGroupRef.current = L.featureGroup().addTo(map);
       depthLayerRef.current = L.featureGroup().addTo(map);
+      plannerLayerRef.current = L.featureGroup().addTo(map);
+    }
+
+    if (activePlanSummary && mapInstanceRef.current && plannerLayerRef.current) {
+      renderPlannerLayersOnLeaflet(
+        plannerLayerRef.current,
+        activePlanSummary.paths,
+        activePlanSummary.nodes
+      );
     }
 
     const map = mapInstanceRef.current;
@@ -1079,6 +1117,10 @@ export const HddExecutionMapPage = () => {
               3D
             </button>
           </div>
+          <AlignPlanMapButton
+            currentPlanId={executionData?.planId || executionData?.plan_id || ''}
+            onAlignPlan={handleAlignPlan}
+          />
           <button type="button" className="gis-map-icon-btn" onClick={fitRouteBounds} title="Fit to trench">
             <LucideGlobe size={15} /> Fit route
           </button>

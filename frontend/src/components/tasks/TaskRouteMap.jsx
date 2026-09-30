@@ -10,6 +10,8 @@ import {
   gpNodeIcon,
   pitIcon as createPitIcon,
 } from '../../utils/gisMapMarkers';
+import { AlignPlanMapButton } from '../planner/AlignPlanMapButton';
+import { renderPlannerLayersOnLeaflet } from '../../utils/plannerMapUtils';
 
 const parseLatLng = (obj) => {
   if (!obj) return null;
@@ -52,8 +54,28 @@ export const TaskRouteMap = ({
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const layerGroupRef = useRef(null);
+  const plannerLayerRef = useRef(null);
   const tileLayerRef = useRef(null);
   const wrapperRef = useRef(null);
+
+  const handleAlignPlan = (planSummary) => {
+    if (!planSummary || !mapInstanceRef.current) return;
+    if (!plannerLayerRef.current) {
+      plannerLayerRef.current = L.featureGroup().addTo(mapInstanceRef.current);
+    }
+    renderPlannerLayersOnLeaflet(
+      plannerLayerRef.current,
+      planSummary.paths,
+      planSummary.nodes
+    );
+    if (planSummary.bounds) {
+      mapInstanceRef.current.fitBounds(planSummary.bounds, {
+        padding: [40, 40],
+        maxZoom: 18,
+        animate: true
+      });
+    }
+  };
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [mapType, setMapType] = useState('street');
@@ -510,6 +532,11 @@ export const TaskRouteMap = ({
               Satellite
             </button>
           </div>
+
+          <AlignPlanMapButton
+            currentPlanId={''}
+            onAlignPlan={handleAlignPlan}
+          />
 
           <button
             type="button"
