@@ -80,9 +80,11 @@ export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => 
           setFormData(prev => ({ ...prev, reason: defaultReason.id }));
         }
 
-        // If user is a single vendor user, pre-select vendor
+        // If user is a single vendor user or only 1 vendor is available, pre-select vendor
         if (user?.vendor_id) {
           setFormData(prev => ({ ...prev, vendor: user.vendor_id }));
+        } else if (vendorList.length === 1) {
+          setFormData(prev => ({ ...prev, vendor: vendorList[0].id || vendorList[0].external_vendor_id }));
         }
       } catch (err) {
         console.error("Error loading shift request prerequisites", err);

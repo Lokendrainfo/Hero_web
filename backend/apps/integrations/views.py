@@ -101,8 +101,30 @@ class IlyncVendorListView(IlyncBaseView):
         data = client.get_vendors(page=page, size=size, search=search)
         normalized = normalize_pagination(data, page=page, size=size)
 
+        from apps.common.vendor_scope import get_user_vendor_ids
+        from apps.vendors.models import Vendor
+
+        user = request.user if request.user and request.user.is_authenticated else None
+        allowed_vendor_ids = get_user_vendor_ids(user) if user else None
+
+        allowed_str_ids = set()
+        allowed_ext_ids = set()
+        allowed_names = set()
+        assigned_vendor_objs = []
+
+        if allowed_vendor_ids is not None:
+            assigned_vendor_objs = list(Vendor.objects.filter(id__in=allowed_vendor_ids))
+            for v in assigned_vendor_objs:
+                allowed_str_ids.add(str(v.id).lower())
+                if v.external_vendor_id:
+                    allowed_ext_ids.add(str(v.external_vendor_id).lower())
+                if v.name:
+                    allowed_names.add(str(v.name).strip().lower())
+
         if isinstance(normalized.get('results'), list):
             filtered_results = []
+            matched_vendor_db_ids = set()
+
             for v_item in normalized['results']:
                 if not isinstance(v_item, dict):
                     continue
@@ -119,25 +141,26 @@ class IlyncVendorListView(IlyncBaseView):
                 v_item['id'] = v_id
                 v_item['external_vendor_id'] = v_id
 
-                # iLync is the single source of truth for vendor machines
-                ilync_machines = v_item.get('machines') or []
-                if isinstance(ilync_machines, list):
-                    v_item['machines'] = ilync_machines
-                    v_item['assigned_machines'] = ilync_machines
-                    v_item['machines_count'] = len(ilync_machines)
-                else:
-                    v_item['machines'] = []
-                    v_item['assigned_machines'] = []
-                    v_item['machines_count'] = 0
+                # User Authorization Scope Filter
+                if allowed_vendor_ids is not None:
+                    v_id_lower = v_id.lower()
+                    v_pname_lower = v_pname.lower()
+                    is_allowed = (
+                        v_id_lower in allowed_str_ids or
+                        v_id_lower in allowed_ext_ids or
+                        v_pname_lower in allowed_names or
+                        any(an and (an in v_pname_lower or v_pname_lower in an) for an in allowed_names if len(an) >= 3)
+                    )
+                    if not is_allowed:
+                        continue
 
-                # iLync is the single source of truth for vendor team users
-                ilync_users = v_item.get('users') or []
-                if isinstance(ilync_users, list):
-                    v_item['users'] = ilync_users
-                    v_item['users_count'] = len(ilync_users)
-                else:
-                    v_item['users'] = []
-                    v_item['users_count'] = 0
+                    for v_obj in assigned_vendor_objs:
+                        v_obj_ext = str(v_obj.external_vendor_id or '').lower()
+                        v_obj_name = str(v_obj.name or '').strip().lower()
+                        if (str(v_obj.id).lower() == v_id_lower or
+                            (v_obj_ext and v_obj_ext == v_id_lower) or
+                            (v_obj_name and (v_obj_name == v_pname_lower or v_obj_name in v_pname_lower or v_pname_lower in v_obj_name))):
+                            matched_vendor_db_ids.add(v_obj.id)
 
                 # Optional vendor ID filtering
                 if vendor_filter and str(vendor_filter).strip().lower() != 'all':
@@ -161,7 +184,61 @@ class IlyncVendorListView(IlyncBaseView):
                     if sp not in haystack:
                         continue
 
+                # iLync is the single source of truth for vendor machines
+                ilync_machines = v_item.get('machines') or []
+                if isinstance(ilync_machines, list):
+                    v_item['machines'] = ilync_machines
+                    v_item['assigned_machines'] = ilync_machines
+                    v_item['machines_count'] = len(ilync_machines)
+                else:
+                    v_item['machines'] = []
+                    v_item['assigned_machines'] = []
+                    v_item['machines_count'] = 0
+
+                # iLync is the single source of truth for vendor team users
+                ilync_users = v_item.get('users') or []
+                if isinstance(ilync_users, list):
+                    v_item['users'] = ilync_users
+                    v_item['users_count'] = len(ilync_users)
+                else:
+                    v_item['users'] = []
+                    v_item['users_count'] = 0
+
                 filtered_results.append(v_item)
+
+            # Fallback: Ensure all assigned DB vendors are present in results
+            if allowed_vendor_ids is not None:
+                for v_obj in assigned_vendor_objs:
+                    if v_obj.id not in matched_vendor_db_ids:
+                        v_ext = str(v_obj.external_vendor_id or v_obj.id)
+                        v_name = v_obj.name or f"Vendor #{v_obj.id}"
+                        if search and search not in v_name.lower():
+                            continue
+                        already_in_list = any(
+                            str(vl.get('id')).lower() in (v_ext.lower(), str(v_obj.id).lower()) or
+                            str(vl.get('name', '')).strip().lower() == v_name.strip().lower()
+                            for vl in filtered_results
+                        )
+                        if not already_in_list:
+                            filtered_results.append({
+                                'id': v_ext,
+                                'external_vendor_id': v_ext,
+                                'name': v_name,
+                                'partnerName': v_name,
+                                'contact_person': v_obj.contact_person or '',
+                                'contactName': v_obj.contact_person or '',
+                                'phone': v_obj.phone or '',
+                                'phoneNumber': v_obj.phone or '',
+                                'email': v_obj.email or '',
+                                'vendor_type': getattr(v_obj, 'vendor_type', 'COMPANY') or 'COMPANY',
+                                'legalEntityType': getattr(v_obj, 'vendor_type', 'COMPANY') or 'COMPANY',
+                                'is_active': v_obj.is_active,
+                                'machines': [],
+                                'assigned_machines': [],
+                                'machines_count': 0,
+                                'users': [],
+                                'users_count': 0
+                            })
 
             normalized['results'] = filtered_results
             normalized['total'] = len(filtered_results)

@@ -53,17 +53,59 @@ class VendorViewSet(viewsets.ModelViewSet):
 
         allowed_vendor_ids = get_user_vendor_ids(user)
 
+        allowed_str_ids = set()
+        allowed_ext_ids = set()
+        allowed_names = set()
+        allowed_codes = set()
+        assigned_vendor_objs = []
+
+        if allowed_vendor_ids is not None:
+            assigned_vendor_objs = list(Vendor.objects.filter(id__in=allowed_vendor_ids))
+            for v in assigned_vendor_objs:
+                allowed_str_ids.add(str(v.id).lower())
+                if v.external_vendor_id:
+                    allowed_ext_ids.add(str(v.external_vendor_id).lower())
+                if v.name:
+                    allowed_names.add(str(v.name).strip().lower())
+                if getattr(v, 'code', None):
+                    allowed_codes.add(str(v.code).strip().lower())
+                if getattr(v, 'vendor_code', None):
+                    allowed_codes.add(str(v.vendor_code).strip().lower())
+
         vendors_list = []
+        matched_vendor_db_ids = set()
+
         for item in raw_list:
             if not isinstance(item, dict):
                 continue
             v_id = str(item.get('id') or item.get('external_vendor_id') or '').strip()
             v_name = str(item.get('partnerName') or item.get('name') or '').strip()
+            v_code = str(item.get('code') or item.get('vendor_code') or '').strip()
 
             # Authorization Scope Filter
             if allowed_vendor_ids is not None:
-                if not any(str(av_id).lower() in (v_id.lower(), v_name.lower()) for av_id in allowed_vendor_ids):
+                v_id_lower = v_id.lower()
+                v_name_lower = v_name.lower()
+                v_code_lower = v_code.lower()
+
+                is_allowed = (
+                    v_id_lower in allowed_str_ids or
+                    v_id_lower in allowed_ext_ids or
+                    v_name_lower in allowed_names or
+                    (v_code_lower and v_code_lower in allowed_codes) or
+                    any(an and (an in v_name_lower or v_name_lower in an) for an in allowed_names if len(an) >= 3)
+                )
+
+                if not is_allowed:
                     continue
+
+                for v_obj in assigned_vendor_objs:
+                    v_obj_ext = str(v_obj.external_vendor_id or '').lower()
+                    v_obj_name = str(v_obj.name or '').strip().lower()
+                    if (str(v_obj.id).lower() == v_id_lower or
+                        (v_obj_ext and v_obj_ext == v_id_lower) or
+                        (v_obj_name and (v_obj_name == v_name_lower or v_obj_name in v_name_lower or v_name_lower in v_obj_name))):
+                        matched_vendor_db_ids.add(v_obj.id)
 
             # Search Filter
             if search:
@@ -91,6 +133,40 @@ class VendorViewSet(viewsets.ModelViewSet):
             norm_v['users'] = item.get('users') or []
 
             vendors_list.append(norm_v)
+
+        # Fallback: Ensure all assigned DB vendors are present in vendors_list
+        if allowed_vendor_ids is not None:
+            for v_obj in assigned_vendor_objs:
+                if v_obj.id not in matched_vendor_db_ids:
+                    v_ext = str(v_obj.external_vendor_id or v_obj.id)
+                    v_name = v_obj.name or f"Vendor #{v_obj.id}"
+
+                    if search and search not in v_name.lower():
+                        continue
+
+                    already_in_list = any(
+                        str(vl.get('id')).lower() in (v_ext.lower(), str(v_obj.id).lower()) or
+                        str(vl.get('name', '')).strip().lower() == v_name.strip().lower()
+                        for vl in vendors_list
+                    )
+                    if not already_in_list:
+                        vendors_list.append({
+                            'id': v_ext,
+                            'external_vendor_id': v_ext,
+                            'name': v_name,
+                            'partnerName': v_name,
+                            'contact_person': v_obj.contact_person or '',
+                            'contactName': v_obj.contact_person or '',
+                            'phone': v_obj.phone or '',
+                            'phoneNumber': v_obj.phone or '',
+                            'email': v_obj.email or '',
+                            'vendor_type': getattr(v_obj, 'vendor_type', 'COMPANY') or 'COMPANY',
+                            'legalEntityType': getattr(v_obj, 'vendor_type', 'COMPANY') or 'COMPANY',
+                            'is_active': v_obj.is_active,
+                            'machines': [],
+                            'machines_count': 0,
+                            'users': []
+                        })
 
         is_admin = user.is_authenticated and (user.is_superuser or 'ADMIN' in user.get_role_list())
 
