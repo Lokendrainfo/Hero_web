@@ -33,7 +33,7 @@ const ensureArray = (val) => {
 export const MachineShiftList = () => {
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const { user, isAdmin, hasRole, hasPermission } = useAuth();
+  const { user, isAdmin, hasRole, hasPermission, vendors: authVendors } = useAuth();
 
   // Role flags
   const isScm = isAdmin || hasRole('SCM') || hasRole('SCM_MANAGER') || hasPermission('machine_shift.scm_review') || hasPermission('machine_shift.scm_confirm');
@@ -71,14 +71,70 @@ export const MachineShiftList = () => {
           vendorService.getVendors().catch(() => []),
           machineService.getAll({ page_size: 250 }).catch(() => [])
         ]);
-        setVendors(ensureArray(vRes));
-        setMachines(ensureArray(mRes));
+        const vendorList = ensureArray(vRes);
+        const machineList = ensureArray(mRes);
+
+        let finalVendors = vendorList;
+        const assignedVendors = (Array.isArray(user?.vendors) && user.vendors.length > 0)
+          ? user.vendors
+          : (Array.isArray(authVendors) && authVendors.length > 0 ? authVendors : []);
+
+        if (!isAdmin && assignedVendors.length > 0) {
+          const allowedIds = new Set(
+            assignedVendors.flatMap(v => [
+              String(v.id).toLowerCase(),
+              v.external_vendor_id ? String(v.external_vendor_id).toLowerCase() : null,
+              v.code ? String(v.code).toLowerCase() : null,
+              v.name ? String(v.name).trim().toLowerCase() : null
+            ].filter(Boolean))
+          );
+
+          const matched = vendorList.filter(v => {
+            const vId = String(v.id || '').toLowerCase();
+            const vExt = String(v.external_vendor_id || '').toLowerCase();
+            const vDbId = String(v.db_id || '').toLowerCase();
+            const vCode = String(v.code || '').toLowerCase();
+            const vName = String(v.name || v.partnerName || '').trim().toLowerCase();
+            const vNameClean = vName.replace(/\s*[\(\[]?vnd[\)\]]?\s*$/i, '').trim();
+            return allowedIds.has(vId) || allowedIds.has(vExt) || allowedIds.has(vDbId) || (vCode && allowedIds.has(vCode)) || allowedIds.has(vName) || allowedIds.has(vNameClean);
+          });
+
+          const finalMap = new Map();
+          matched.forEach(v => {
+            const key = String(v.id || v.external_vendor_id);
+            finalMap.set(key, v);
+          });
+
+          assignedVendors.forEach(av => {
+            const key = String(av.id || av.external_vendor_id);
+            const exists = Array.from(finalMap.values()).some(v =>
+              String(v.id) === String(av.id) ||
+              String(v.db_id) === String(av.id) ||
+              (av.external_vendor_id && (String(v.id) === String(av.external_vendor_id) || String(v.external_vendor_id) === String(av.external_vendor_id))) ||
+              String(v.name || '').trim().toLowerCase() === String(av.name || '').trim().toLowerCase()
+            );
+            if (!exists) {
+              finalMap.set(key, {
+                id: av.id,
+                external_vendor_id: av.external_vendor_id || String(av.id),
+                db_id: av.id,
+                name: av.name,
+                code: av.code || 'VND'
+              });
+            }
+          });
+
+          finalVendors = Array.from(finalMap.values());
+        }
+
+        setVendors(finalVendors);
+        setMachines(machineList);
       } catch (err) {
         console.error("Failed to load filter options", err);
       }
     };
     fetchMasters();
-  }, []);
+  }, [user, isAdmin, authVendors]);
 
   // Fetch Shift Requests
   const loadRequests = useCallback(async () => {

@@ -28,7 +28,7 @@ const ensureArray = (val) => {
 export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => {
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, vendors: authVendors } = useAuth();
 
   // Data states
   const [vendors, setVendors] = useState([]);
@@ -70,7 +70,63 @@ export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => 
         const machineList = ensureArray(machinesRes);
         const reasonList = ensureArray(reasonsRes);
 
-        setVendors(vendorList);
+        let finalVendors = vendorList;
+        const assignedVendors = (Array.isArray(user?.vendors) && user.vendors.length > 0)
+          ? user.vendors
+          : (Array.isArray(authVendors) && authVendors.length > 0 ? authVendors : []);
+
+        // When user is not admin and has assigned vendors, strictly enforce showing only assigned vendors
+        if (!isAdmin && assignedVendors.length > 0) {
+          const allowedIds = new Set(
+            assignedVendors.flatMap(v => [
+              String(v.id).toLowerCase(),
+              v.external_vendor_id ? String(v.external_vendor_id).toLowerCase() : null,
+              v.code ? String(v.code).toLowerCase() : null,
+              v.name ? String(v.name).trim().toLowerCase() : null
+            ].filter(Boolean))
+          );
+
+          const matchedFromApi = vendorList.filter(v => {
+            const vId = String(v.id || '').toLowerCase();
+            const vExt = String(v.external_vendor_id || '').toLowerCase();
+            const vDbId = String(v.db_id || '').toLowerCase();
+            const vCode = String(v.code || '').toLowerCase();
+            const vName = String(v.name || v.partnerName || '').trim().toLowerCase();
+            const vNameClean = vName.replace(/\s*[\(\[]?vnd[\)\]]?\s*$/i, '').trim();
+            return allowedIds.has(vId) || allowedIds.has(vExt) || allowedIds.has(vDbId) || (vCode && allowedIds.has(vCode)) || allowedIds.has(vName) || allowedIds.has(vNameClean);
+          });
+
+          const finalMap = new Map();
+          matchedFromApi.forEach(v => {
+            const key = String(v.id || v.external_vendor_id);
+            finalMap.set(key, v);
+          });
+
+          // Ensure all assigned vendors from the user serializer are included
+          assignedVendors.forEach(av => {
+            const key = String(av.id || av.external_vendor_id);
+            const exists = Array.from(finalMap.values()).some(v =>
+              String(v.id) === String(av.id) ||
+              String(v.db_id) === String(av.id) ||
+              (av.external_vendor_id && (String(v.id) === String(av.external_vendor_id) || String(v.external_vendor_id) === String(av.external_vendor_id))) ||
+              String(v.name || '').trim().toLowerCase() === String(av.name || '').trim().toLowerCase()
+            );
+            if (!exists) {
+              finalMap.set(key, {
+                id: av.id,
+                external_vendor_id: av.external_vendor_id || String(av.id),
+                db_id: av.id,
+                name: av.name,
+                code: av.code || 'VND',
+                machines: []
+              });
+            }
+          });
+
+          finalVendors = Array.from(finalMap.values());
+        }
+
+        setVendors(finalVendors);
         setAllMachines(machineList);
         setReasons(reasonList);
 
@@ -80,11 +136,11 @@ export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => 
           setFormData(prev => ({ ...prev, reason: defaultReason.id }));
         }
 
-        // If user is a single vendor user or only 1 vendor is available, pre-select vendor
-        if (user?.vendor_id) {
+        // If only 1 vendor is available, pre-select vendor
+        if (finalVendors.length === 1) {
+          setFormData(prev => ({ ...prev, vendor: finalVendors[0].id || finalVendors[0].external_vendor_id }));
+        } else if (user?.vendor_id && (!assignedVendors || assignedVendors.length <= 1)) {
           setFormData(prev => ({ ...prev, vendor: user.vendor_id }));
-        } else if (vendorList.length === 1) {
-          setFormData(prev => ({ ...prev, vendor: vendorList[0].id || vendorList[0].external_vendor_id }));
         }
       } catch (err) {
         console.error("Error loading shift request prerequisites", err);
@@ -94,7 +150,7 @@ export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => 
     };
 
     fetchData();
-  }, [user]);
+  }, [user, isAdmin, authVendors]);
 
   // VENDOR -> MACHINE DEPENDENCY FILTERING
   useEffect(() => {
@@ -107,6 +163,7 @@ export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => 
     const selectedVendor = (vendors || []).find(v =>
       String(v.id) === String(formData.vendor) ||
       String(v.external_vendor_id) === String(formData.vendor) ||
+      String(v.db_id) === String(formData.vendor) ||
       String(v.code) === String(formData.vendor) ||
       String(v.name).trim().toLowerCase() === String(formData.vendor).trim().toLowerCase()
     );
@@ -118,6 +175,7 @@ export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => 
 
     const vId = String(selectedVendor.id || '');
     const extId = String(selectedVendor.external_vendor_id || '');
+    const dbId = String(selectedVendor.db_id || '');
     const vName = String(selectedVendor.name || '').trim().toLowerCase();
 
     // 1. Gather machines directly from the vendor's iLance portal data
@@ -157,8 +215,8 @@ export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => 
     // 2. Also include any machines in DB assigned to this vendor
     (allMachines || []).forEach(dbM => {
       const isAssigned = (
-        (dbM.vendor_id && (String(dbM.vendor_id) === vId || (extId && String(dbM.vendor_id) === extId))) ||
-        (dbM.vendor && typeof dbM.vendor === 'object' && (String(dbM.vendor.id) === vId || (extId && String(dbM.vendor.external_vendor_id) === extId))) ||
+        (dbM.vendor_id && (String(dbM.vendor_id) === vId || (extId && String(dbM.vendor_id) === extId) || (dbId && String(dbM.vendor_id) === dbId))) ||
+        (dbM.vendor && typeof dbM.vendor === 'object' && (String(dbM.vendor.id) === vId || (extId && String(dbM.vendor.external_vendor_id) === extId) || (dbId && String(dbM.vendor.id) === dbId))) ||
         (dbM.externalVendorId && extId && String(dbM.externalVendorId) === extId) ||
         (dbM.vendorName && vName && String(dbM.vendorName).trim().toLowerCase() === vName) ||
         (dbM.vendor_name && vName && String(dbM.vendor_name).trim().toLowerCase() === vName)
