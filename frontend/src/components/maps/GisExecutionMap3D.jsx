@@ -209,6 +209,7 @@ const addSceneLayers = (map, scene) => {
         'fill-extrusion-opacity': 0.94,
         'fill-extrusion-color': [
           'case',
+          ['<', ['get', 'depth'], 1.65], '#991b1b',
           ['==', ['get', 'live'], 1], '#6d28d9',
           [
             'interpolate',

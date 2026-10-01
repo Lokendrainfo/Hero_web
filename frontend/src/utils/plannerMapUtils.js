@@ -86,9 +86,8 @@ export const calculatePlannerBounds = (pathsFeatureCollection, nodesFeatureColle
 
   if (minLat === Infinity || maxLat === -Infinity) return null;
 
-  // Handle single point or tiny bounding area by adding minimal padding margin
   if (minLat === maxLat && minLng === maxLng) {
-    const delta = 0.005; // approx 500m
+    const delta = 0.005;
     return [
       [minLat - delta, minLng - delta],
       [maxLat + delta, maxLng + delta],
@@ -102,6 +101,69 @@ export const calculatePlannerBounds = (pathsFeatureCollection, nodesFeatureColle
 };
 
 /**
+ * Calculates a combined Leaflet bounding box [[minLat, minLng], [maxLat, maxLng]]
+ * across a list of active plans.
+ */
+export const calculateMultiPlanBounds = (activePlansList = []) => {
+  if (!Array.isArray(activePlansList) || activePlansList.length === 0) return null;
+
+  const allPoints = [];
+  activePlansList.forEach((plan) => {
+    if (!plan || plan.visible === false) return;
+    const pPoints = extractAllLatLngs(plan.paths);
+    const nPoints = extractAllLatLngs(plan.nodes);
+    allPoints.push(...pPoints, ...nPoints);
+  });
+
+  if (allPoints.length === 0) return null;
+
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+
+  allPoints.forEach(([lat, lng]) => {
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+  });
+
+  if (minLat === Infinity || maxLat === -Infinity) return null;
+
+  if (minLat === maxLat && minLng === maxLng) {
+    const delta = 0.005;
+    return [
+      [minLat - delta, minLng - delta],
+      [maxLat + delta, maxLng + delta],
+    ];
+  }
+
+  return [
+    [minLat, minLng],
+    [maxLat, maxLng],
+  ];
+};
+
+/**
+ * Palette of distinct colors for rendering multiple plans on the map.
+ */
+export const PLAN_COLOR_PALETTE = [
+  { stroke: '#0284c7', node: '#0369a1', name: 'Sky Blue' },
+  { stroke: '#7c3aed', node: '#6d28d9', name: 'Purple' },
+  { stroke: '#059669', node: '#047857', name: 'Emerald' },
+  { stroke: '#ea580c', node: '#c2410c', name: 'Orange' },
+  { stroke: '#db2777', node: '#be185d', name: 'Pink' },
+  { stroke: '#2563eb', node: '#1d4ed8', name: 'Royal Blue' },
+  { stroke: '#d97706', node: '#b45309', name: 'Amber' },
+  { stroke: '#4f46e5', node: '#4338ca', name: 'Indigo' },
+];
+
+export const getPlanColor = (index = 0) => {
+  return PLAN_COLOR_PALETTE[index % PLAN_COLOR_PALETTE.length];
+};
+
+/**
  * Renders GeoJSON paths and nodes onto a Leaflet feature group.
  */
 export const renderPlannerLayersOnLeaflet = (
@@ -112,11 +174,13 @@ export const renderPlannerLayersOnLeaflet = (
 ) => {
   if (!leafletGroup) return;
 
-  // Clear existing layers in group
-  leafletGroup.clearLayers();
+  if (options.clear !== false) {
+    leafletGroup.clearLayers();
+  }
 
   const routeColor = options.routeColor || '#06b6d4';
   const nodeColor = options.nodeColor || '#a855f7';
+  const planName = options.planName || '';
 
   // 1. Render Route Paths (LineStrings / MultiLineStrings)
   const pathFeatures = Array.isArray(pathsFeatureCollection?.features)
@@ -152,6 +216,7 @@ export const renderPlannerLayersOnLeaflet = (
         const polyline = L.polyline(latLngs, lineStyle);
         const popupContent = `
           <div style="font-family: sans-serif; font-size: 13px; padding: 4px; min-width: 180px;">
+            ${planName ? `<div style="color: #64748b; font-size: 11px; font-weight: 600;">Plan: ${planName}</div>` : ''}
             <div style="font-weight: 700; color: #0f172a; font-size: 14px; margin-bottom: 4px;">${rName}</div>
             ${rCode ? `<div style="color: #64748b; font-size: 11px;">Code: <b>${rCode}</b></div>` : ''}
             ${rLength ? `<div style="color: #3b82f6; font-size: 12px; margin-top: 2px;">Length: <b>${rLength} km</b></div>` : ''}
@@ -204,6 +269,7 @@ export const renderPlannerLayersOnLeaflet = (
 
     const popupContent = `
       <div style="font-family: sans-serif; font-size: 13px; padding: 4px; min-width: 160px;">
+        ${planName ? `<div style="color: #64748b; font-size: 10px; font-weight: 600;">${planName}</div>` : ''}
         <div style="font-weight: 700; color: #7e22ce; font-size: 14px;">${nName}</div>
         <div style="color: #64748b; font-size: 11px;">Type: <b>${nType}</b></div>
         ${nCode ? `<div style="color: #64748b; font-size: 11px;">Code: <b>${nCode}</b></div>` : ''}

@@ -601,7 +601,14 @@ export const TaskDetailPage = () => {
 
   activePits.forEach(p => {
     (p.photos || []).forEach(ph => {
-      allMediaList.push({ ...ph, parentType: 'PIT', parentId: p.id });
+      allMediaList.push({
+        ...ph,
+        parentType: 'PIT',
+        parentId: p.id,
+        isPitPhoto: true,
+        side: p.side,
+        pitSide: p.side
+      });
       if (ph.isVideo) totalVideos++;
       else totalPhotos++;
     });

@@ -365,6 +365,13 @@ code {
   box-shadow: 0 2px 5px rgba(239, 68, 68, 0.4);
 }
 
+.gis-dp--below-threshold .gis-dp-label {
+  background: #991b1b;
+  border-color: #7f1d1d;
+  color: #ffffff;
+  box-shadow: 0 2px 5px rgba(153, 27, 27, 0.4);
+}
+
 .gis-stale-bulb-wrapper {
   position: relative;
   display: inline-flex;

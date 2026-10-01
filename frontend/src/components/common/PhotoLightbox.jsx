@@ -9,7 +9,8 @@ import {
   LucideRefreshCw,
   LucideFileText,
   LucideMaximize2,
-  LucideMinimize2
+  LucideMinimize2,
+  LucideCompass
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 
@@ -57,6 +58,36 @@ export const PhotoLightbox = ({
     currentPhoto.task_name,
   ];
   const activeTaskName = candidateNames.find(n => n && typeof n === 'string' && !isMongoHexId(n)) || '';
+
+  // Determine if this photo specifically belongs to a PIT
+  const isPitPhoto = Boolean(
+    currentPhoto.isPitPhoto ||
+    currentPhoto.parentType === 'PIT' ||
+    (currentPhoto.label && /pit/i.test(currentPhoto.label)) ||
+    (currentPhoto.title && /pit/i.test(currentPhoto.title)) ||
+    (currentPhoto.key && /pit/i.test(currentPhoto.key)) ||
+    currentPhoto.pitSide
+  );
+
+  const formatSideDisplay = (val) => {
+    if (!val) return '';
+    const s = String(val).trim();
+    const lower = s.toLowerCase();
+    if (lower.includes('lhs') || lower === 'left' || lower.startsWith('left')) {
+      return 'Left (LHS)';
+    }
+    if (lower.includes('rhs') || lower === 'right' || lower.startsWith('right')) {
+      return 'Right (RHS)';
+    }
+    if (lower.includes('center') || lower.includes('centre')) {
+      return 'Center';
+    }
+    return s;
+  };
+
+  const rawSide = currentPhoto.side || currentPhoto.pitSide || currentPhoto.pitSideOfTheRoad || currentPhoto.sideOfTheRoad || currentPhoto.roadSide || '';
+  const activePitSide = isPitPhoto ? formatSideDisplay(rawSide || 'Left (LHS)') : null;
+
   const rawUrl = currentPhoto.photoUrl || currentPhoto.url || currentPhoto.src || currentPhoto.key || '';
 
   const isAbsolute = rawUrl.startsWith('http://') || rawUrl.startsWith('https://');
@@ -240,6 +271,23 @@ export const PhotoLightbox = ({
                 textOverflow: 'ellipsis'
               }} title={activeTaskName}>
                 {activeTaskName}
+              </span>
+            )}
+            {isPitPhoto && activePitSide && (
+              <span style={{
+                background: activePitSide.toUpperCase().includes('LHS') ? 'rgba(59, 130, 246, 0.25)' : 'rgba(249, 115, 22, 0.25)',
+                border: `1px solid ${activePitSide.toUpperCase().includes('LHS') ? 'rgba(96, 165, 250, 0.5)' : 'rgba(251, 146, 60, 0.5)'}`,
+                color: activePitSide.toUpperCase().includes('LHS') ? '#93c5fd' : '#fdba74',
+                fontSize: '0.68rem',
+                fontWeight: '700',
+                padding: '1px 7px',
+                borderRadius: '5px',
+                letterSpacing: '0.02em',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}>
+                <LucideCompass size={11} /> {activePitSide}
               </span>
             )}
           </div>
@@ -469,6 +517,24 @@ export const PhotoLightbox = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#60a5fa', fontWeight: '800', fontSize: '0.8rem' }}>
             <LucideRuler size={13} />
             <span>Depth: {currentPhoto.depth} m</span>
+          </div>
+        )}
+
+        {isPitPhoto && activePitSide && (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px',
+            color: activePitSide.toUpperCase().includes('LHS') ? '#38bdf8' : '#fb923c',
+            fontWeight: '800',
+            fontSize: '0.8rem',
+            background: 'rgba(255, 255, 255, 0.06)',
+            padding: '2px 8px',
+            borderRadius: '5px',
+            border: '1px solid rgba(255, 255, 255, 0.1)'
+          }}>
+            <LucideCompass size={13} />
+            <span>Side: {activePitSide}</span>
           </div>
         )}
 

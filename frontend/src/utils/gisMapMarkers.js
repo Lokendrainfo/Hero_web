@@ -145,6 +145,27 @@ const RED_STALE_PIN = `
   </div>
 `;
 
+const DARK_RED_DEPTH_PIN = `
+  <svg class="gis-pin-svg" width="22" height="28" viewBox="0 0 24 32" fill="none">
+    <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="#991b1b" stroke="#ffffff" stroke-width="1.8"/>
+    <circle cx="12" cy="11" r="4.8" fill="none" stroke="#ffffff" stroke-width="2"/>
+    <circle cx="12" cy="11" r="1.8" fill="#ffffff"/>
+  </svg>
+`;
+
+const DARK_RED_LIVE_PIN = `
+  <div class="gis-live-bulb-wrapper">
+    <div class="gis-wave-ring gis-wave-ring--1" style="border-color: rgba(153, 27, 27, 0.45);"></div>
+    <div class="gis-wave-ring gis-wave-ring--2" style="border-color: rgba(153, 27, 27, 0.25);"></div>
+    <div class="gis-wave-ring gis-wave-ring--3" style="border-color: rgba(153, 27, 27, 0.1);"></div>
+    <svg class="gis-pin-svg gis-live-pin-pulse" width="28" height="36" viewBox="0 0 24 32" fill="none">
+      <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="#991b1b" stroke="#ffffff" stroke-width="2"/>
+      <circle cx="12" cy="11" r="5" fill="#7f1d1d" stroke="#ffffff" stroke-width="2"/>
+      <circle class="gis-live-core-bulb" cx="12" cy="11" r="2.8" fill="#fecaca"/>
+    </svg>
+  </div>
+`;
+
 export function depthPointIcon({
   depth,
   size = 18,
@@ -154,10 +175,21 @@ export function depthPointIcon({
   isStale = false,
   side = 'right',
 }) {
-  const pinSvg = isLive ? (isStale ? RED_STALE_PIN : GREEN_LIVE_PIN) : PURPLE_DEPTH_PIN;
+  const parsedDepth = parseFloat(String(depth ?? ''));
+  const isBelowThreshold = !isNaN(parsedDepth) && parsedDepth < 1.65;
+
+  let pinSvg = PURPLE_DEPTH_PIN;
+  if (isBelowThreshold) {
+    pinSvg = isLive ? (isStale ? RED_STALE_PIN : DARK_RED_LIVE_PIN) : DARK_RED_DEPTH_PIN;
+  } else if (isLive) {
+    pinSvg = isStale ? RED_STALE_PIN : GREEN_LIVE_PIN;
+  }
+
   const classes = [
     'gis-dp-container',
-    isLive ? (isStale ? 'gis-dp--stale' : 'gis-dp--live') : 'gis-dp--purple',
+    isBelowThreshold
+      ? 'gis-dp--below-threshold'
+      : (isLive ? (isStale ? 'gis-dp--stale' : 'gis-dp--live') : 'gis-dp--purple'),
     showLabel ? 'gis-dp--labeled' : 'gis-dp--unlabeled',
     side === 'left' ? 'gis-dp--left' : 'gis-dp--right',
   ].filter(Boolean).join(' ');

@@ -188,3 +188,72 @@ class IlyncPlannerService:
         except Exception as e:
             logger.error("[ILYNC_PLANNER] Unexpected error fetching map layers for %s: %s", clean_plan_id, str(e))
             raise IlyncAPIException(message=f"Failed to fetch map layers for plan '{clean_plan_id}'.", status_code=500)
+
+    def get_all_plans(self, district=None, block=None, circle=None, search=None, page=0, size=100) -> dict:
+        """
+        Discovers all available plans from iLync DT Planner API:
+        GET /geo/api/planner/plans
+        Supports optional filtering by district, block, circle, search.
+        """
+        params = {"size": min(int(size or 100), 250)}
+        if district and str(district).strip():
+            params["district"] = str(district).strip()
+        if block and str(block).strip():
+            params["block"] = str(block).strip()
+        if circle and str(circle).strip():
+            params["circle"] = str(circle).strip()
+        if search and str(search).strip():
+            params["search"] = str(search).strip()
+        if page:
+            params["page"] = int(page)
+
+        try:
+            logger.info("[ILYNC_PLANNER] Discovering plans with params: %s", params)
+            res = self.client.get("geo/api/planner/plans", params=params)
+            data = res.get('data') if isinstance(res, dict) and 'data' in res else res
+
+            raw_list = []
+            if isinstance(data, dict):
+                raw_list = data.get('content') or data.get('plans') or data.get('results') or []
+            elif isinstance(data, list):
+                raw_list = data
+
+            plans = []
+            for item in raw_list:
+                if not isinstance(item, dict):
+                    continue
+                p_id = str(item.get('id') or '').strip()
+                if not p_id:
+                    continue
+                p_name = item.get('planName') or item.get('name') or f"Plan {p_id[:8]}"
+                p_circle = item.get('circle') or ''
+                p_dist = item.get('district') or ''
+                p_block = item.get('blockName') or item.get('block') or ''
+                calc = item.get('calculation') or {}
+                rings = calc.get('rings') or []
+                total_len = sum(float(r.get('lengthKm') or 0.0) for r in rings if isinstance(r, dict))
+
+                plans.append({
+                    "id": p_id,
+                    "planId": p_id,
+                    "planName": p_name,
+                    "circle": p_circle,
+                    "district": p_dist,
+                    "blockName": p_block,
+                    "lengthKm": round(total_len or float(item.get("lengthKm") or 0.0), 2),
+                    "ringCount": len(rings),
+                    "raw": item
+                })
+
+            logger.info("[ILYNC_PLANNER] Discovered %d available plans", len(plans))
+            return {
+                "total": len(plans),
+                "plans": plans,
+                "raw": data
+            }
+        except IlyncAPIException as e:
+            logger.error("[ILYNC_PLANNER] API error discovering plans: %s", str(e))
+            raise e
+        except Exception as e:
+            logger.error("[ILYNC_PLANNER] Unexpected error discovering plans: %s", str(e))
+            raise IlyncAPIException(message="Failed to discover plans from iLync DT Planner.", status_code=500)

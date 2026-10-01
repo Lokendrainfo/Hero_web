@@ -25,7 +25,8 @@ import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
 import { DateField } from '../../components/common/DateField';
 import { AlignPlanMapButton } from '../../components/planner/AlignPlanMapButton';
-import { renderPlannerLayersOnLeaflet } from '../../utils/plannerMapUtils';
+import { PlanLayerManagementPanel } from '../../components/planner/PlanLayerManagementPanel';
+import { renderPlannerLayersOnLeaflet, calculateMultiPlanBounds } from '../../utils/plannerMapUtils';
 import { formatDepthM } from '../../utils/formatters';
 import {
   applyGisZoomLabels,
@@ -127,30 +128,98 @@ export const HddExecutionMapPage = () => {
   const tileLayerRef = useRef(null);
   const wrapperRef = useRef(null);
 
-  const [activePlanSummary, setActivePlanSummary] = useState(null);
+  const plannerLayerGroupsRef = useRef(new Map());
+  const [activePlansList, setActivePlansList] = useState([]);
 
-  const handleAlignPlan = (planSummary) => {
-    if (!planSummary) return;
-    setActivePlanSummary(planSummary);
+  const handleAlignMultiPlans = (plansList, combinedBounds, summaryStats) => {
+    if (!Array.isArray(plansList) || plansList.length === 0) return;
+
+    setActivePlansList(plansList);
 
     if (mapInstanceRef.current) {
-      if (!plannerLayerRef.current) {
-        plannerLayerRef.current = L.featureGroup().addTo(mapInstanceRef.current);
-      }
-      renderPlannerLayersOnLeaflet(
-        plannerLayerRef.current,
-        planSummary.paths,
-        planSummary.nodes
-      );
+      // Clear existing per-plan layer groups
+      plannerLayerGroupsRef.current.forEach((fg) => {
+        try { mapInstanceRef.current.removeLayer(fg); } catch (e) {}
+      });
+      plannerLayerGroupsRef.current.clear();
 
-      if (planSummary.bounds) {
-        mapInstanceRef.current.fitBounds(planSummary.bounds, {
+      plansList.forEach((plan) => {
+        const fg = L.featureGroup().addTo(mapInstanceRef.current);
+        plannerLayerGroupsRef.current.set(plan.planId, fg);
+
+        renderPlannerLayersOnLeaflet(
+          fg,
+          plan.paths,
+          plan.nodes,
+          {
+            routeColor: plan.color?.stroke || '#0284c7',
+            nodeColor: plan.color?.node || '#0369a1',
+            planName: plan.planName,
+            clear: true
+          }
+        );
+      });
+
+      if (combinedBounds) {
+        mapInstanceRef.current.fitBounds(combinedBounds, {
           padding: [40, 40],
           maxZoom: 18,
           animate: true
         });
       }
     }
+  };
+
+  const togglePlanVisibility = (planId) => {
+    setActivePlansList((prev) => {
+      const next = prev.map((p) => {
+        if (p.planId === planId) {
+          const newVis = !p.visible;
+          const fg = plannerLayerGroupsRef.current.get(planId);
+          if (fg && mapInstanceRef.current) {
+            if (newVis) {
+              mapInstanceRef.current.addLayer(fg);
+            } else {
+              mapInstanceRef.current.removeLayer(fg);
+            }
+          }
+          return { ...p, visible: newVis };
+        }
+        return p;
+      });
+
+      const visiblePlans = next.filter((p) => p.visible);
+      const newBounds = calculateMultiPlanBounds(visiblePlans);
+      if (newBounds && mapInstanceRef.current) {
+        mapInstanceRef.current.fitBounds(newBounds, { padding: [40, 40], maxZoom: 18, animate: true });
+      }
+
+      return next;
+    });
+  };
+
+  const removePlanFromMap = (planId) => {
+    setActivePlansList((prev) => {
+      const next = prev.filter((p) => p.planId !== planId);
+      const fg = plannerLayerGroupsRef.current.get(planId);
+      if (fg && mapInstanceRef.current) {
+        try { mapInstanceRef.current.removeLayer(fg); } catch (e) {}
+        plannerLayerGroupsRef.current.delete(planId);
+      }
+
+      const visiblePlans = next.filter((p) => p.visible);
+      const newBounds = calculateMultiPlanBounds(visiblePlans);
+      if (newBounds && mapInstanceRef.current) {
+        mapInstanceRef.current.fitBounds(newBounds, { padding: [40, 40], maxZoom: 18, animate: true });
+      }
+
+      return next;
+    });
+  };
+
+  const handleAlignPlan = (planSummary) => {
+    if (!planSummary) return;
+    handleAlignMultiPlans([planSummary], planSummary.bounds);
   };
 
   // Batch resolve S3 Presigned URLs via POST /api/survey/photo-urls
@@ -557,12 +626,26 @@ export const HddExecutionMapPage = () => {
       plannerLayerRef.current = L.featureGroup().addTo(map);
     }
 
-    if (activePlanSummary && mapInstanceRef.current && plannerLayerRef.current) {
-      renderPlannerLayersOnLeaflet(
-        plannerLayerRef.current,
-        activePlanSummary.paths,
-        activePlanSummary.nodes
-      );
+    if (Array.isArray(activePlansList) && activePlansList.length > 0 && mapInstanceRef.current) {
+      activePlansList.forEach((plan) => {
+        if (!plan || !plan.visible) return;
+        let fg = plannerLayerGroupsRef.current.get(plan.planId);
+        if (!fg || !mapInstanceRef.current.hasLayer(fg)) {
+          fg = L.featureGroup().addTo(mapInstanceRef.current);
+          plannerLayerGroupsRef.current.set(plan.planId, fg);
+          renderPlannerLayersOnLeaflet(
+            fg,
+            plan.paths,
+            plan.nodes,
+            {
+              routeColor: plan.color?.stroke || '#0284c7',
+              nodeColor: plan.color?.node || '#0369a1',
+              planName: plan.planName,
+              clear: true
+            }
+          );
+        }
+      });
     }
 
     const map = mapInstanceRef.current;
@@ -733,7 +816,10 @@ export const HddExecutionMapPage = () => {
           taskName: photoName,
           depth: pit.depth,
           latitude: pit.lat,
-          longitude: pit.lng
+          longitude: pit.lng,
+          isPitPhoto: true,
+          side: pit.side || ph.side || 'Left (LHS)',
+          pitSide: pit.side || ph.pitSide || ph.side || 'Left (LHS)'
         };
       }) : [];
       const pitName = pit.name || pit.id || 'Pit';
@@ -905,15 +991,18 @@ export const HddExecutionMapPage = () => {
           zIndexOffset: isLast ? 600 : 200,
         });
 
+        const parsedDepth = parseFloat(String(dp.depth ?? ''));
+        const isBelowThreshold = !isNaN(parsedDepth) && parsedDepth < 1.65;
+
         const tooltipText = [
-          formatDepthM(dp.depth),
+          formatDepthM(dp.depth) + (isBelowThreshold ? ' (Below 1.65m)' : ''),
           dateStr
         ].filter(Boolean).join(' · ');
 
         m.bindTooltip(tooltipText, {
           direction: 'top',
           offset: [0, -26],
-          className: 'gis-tip',
+          className: isBelowThreshold ? 'gis-tip gis-tip--below-threshold' : 'gis-tip',
           opacity: 1,
         });
 
@@ -1119,6 +1208,7 @@ export const HddExecutionMapPage = () => {
           </div>
           <AlignPlanMapButton
             currentPlanId={executionData?.planId || executionData?.plan_id || ''}
+            onAlignMultiPlans={handleAlignMultiPlans}
             onAlignPlan={handleAlignPlan}
           />
           <button type="button" className="gis-map-icon-btn" onClick={fitRouteBounds} title="Fit to trench">
@@ -1144,7 +1234,19 @@ export const HddExecutionMapPage = () => {
           <div ref={mapContainerRef} style={{ width: '100%', height: '100%', zIndex: 1 }} />
         )}
 
-
+        {/* DT Planner Multi-Plan Layer Management Panel */}
+        <PlanLayerManagementPanel
+          activePlansList={activePlansList}
+          onToggleVisibility={togglePlanVisibility}
+          onRemovePlan={removePlanFromMap}
+          onFitBounds={() => {
+            const visiblePlans = activePlansList.filter((p) => p.visible);
+            const bounds = calculateMultiPlanBounds(visiblePlans);
+            if (bounds && mapInstanceRef.current) {
+              mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 18, animate: true });
+            }
+          }}
+        />
 
         {/* Empty State Banner if no valid GPS data exists for selected date */}
         {!hasGpsData && (

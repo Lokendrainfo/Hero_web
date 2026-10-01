@@ -11,7 +11,8 @@ import {
   pitIcon as createPitIcon,
 } from '../../utils/gisMapMarkers';
 import { AlignPlanMapButton } from '../planner/AlignPlanMapButton';
-import { renderPlannerLayersOnLeaflet } from '../../utils/plannerMapUtils';
+import { PlanLayerManagementPanel } from '../planner/PlanLayerManagementPanel';
+import { renderPlannerLayersOnLeaflet, calculateMultiPlanBounds } from '../../utils/plannerMapUtils';
 
 const parseLatLng = (obj) => {
   if (!obj) return null;
@@ -57,6 +58,95 @@ export const TaskRouteMap = ({
   const plannerLayerRef = useRef(null);
   const tileLayerRef = useRef(null);
   const wrapperRef = useRef(null);
+
+  const plannerLayerGroupsRef = useRef(new Map());
+  const [activePlansList, setActivePlansList] = useState([]);
+
+  const handleAlignMultiPlans = (plansList, combinedBounds, summaryStats) => {
+    if (!Array.isArray(plansList) || plansList.length === 0) return;
+
+    setActivePlansList(plansList);
+
+    if (mapInstanceRef.current) {
+      // Clear existing per-plan feature groups
+      plannerLayerGroupsRef.current.forEach((fg) => {
+        try { mapInstanceRef.current.removeLayer(fg); } catch (e) {}
+      });
+      plannerLayerGroupsRef.current.clear();
+
+      plansList.forEach((plan) => {
+        const fg = L.featureGroup().addTo(mapInstanceRef.current);
+        plannerLayerGroupsRef.current.set(plan.planId, fg);
+
+        renderPlannerLayersOnLeaflet(
+          fg,
+          plan.paths,
+          plan.nodes,
+          {
+            routeColor: plan.color?.stroke || '#0284c7',
+            nodeColor: plan.color?.node || '#0369a1',
+            planName: plan.planName,
+            clear: true
+          }
+        );
+      });
+
+      if (combinedBounds) {
+        mapInstanceRef.current.fitBounds(combinedBounds, {
+          padding: [40, 40],
+          maxZoom: 18,
+          animate: true
+        });
+      }
+    }
+  };
+
+  const togglePlanVisibility = (planId) => {
+    setActivePlansList((prev) => {
+      const next = prev.map((p) => {
+        if (p.planId === planId) {
+          const newVis = !p.visible;
+          const fg = plannerLayerGroupsRef.current.get(planId);
+          if (fg && mapInstanceRef.current) {
+            if (newVis) {
+              mapInstanceRef.current.addLayer(fg);
+            } else {
+              mapInstanceRef.current.removeLayer(fg);
+            }
+          }
+          return { ...p, visible: newVis };
+        }
+        return p;
+      });
+
+      const visiblePlans = next.filter((p) => p.visible);
+      const newBounds = calculateMultiPlanBounds(visiblePlans);
+      if (newBounds && mapInstanceRef.current) {
+        mapInstanceRef.current.fitBounds(newBounds, { padding: [40, 40], maxZoom: 18, animate: true });
+      }
+
+      return next;
+    });
+  };
+
+  const removePlanFromMap = (planId) => {
+    setActivePlansList((prev) => {
+      const next = prev.filter((p) => p.planId !== planId);
+      const fg = plannerLayerGroupsRef.current.get(planId);
+      if (fg && mapInstanceRef.current) {
+        try { mapInstanceRef.current.removeLayer(fg); } catch (e) {}
+        plannerLayerGroupsRef.current.delete(planId);
+      }
+
+      const visiblePlans = next.filter((p) => p.visible);
+      const newBounds = calculateMultiPlanBounds(visiblePlans);
+      if (newBounds && mapInstanceRef.current) {
+        mapInstanceRef.current.fitBounds(newBounds, { padding: [40, 40], maxZoom: 18, animate: true });
+      }
+
+      return next;
+    });
+  };
 
   const handleAlignPlan = (planSummary) => {
     if (!planSummary || !mapInstanceRef.current) return;
@@ -535,6 +625,7 @@ export const TaskRouteMap = ({
 
           <AlignPlanMapButton
             currentPlanId={''}
+            onAlignMultiPlans={handleAlignMultiPlans}
             onAlignPlan={handleAlignPlan}
           />
 
@@ -560,6 +651,20 @@ export const TaskRouteMap = ({
       {/* 2. FULL WIDTH MAP CANVAS */}
       <div style={{ position: 'relative', flex: 1, width: '100%' }}>
         <div ref={mapContainerRef} style={{ width: '100%', height: '100%', zIndex: 1 }} />
+
+        {/* DT Planner Multi-Plan Layer Management Panel */}
+        <PlanLayerManagementPanel
+          activePlansList={activePlansList}
+          onToggleVisibility={togglePlanVisibility}
+          onRemovePlan={removePlanFromMap}
+          onFitBounds={() => {
+            const visiblePlans = activePlansList.filter((p) => p.visible);
+            const bounds = calculateMultiPlanBounds(visiblePlans);
+            if (bounds && mapInstanceRef.current) {
+              mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 18, animate: true });
+            }
+          }}
+        />
 
         {/* BOTTOM OVERLAY FOR CURSOR COORDINATES */}
         <div

@@ -338,6 +338,39 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     const lng = parseFloat(p.longitude || p.pitImage_1?.longitude || p.pitDepthImage?.longitude || (p.threePointReference?.pitDepthCenterOfTheRoadImage?.longitude) || 0);
     const pitId = p.pitSerialNo || p.pitName || `PIT-${idx + 1}`;
 
+    const rawSide = p.pitSideOfTheRoad ||
+      p.sideOfTheRoad ||
+      p.pitSide ||
+      p.side ||
+      p.pit_side_of_the_road ||
+      p.pit_side ||
+      p.side_of_the_road ||
+      p.roadSide ||
+      p.road_side ||
+      p.offsetSide ||
+      p.threePointReference?.pitSideOfTheRoad ||
+      p.threePointReference?.sideOfTheRoad ||
+      p.threePointReference?.pitSide ||
+      p.threePointReference?.side ||
+      p.pitImage_1?.side ||
+      p.pitImage_1?.pitSide ||
+      '';
+
+    let pitSide = 'Left (LHS)';
+    if (rawSide) {
+      const s = String(rawSide).trim();
+      const lower = s.toLowerCase();
+      if (lower.includes('lhs') || lower === 'left' || lower.startsWith('left')) {
+        pitSide = 'Left (LHS)';
+      } else if (lower.includes('rhs') || lower === 'right' || lower.startsWith('right')) {
+        pitSide = 'Right (RHS)';
+      } else if (lower.includes('center') || lower.includes('centre')) {
+        pitSide = 'Center';
+      } else {
+        pitSide = s;
+      }
+    }
+
     const rawMediaList = [
       { media: p.pitImage_1, label: `${pitId} Photo 1`, isVid: false },
       { media: p.pitImage_2, label: `${pitId} Photo 2`, isVid: false },
@@ -354,6 +387,10 @@ export const mapHddExecutionResponse = (task, execution = null) => {
         if (!mediaObj.latitude) mediaObj.latitude = lat;
         if (!mediaObj.longitude) mediaObj.longitude = lng;
         if (!mediaObj.capturedAt && p.pitDiggingTime) mediaObj.capturedAt = p.pitDiggingTime;
+        mediaObj.side = pitSide;
+        mediaObj.pitSide = pitSide;
+        mediaObj.isPitPhoto = true;
+        mediaObj.depth = p.pitDepth ? Number(p.pitDepth) : null;
         photos.push(mediaObj);
       }
     });
@@ -370,7 +407,8 @@ export const mapHddExecutionResponse = (task, execution = null) => {
       lng,
       depth: p.pitDepth ? Number(p.pitDepth) : null,
       width: p.pitWidth ? Number(p.pitWidth) : null,
-      side: p.pitSide || 'LHS',
+      side: pitSide,
+      pitSide: pitSide,
       type: p.pitType || 'COUPLING_POINT',
       stage: p.taskStage || 'LOCKED',
       diggingTime: p.pitDiggingTime || 'N/A',
