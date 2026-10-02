@@ -76,9 +76,20 @@ class BharatNetTDMonitoringView(APIView):
                     "message": "Invalid or missing Basic authentication credentials"
                 },
                 status=status.HTTP_401_UNAUTHORIZED,
-                headers={"WWW-Authenticate": 'Basic realm="BharatNet Phase-3 T&D Monitoring"'}
+                headers={"WWW-Authenticate": 'Basic realm="T&D Monitoring"'}
             )
-        logger.exception("[BharatNet API] Unexpected exception in td-monitoring")
+        from rest_framework import exceptions
+        if isinstance(exc, exceptions.MethodNotAllowed):
+            return Response(
+                {
+                    "status": "ERROR",
+                    "message": f"Method not allowed."
+                },
+                status=status.HTTP_405_METHOD_NOT_ALLOWED
+            )
+        if isinstance(exc, exceptions.APIException):
+            return super().handle_exception(exc)
+        logger.exception("[T&D API] Unexpected exception in td-monitoring")
         return Response(
             {
                 "status": "ERROR",

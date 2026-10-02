@@ -190,14 +190,14 @@ const ENDPOINTS_CATALOG = [
     ],
   },
   {
-    category: 'BHARATNET T&D INTEGRATION',
+    category: 'T&D MONITORING INTEGRATION',
     items: [
       {
-        id: 'bharatnet_td_monitoring',
+        id: 'td_monitoring',
         method: 'GET',
-        title: 'BharatNet Phase-3 T&D Monitoring',
-        path: '/api/v1/bharatnet/td-monitoring/',
-        description: 'Read-only HTTPS GET endpoint for BharatNet Phase-3 Trenching & Ducting monitoring ingestion. Consumed by BharatNet to ingest daily depth captures. Returns the latest depth capture per operator/machine hierarchically grouped by circle, district, and block. Supports HTTP Basic Authentication and secure cryptographic live-view tokens.',
+        title: 'T&D Monitoring API',
+        path: '/api/v1/td-monitoring/',
+        description: 'Read-only HTTPS GET endpoint for Trenching & Ducting (T&D) monitoring ingestion. Consumed by partner monitoring systems to ingest daily depth captures. Returns the latest depth capture per operator/machine hierarchically grouped by circle, district, and block. Supports HTTP Basic Authentication and secure cryptographic live-view tokens.',
         authType: 'Basic Auth (username:password) or X-Client-Key',
         params: [
           { name: 'circle', in: 'query', type: 'string', required: true, default: 'UPW', desc: 'Circle identifier (case-insensitive, e.g. UPW, RAJASTHAN, HARYANA)' },
@@ -444,8 +444,8 @@ export const ApiDocs = () => {
           bodyParams[item.name] = paramValues[item.name];
         });
 
-      const isBharatNet = selectedEndpoint.id === 'bharatnet_td_monitoring';
-      const headers = isBharatNet
+      const isTD = selectedEndpoint.id === 'td_monitoring' || selectedEndpoint.id === 'bharatnet_td_monitoring';
+      const headers = isTD
         ? {
             'Authorization': 'Basic ' + btoa('bharatnet_service:BharatNet@2026!Secure'),
             'Accept': 'application/json',
@@ -486,11 +486,11 @@ export const ApiDocs = () => {
   const codeSnippet = useMemo(() => {
     const key = apiKeyData?.key || 'hero_live_your_key_here';
     const url = currentEndpointUrl;
-    const isBharatNet = selectedEndpoint.id === 'bharatnet_td_monitoring';
+    const isTD = selectedEndpoint.id === 'td_monitoring' || selectedEndpoint.id === 'bharatnet_td_monitoring';
 
     if (codeTab === 'curl') {
-      if (isBharatNet) {
-        return `curl -X GET "${url}" \\\n  -u "bharatnet_service:your_service_password" \\\n  -H "Accept: application/json"`;
+      if (isTD) {
+        return `curl -X GET "${url}" \\\n  -u "td_service_user:your_service_password" \\\n  -H "Accept: application/json"`;
       }
       if (selectedEndpoint.method === 'GET') {
         return `curl -X GET "${url}" \\\n  -H "X-API-Key: ${key}" \\\n  -H "Content-Type: application/json"`;
@@ -503,9 +503,9 @@ export const ApiDocs = () => {
         return `curl -X POST "${url}" \\\n  -H "X-API-Key: ${key}" \\\n  -H "Content-Type: application/json" \\\n  -d "${bodyStr}"`;
       }
     } else if (codeTab === 'js') {
-      if (isBharatNet) {
-        return `// HTTP Basic Authentication for BharatNet Phase-3
-const authHeader = "Basic " + btoa("bharatnet_service:your_service_password");
+      if (isTD) {
+        return `// HTTP Basic Authentication for T&D Monitoring
+const authHeader = "Basic " + btoa("td_service_user:your_service_password");
 const response = await fetch("${url}", {
   method: "GET",
   headers: {
@@ -526,12 +526,12 @@ console.log(data);`;
 const data = await response.json();
 console.log(data);`;
     } else if (codeTab === 'python') {
-      if (isBharatNet) {
+      if (isTD) {
         return `import requests
 from requests.auth import HTTPBasicAuth
 
 url = "${url}"
-auth = HTTPBasicAuth("bharatnet_service", "your_service_password")
+auth = HTTPBasicAuth("td_service_user", "your_service_password")
 
 response = requests.get(url, auth=auth, headers={"Accept": "application/json"})
 print(f"Status: {response.status_code}")

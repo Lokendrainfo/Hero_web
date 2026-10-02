@@ -34,7 +34,8 @@ export const BharatNetLiveViewPage = () => {
 
     setLoading(true);
     axios
-      .get(`/api/v1/bharatnet/live-view/${token}/`)
+      .get(`/api/v1/live-view/${token}/`)
+      .catch(() => axios.get(`/api/v1/bharatnet/live-view/${token}/`))
       .then((res) => {
         if (res.data && res.data.data) {
           setData(res.data.data);

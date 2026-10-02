@@ -4,6 +4,8 @@ from rest_framework.permissions import AllowAny
 from apps.common.responses import success_response
 from apps.roles.views import PermissionViewSet
 from apps.authentication.views import MeView
+from apps.integrations.bharatnet_views import BharatNetTDMonitoringView, BharatNetLiveViewAPIView
+
 
 class ApiRootView(APIView):
     permission_classes = [AllowAny]
@@ -38,6 +40,7 @@ class ApiRootView(APIView):
                     "integrations": "/api/v1/integrations/",
                     "machine-shift": "/api/v1/machine-shift/",
                     "planner": "/api/v1/planner/",
+                    "td-monitoring": "/api/v1/td-monitoring/",
                     "bharatnet": "/api/v1/bharatnet/td-monitoring/"
                 }
             },
@@ -74,5 +77,9 @@ urlpatterns = [
     path('geography/', include('apps.common.urls')),
     path('machine-shift/', include('apps.machine_shift.urls')),
     path('planner/', include('apps.planner.urls')),
+    # Generic T&D Monitoring Endpoint & Live View
+    path('td-monitoring/', BharatNetTDMonitoringView.as_view(), name='td_monitoring'),
+    path('live-view/<str:token>/', BharatNetLiveViewAPIView.as_view(), name='live_view_api'),
+    # Backward compatibility alias
     path('bharatnet/', include('apps.integrations.bharatnet_urls')),
 ]

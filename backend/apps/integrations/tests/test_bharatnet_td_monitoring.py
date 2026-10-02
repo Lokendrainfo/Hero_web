@@ -404,3 +404,103 @@ class BharatNetTDMonitoringTestCase(TestCase):
 
         # Invalid token returns None
         self.assertIsNone(verify_bharatnet_live_token('corrupted_token'))
+
+    @patch('apps.integrations.bharatnet_views.get_user_authorized_tasks')
+    def test_15_generic_endpoint_valid_authenticated_request(self, mock_tasks_fn):
+        """Test the new generic endpoint /api/v1/td-monitoring/ returns 200 OK with Schema A."""
+        mock_tasks_fn.return_value = {'results': self.mock_tasks}
+        self.client.credentials(HTTP_AUTHORIZATION=self.basic_auth_header)
+        res = self.client.get('/api/v1/td-monitoring/?circle=UPW&date=2026-10-02')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data.get('status'), 'OK')
+        self.assertIn('results', res.data)
+        self.assertIn('circles', res.data['results'])
+        self.assertEqual(len(res.data['results']['circles']), 1)
+        self.assertEqual(res.data['results']['circles'][0]['circle_name'], 'UPW')
+
+    @patch('apps.integrations.bharatnet_views.get_user_authorized_tasks')
+    def test_16_generic_endpoint_circle_and_date_filters(self, mock_tasks_fn):
+        """Test circle and date filtering on /api/v1/td-monitoring/ and 400 for invalid dates."""
+        mock_tasks_fn.return_value = {'results': self.mock_tasks}
+        self.client.credentials(HTTP_AUTHORIZATION=self.basic_auth_header)
+
+        # Valid date
+        res = self.client.get('/api/v1/td-monitoring/?circle=upw&date=2026-10-02')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # Invalid date format returns 400
+        res_bad_date = self.client.get('/api/v1/td-monitoring/?circle=UPW&date=02-10-2026')
+        self.assertEqual(res_bad_date.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res_bad_date.data.get('status'), 'ERROR')
+
+    def test_17_generic_endpoint_auth_errors(self):
+        """Test missing and invalid credentials on /api/v1/td-monitoring/ return 401."""
+        # Missing auth
+        res_missing = self.client.get('/api/v1/td-monitoring/?circle=UPW&date=2026-10-02')
+        self.assertEqual(res_missing.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(res_missing.data.get('status'), 'ERROR')
+
+        # Bad credentials
+        bad_header = 'Basic ' + base64.b64encode(b'wrong_user:wrong_pass').decode('utf-8')
+        self.client.credentials(HTTP_AUTHORIZATION=bad_header)
+        res_bad = self.client.get('/api/v1/td-monitoring/?circle=UPW&date=2026-10-02')
+        self.assertEqual(res_bad.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(res_bad.data.get('status'), 'ERROR')
+
+    @override_settings(BHARATNET_ALLOWED_CIRCLES='UPW')
+    def test_18_generic_endpoint_unauthorized_circle(self):
+        """Test requesting a circle outside BHARATNET_ALLOWED_CIRCLES returns 403 on /api/v1/td-monitoring/."""
+        self.client.credentials(HTTP_AUTHORIZATION=self.basic_auth_header)
+        res = self.client.get('/api/v1/td-monitoring/?circle=HARYANA&date=2026-10-02')
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(res.data.get('status'), 'ERROR')
+
+    def test_19_generic_endpoint_unsupported_http_method(self):
+        """Test POST, PUT, DELETE return 405 Method Not Allowed on /api/v1/td-monitoring/."""
+        self.client.credentials(HTTP_AUTHORIZATION=self.basic_auth_header)
+        post_res = self.client.post('/api/v1/td-monitoring/?circle=UPW&date=2026-10-02', {})
+        self.assertEqual(post_res.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+        put_res = self.client.put('/api/v1/td-monitoring/?circle=UPW&date=2026-10-02', {})
+        self.assertEqual(put_res.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+        del_res = self.client.delete('/api/v1/td-monitoring/?circle=UPW&date=2026-10-02')
+        self.assertEqual(del_res.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    @patch('apps.integrations.bharatnet_views.get_user_authorized_tasks')
+    def test_20_generic_endpoint_empty_results(self, mock_tasks_fn):
+        """Test unknown circle or dates with no captures returns 200 with empty circles array."""
+        mock_tasks_fn.return_value = {'results': []}
+        self.client.credentials(HTTP_AUTHORIZATION=self.basic_auth_header)
+        res = self.client.get('/api/v1/td-monitoring/?circle=UNKNOWN_CIRCLE&date=2026-10-02')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data.get('status'), 'OK')
+        self.assertEqual(res.data.get('results', {}).get('circles'), [])
+
+    @patch('apps.integrations.bharatnet_views.get_user_authorized_tasks')
+    def test_21_endpoints_equivalence(self, mock_tasks_fn):
+        """Verify /api/v1/td-monitoring/ and /api/v1/bharatnet/td-monitoring/ return equivalent responses."""
+        mock_tasks_fn.return_value = {'results': self.mock_tasks}
+        self.client.credentials(HTTP_AUTHORIZATION=self.basic_auth_header)
+
+        res_new = self.client.get('/api/v1/td-monitoring/?circle=UPW&date=2026-10-02')
+        res_old = self.client.get('/api/v1/bharatnet/td-monitoring/?circle=UPW&date=2026-10-02')
+
+        self.assertEqual(res_new.status_code, res_old.status_code)
+        self.assertEqual(res_new.data.get('status'), res_old.data.get('status'))
+        self.assertEqual(res_new.data.get('message'), res_old.data.get('message'))
+        self.assertEqual(len(res_new.data['results']['circles']), len(res_old.data['results']['circles']))
+        self.assertEqual(
+            res_new.data['results']['circles'][0]['circle_name'],
+            res_old.data['results']['circles'][0]['circle_name']
+        )
+
+    def test_22_live_view_endpoints_equivalence(self):
+        """Verify /api/v1/live-view/<token>/ and /api/v1/bharatnet/live-view/<token>/ route correctly."""
+        # Corrupted token should return 403 Forbidden on both
+        res_new = self.client.get('/api/v1/live-view/invalid_token/')
+        res_old = self.client.get('/api/v1/bharatnet/live-view/invalid_token/')
+        self.assertEqual(res_new.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(res_old.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(res_new.data.get('status'), res_old.data.get('status'))
+
