@@ -3,6 +3,7 @@ import { refuelService } from '../../services/refuelService';
 import { machineService } from '../../services/machineService';
 import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../context/ToastContext';
+import { FuelAccountingView } from './FuelAccountingView';
 import {
   LucideRepeat,
   LucideTruck,
@@ -44,7 +45,7 @@ export const Refuel = () => {
   const toastContext = useToast();
   const showToast = typeof toastContext?.showToast === 'function' ? toastContext.showToast : () => {};
 
-  const [activeTab, setActiveTab] = useState('Fuel Logs'); // Fuel Logs (sensor) | Refuel Log (manual)
+  const [activeTab, setActiveTab] = useState('Fuel Accounting'); // Fuel Accounting | Fuel Logs (sensor) | Refuel Log (manual)
   const [refuelEntries, setRefuelEntries] = useState([]);
   const [sensorLogs, setSensorLogs] = useState([]);
   const [sensorMeta, setSensorMeta] = useState({ pending_ack_count: 0, total_litres: 0, total: 0 });
@@ -82,6 +83,31 @@ export const Refuel = () => {
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState(null);
   const [confirmSuccessData, setConfirmSuccessData] = useState(null);
+
+  // Manual Slip Modal state (HDD / FiberForce)
+  const [showManualSlipModal, setShowManualSlipModal] = useState(false);
+  const [manualMachineId, setManualMachineId] = useState('');
+  const [manualDate, setManualDate] = useState(() => {
+    const now = new Date();
+    const offset = now.getTimezoneOffset();
+    const local = new Date(now.getTime() - offset * 60 * 1000);
+    return local.toISOString().slice(0, 16);
+  });
+  const [manualLitres, setManualLitres] = useState('50.0');
+  const [manualPricePerLiter, setManualPricePerLiter] = useState('95.00');
+  const [manualTotalCost, setManualTotalCost] = useState('4750');
+  const [manualMeterReading, setManualMeterReading] = useState('');
+  const [manualMobile, setManualMobile] = useState('');
+  const [manualPumpName, setManualPumpName] = useState('');
+  const [manualSlipNo, setManualSlipNo] = useState('');
+  const [manualVarianceDisp, setManualVarianceDisp] = useState('');
+  const [manualNotes, setManualNotes] = useState('');
+  const [manualSlipFile, setManualSlipFile] = useState(null);
+  const [manualSlipPreviewUrl, setManualSlipPreviewUrl] = useState(null);
+  const [manualSelectedTrackerIds, setManualSelectedTrackerIds] = useState([]);
+  const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [manualError, setManualError] = useState(null);
+  const [manualSuccessData, setManualSuccessData] = useState(null);
 
   const fetchMachinesList = React.useCallback(() => {
     const params = {};
@@ -425,6 +451,156 @@ export const Refuel = () => {
     else fetchRefuels();
   };
 
+  const currentMachinePendingFills = useMemo(() => {
+    if (!manualMachineId) return [];
+    const selMachine = machineListSafe.find(m => String(m.id) === String(manualMachineId));
+    if (!selMachine) return [];
+    const chassis = (selMachine.machine_chassis_no || selMachine.code || '').toLowerCase().trim();
+    if (!chassis) return [];
+    return sensorLogsSafe.filter(r => {
+      const matchChassis = String(r.machine_chassis_no || r.machine_code || '').toLowerCase().trim() === chassis;
+      const isPending = (r.status || '').toUpperCase() === 'PENDING';
+      return matchChassis && isPending;
+    });
+  }, [manualMachineId, machineListSafe, sensorLogsSafe]);
+
+  const openManualSlipModal = (preselectedMachineId = null) => {
+    const list = ensureArray(machines);
+    const targetId = preselectedMachineId || (list.length > 0 ? String(list[0].id) : '');
+    setManualMachineId(targetId);
+    const selMachine = list.find(m => String(m.id) === String(targetId));
+    setManualMeterReading(selMachine?.current_hours ? String(selMachine.current_hours) : '0.0');
+    setManualMobile(auth?.user?.phone_number || auth?.user?.mobile || auth?.user?.phone || '');
+    setManualLitres('50.0');
+    setManualPricePerLiter('95.00');
+    setManualTotalCost('4750');
+    setManualPumpName('');
+    setManualSlipNo('');
+    setManualNotes('');
+    setManualVarianceDisp('');
+    setManualSlipFile(null);
+    setManualSlipPreviewUrl(null);
+    setManualSelectedTrackerIds([]);
+    setManualError(null);
+    setManualSuccessData(null);
+    setShowManualSlipModal(true);
+  };
+
+  const handleManualMachineSelect = (mId) => {
+    setManualMachineId(mId);
+    const selMachine = machineListSafe.find(m => String(m.id) === String(mId));
+    if (selMachine?.current_hours) {
+      setManualMeterReading(String(selMachine.current_hours));
+    }
+    setManualSelectedTrackerIds([]);
+  };
+
+  const handleManualLitresChange = (val) => {
+    setManualLitres(val);
+    const l = parseFloat(val) || 0;
+    const p = parseFloat(manualPricePerLiter) || 95.0;
+    setManualTotalCost(String(Math.round(l * p)));
+  };
+
+  const handleManualPriceChange = (val) => {
+    setManualPricePerLiter(val);
+    const l = parseFloat(manualLitres) || 0;
+    const p = parseFloat(val) || 0;
+    setManualTotalCost(String(Math.round(l * p)));
+  };
+
+  const handleToggleManualTrackerId = (fill) => {
+    const tid = String(fill.id);
+    let nextIds = [];
+    if (manualSelectedTrackerIds.includes(tid)) {
+      nextIds = manualSelectedTrackerIds.filter(x => x !== tid);
+    } else {
+      nextIds = [...manualSelectedTrackerIds, tid];
+    }
+    setManualSelectedTrackerIds(nextIds);
+
+    if (nextIds.length > 0) {
+      const fills = currentMachinePendingFills.filter(f => nextIds.includes(String(f.id)));
+      const sumL = fills.reduce((a, b) => a + (parseFloat(b.litres ?? b.quantity_liters) || 0), 0);
+      if (sumL > 0) {
+        setManualLitres(sumL.toFixed(1));
+        const rate = parseFloat(manualPricePerLiter) || 95.0;
+        setManualTotalCost(String(Math.round(sumL * rate)));
+      }
+    }
+  };
+
+  const handleManualSlipSubmit = async (e) => {
+    if (e) e.preventDefault();
+    setManualError(null);
+
+    if (!manualMachineId) {
+      setManualError('Please select a fleet machine.');
+      return;
+    }
+
+    const litresNum = parseFloat(manualLitres);
+    if (isNaN(litresNum) || litresNum <= 0) {
+      setManualError('Please enter a valid fuel volume in Litres (> 0).');
+      return;
+    }
+
+    if (!manualMobile || !manualMobile.trim()) {
+      setManualError('Mobile number is mandatory for HDD Fiber confirmation & verification.');
+      return;
+    }
+
+    setManualSubmitting(true);
+    try {
+      const fd = new FormData();
+      fd.append('machine', manualMachineId);
+      fd.append('litres', String(litresNum));
+      fd.append('price_per_liter', manualPricePerLiter || '95.00');
+      fd.append('total_cost', manualTotalCost || String(Math.round(litresNum * 95)));
+      if (manualMeterReading) {
+        fd.append('meter_reading', manualMeterReading);
+      }
+      fd.append('mobile', manualMobile.trim());
+      if (manualDate) {
+        fd.append('refuel_date', manualDate);
+      }
+      if (manualPumpName) {
+        fd.append('pump_name', manualPumpName.trim());
+      }
+      if (manualSlipNo) {
+        fd.append('slip_no', manualSlipNo.trim());
+      }
+      if (manualVarianceDisp) {
+        fd.append('variance_disposition', manualVarianceDisp);
+      }
+      if (manualNotes) {
+        fd.append('notes', manualNotes.trim());
+      }
+      if (manualSlipFile) {
+        fd.append('slip', manualSlipFile);
+      }
+      manualSelectedTrackerIds.forEach(tid => {
+        fd.append('refuel_tracker_ids', String(tid));
+      });
+
+      const res = await refuelService.postManualSlip(fd);
+      const resData = res?.data?.data || res?.data || res || {};
+
+      showToast('✓ Manual refuel slip recorded & posted to HDD / FiberForce successfully!', 'success');
+      setManualSuccessData(resData);
+
+      fetchSensorLogs();
+      fetchRefuels();
+    } catch (err) {
+      console.error('Manual slip submission failed:', err);
+      const msg = err?.data?.message || err?.message || err?.error || 'Failed to post manual slip to HDD / FiberForce.';
+      setManualError(typeof msg === 'object' ? JSON.stringify(msg) : msg);
+      showToast('Refuel slip submission failed', 'error');
+    } finally {
+      setManualSubmitting(false);
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       
@@ -446,70 +622,81 @@ export const Refuel = () => {
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {isFuelLogsTab && selectedPendingIds.length > 0 && (
+              <button
+                type="button"
+                onClick={handleAcknowledgeSelected}
+                className="btn-primary"
+                style={{
+                  padding: '7px 14px',
+                  fontSize: '0.8rem',
+                  borderRadius: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: 'none',
+                  background: '#059669',
+                  borderColor: '#059669'
+                }}
+              >
+                <LucideCheckCircle2 size={15} /> Acknowledge Selected ({selectedPendingIds.length})
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={refreshActive}
+              style={{
+                padding: '7px 14px',
+                borderRadius: '8px',
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                color: '#334155',
+                fontWeight: '600',
+                fontSize: '0.8rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <LucideRefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+              Refresh
+            </button>
+          </div>
+
           <button
-            onClick={refreshActive}
+            type="button"
+            onClick={() => openManualSlipModal()}
+            className="btn-primary"
             style={{
-              padding: '9px 16px',
-              borderRadius: '10px',
-              border: '1px solid #cbd5e1',
-              background: '#ffffff',
-              color: '#334155',
-              fontWeight: '600',
-              fontSize: '0.82rem',
-              display: 'flex',
+              padding: '8px 18px',
+              fontSize: '0.84rem',
+              fontWeight: '700',
+              borderRadius: '8px',
+              display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              boxShadow: 'none',
-              cursor: 'pointer'
+              background: '#2563eb',
+              color: '#ffffff',
+              border: 'none',
+              cursor: 'pointer',
+              boxShadow: '0 2px 6px rgba(37, 99, 235, 0.25)',
+              transition: 'all 0.15s ease'
             }}
+            title="Fill manual refuel slip and post to HDD / FiberForce"
           >
-            <LucideRefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-            Refresh
+            <LucidePlus size={16} /> Add Manual Slip
           </button>
-
-          {isFuelLogsTab && selectedPendingIds.length > 0 && (
-            <button
-              onClick={handleAcknowledgeSelected}
-              className="btn-primary"
-              style={{
-                padding: '9px 18px',
-                fontSize: '0.85rem',
-                borderRadius: '10px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                boxShadow: 'none',
-                background: '#059669',
-                borderColor: '#059669'
-              }}
-            >
-              <LucideCheckCircle2 size={18} /> Acknowledge Selected ({selectedPendingIds.length})
-            </button>
-          )}
-
-          {!isFuelLogsTab && (
-            <button
-              onClick={() => setShowModal(true)}
-              className="btn-primary"
-              style={{
-                padding: '9px 18px',
-                fontSize: '0.85rem',
-                borderRadius: '10px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                boxShadow: 'none'
-              }}
-            >
-              <LucidePlus size={18} /> Add Refuel Record
-            </button>
-          )}
         </div>
       </div>
 
       <div className="filter-row">
         {[
+          { label: 'Fuel Accounting', count: null },
           { label: 'Fuel Logs', count: sensorMeta.total || sensorLogsSafe.length },
           { label: 'Refuel Log', count: refuelEntriesSafe.length },
         ].map((tab) => (
@@ -519,13 +706,24 @@ export const Refuel = () => {
             className={`filter-chip ${activeTab === tab.label ? 'active' : ''}`}
             onClick={() => setActiveTab(tab.label)}
           >
-            {tab.label} {tab.count}
+            {tab.label} {tab.count !== null ? `(${tab.count})` : ''}
           </button>
         ))}
       </div>
 
-      {/* Modern KPI Summary Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
+      {activeTab === 'Fuel Accounting' ? (
+        <FuelAccountingView
+          machines={machineListSafe}
+          selectedMachineId={selectedMachineId}
+          setSelectedMachineId={setSelectedMachineId}
+          user={auth?.user}
+          showToast={showToast}
+          onOpenManualSlip={openManualSlipModal}
+        />
+      ) : (
+        <>
+          {/* Modern KPI Summary Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
         
         {/* Metric 1 */}
         <div className="app-card" style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '16px 18px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '14px' }}>
@@ -1038,6 +1236,8 @@ export const Refuel = () => {
           </tbody>
         </table>
       </div>
+    </>
+  )}
 
       {/* Styled Add Refuel Record Modal */}
       {showModal && (
@@ -1299,7 +1499,420 @@ export const Refuel = () => {
         </div>
       )}
 
-      {/* HDD FIBER SENSOR REFUEL CONFIRMATION MODAL */}
+      {/* HDD FIBER / FIBERFORCE MANUAL SLIP MODAL */}
+      {showManualSlipModal && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-card" style={{ maxWidth: '640px', width: '95%', maxHeight: '92vh', overflowY: 'auto' }}>
+            {/* Modal Header */}
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: 36, height: 36, borderRadius: 8, background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#2563eb' }}>
+                  <LucideFuel size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
+                    Manual Refuel Slip
+                  </h3>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                    Fill diesel pump slip & post verification to HDD / FiberForce
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setShowManualSlipModal(false); setManualSuccessData(null); }}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 4 }}
+              >
+                <LucideX size={20} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            {manualSuccessData ? (
+              <div style={{ padding: 24, textAlign: 'center' }}>
+                <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#ecfdf5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px auto' }}>
+                  <LucideCheckCircle2 size={32} />
+                </div>
+                <h4 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#0f172a', margin: '0 0 6px 0' }}>
+                  Refuel Slip Recorded & Posted!
+                </h4>
+                <p style={{ fontSize: '0.82rem', color: '#64748b', margin: '0 0 20px 0' }}>
+                  {manualSuccessData.fiberforce_synced
+                    ? 'The manual refuel slip has been verified and confirmed with HDD / FiberForce.'
+                    : 'The refuel slip has been recorded in HERO Fleet Operations and queued for FiberForce sync.'}
+                </p>
+
+                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: 16, marginBottom: 20, textAlign: 'left', fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#64748b' }}>Machine:</span>
+                    <span style={{ fontWeight: 700 }}>{manualSuccessData.machine_name || manualSuccessData.machine || 'Rig'}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#64748b' }}>Delivered Litres:</span>
+                    <span style={{ fontWeight: 700, color: '#059669' }}>{manualSuccessData.quantity_liters || manualLitres} L</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#64748b' }}>Total Cost:</span>
+                    <span style={{ fontWeight: 700 }}>₹{manualSuccessData.total_cost || manualTotalCost}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#64748b' }}>Status:</span>
+                    <span style={{ fontWeight: 700, color: manualSuccessData.fiberforce_synced ? '#059669' : '#2563eb' }}>
+                      {manualSuccessData.fiberforce_synced ? 'CONFIRMED on HDD FiberForce' : 'LOGGED IN HERO'}
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => { setShowManualSlipModal(false); setManualSuccessData(null); }}
+                  style={{ width: '100%', padding: '10px' }}
+                >
+                  Done & Close
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleManualSlipSubmit} style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {manualError && (
+                  <div style={{ padding: '10px 14px', background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', borderRadius: 8, color: '#ef4444', fontSize: '0.8125rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <LucideAlertCircle size={16} style={{ flexShrink: 0 }} />
+                    <span>{manualError}</span>
+                  </div>
+                )}
+
+                {/* Machine Selection */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Fleet Machine / Chassis <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <SearchableSelect
+                    value={manualMachineId}
+                    onChange={(e) => handleManualMachineSelect(e.target.value)}
+                    required
+                    style={{
+                      width: '100%',
+                      padding: '9px 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '0.84rem',
+                      fontWeight: '600'
+                    }}
+                  >
+                    <option value="">— Select Machine —</option>
+                    {machineListSafe.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.machine_chassis_no || m.code || m.name} ({m.model_name || m.model_code || 'Rig'})
+                      </option>
+                    ))}
+                  </SearchableSelect>
+                </div>
+
+                {/* Detected Pending Sensor Fills for this Machine */}
+                {currentMachinePendingFills.length > 0 && (
+                  <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#166534', marginBottom: 8 }}>
+                      <LucideCheckCircle2 size={15} color="#059669" />
+                      <span>{currentMachinePendingFills.length} Pending FiberForce Sensor Fill(s) Detected for this Machine</span>
+                    </div>
+                    <div style={{ fontSize: '0.73rem', color: '#334155', marginBottom: 8 }}>
+                      Optionally select which sensor fill(s) this manual slip maps & confirms:
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 110, overflowY: 'auto' }}>
+                      {currentMachinePendingFills.map((fill) => {
+                        const isChecked = manualSelectedTrackerIds.includes(String(fill.id));
+                        return (
+                          <label
+                            key={fill.id}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '6px 10px',
+                              background: '#ffffff',
+                              border: isChecked ? '1px solid #059669' : '1px solid #e2e8f0',
+                              borderRadius: 6,
+                              cursor: 'pointer',
+                              fontSize: '0.78rem'
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => handleToggleManualTrackerId(fill)}
+                              style={{ width: 15, height: 15 }}
+                            />
+                            <span style={{ fontWeight: 600, color: '#0f172a' }}>Fill #{fill.id}</span>
+                            <span style={{ color: '#64748b' }}>· {formatWhen(fill.occurred_at || fill.refuel_date)}</span>
+                            <span style={{ marginLeft: 'auto', fontWeight: 700, color: '#059669' }}>
+                              +{parseFloat(fill.litres ?? fill.quantity_liters ?? 0).toFixed(1)} L
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Date & Mobile Row */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Refuel Date & Time <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                    <input
+                      type="datetime-local"
+                      required
+                      className="form-control"
+                      value={manualDate}
+                      onChange={(e) => setManualDate(e.target.value)}
+                      style={{ width: '100%', height: 38 }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Operator / Supervisor Mobile <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                    <input
+                      type="tel"
+                      required
+                      className="form-control"
+                      value={manualMobile}
+                      onChange={(e) => setManualMobile(e.target.value)}
+                      placeholder="e.g. 9876543210"
+                      style={{ width: '100%', height: 38 }}
+                    />
+                  </div>
+                </div>
+
+                {/* Litres, Rate & Total Amount Row */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1.2fr', gap: 12 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Fuel Volume (Litres) <span style={{ color: '#ef4444' }}>*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      required
+                      className="form-control"
+                      value={manualLitres}
+                      onChange={(e) => handleManualLitresChange(e.target.value)}
+                      placeholder="50.0"
+                      style={{ width: '100%', height: 38, fontWeight: 700 }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Rate (₹ / L)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      className="form-control"
+                      value={manualPricePerLiter}
+                      onChange={(e) => handleManualPriceChange(e.target.value)}
+                      placeholder="95.00"
+                      style={{ width: '100%', height: 38 }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Total Amount Paid (₹)
+                    </label>
+                    <input
+                      type="number"
+                      step="1"
+                      className="form-control"
+                      value={manualTotalCost}
+                      onChange={(e) => setManualTotalCost(e.target.value)}
+                      placeholder="4750"
+                      style={{ width: '100%', height: 38, fontWeight: 700, color: '#2563eb' }}
+                    />
+                  </div>
+                </div>
+
+                {/* Engine Hours & Pump Name Row */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Engine Hour Meter (hrs)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      className="form-control"
+                      value={manualMeterReading}
+                      onChange={(e) => setManualMeterReading(e.target.value)}
+                      placeholder="e.g. 142.5"
+                      style={{ width: '100%', height: 38 }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Diesel Pump / Vendor Name
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={manualPumpName}
+                      onChange={(e) => setManualPumpName(e.target.value)}
+                      placeholder="e.g. Indian Oil / BPCL Pump"
+                      style={{ width: '100%', height: 38 }}
+                    />
+                  </div>
+                </div>
+
+                {/* Slip Number & Variance Disposition */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Pump Slip / Invoice # (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={manualSlipNo}
+                      onChange={(e) => setManualSlipNo(e.target.value)}
+                      placeholder="e.g. SLIP-8921"
+                      style={{ width: '100%', height: 38 }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                      Variance Disposition (Optional)
+                    </label>
+                    <select
+                      className="form-control"
+                      value={manualVarianceDisp}
+                      onChange={(e) => setManualVarianceDisp(e.target.value)}
+                      style={{ width: '100%', height: 38 }}
+                    >
+                      <option value="">— Normal / Standard Fill —</option>
+                      <option value="Meter Tolerance / Normal">Meter Tolerance / Normal (≤ 3%)</option>
+                      <option value="Dispenser Nozzle Difference">Dispenser Nozzle Difference</option>
+                      <option value="Tank Calibration Adjustment">Tank Calibration Adjustment</option>
+                      <option value="Spillage / Test Sample">Spillage / Test Sample</option>
+                      <option value="Operator Reported Discrepancy">Operator Reported Discrepancy</option>
+                      <option value="Other">Other Reason</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Slip Photo Upload */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Pump Slip / Bill Photo (Recommended)
+                  </label>
+                  {!manualSlipPreviewUrl ? (
+                    <label style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: 14,
+                      border: '2px dashed #cbd5e1',
+                      borderRadius: 10,
+                      cursor: 'pointer',
+                      background: '#f8fafc'
+                    }}>
+                      <LucideUpload size={22} color="#94a3b8" />
+                      <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#334155', marginTop: 4 }}>
+                        Click to upload diesel pump slip or invoice photo
+                      </span>
+                      <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                        Supports JPG, PNG, WebP, PDF (Max 10MB)
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,application/pdf"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setManualSlipFile(file);
+                            setManualSlipPreviewUrl(URL.createObjectURL(file));
+                          }
+                        }}
+                        style={{ display: 'none' }}
+                      />
+                    </label>
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 10, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8 }}>
+                      <img src={manualSlipPreviewUrl} alt="Slip Preview" style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6, border: '1px solid #cbd5e1' }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {manualSlipFile?.name || 'Slip Attached'}
+                        </div>
+                        <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                          {manualSlipFile ? `${(manualSlipFile.size / 1024).toFixed(1)} KB` : ''}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setManualSlipFile(null); setManualSlipPreviewUrl(null); }}
+                        style={{ background: '#fee2e2', border: 'none', color: '#dc2626', padding: '5px 10px', borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 600 }}
+                      >
+                        <LucideTrash2 size={13} /> Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Remarks / Location Notes */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Optional Remarks / Site Notes
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={manualNotes}
+                    onChange={(e) => setManualNotes(e.target.value)}
+                    placeholder="e.g. Refueled before second drilling shift at Nagaur bypass"
+                    style={{ width: '100%', height: 38 }}
+                  />
+                </div>
+
+                {/* Footer Buttons */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6, paddingTop: 14, borderTop: '1px solid #e2e8f0' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowManualSlipModal(false)}
+                    disabled={manualSubmitting}
+                    style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid #cbd5e1', background: '#fff', color: '#475569', fontWeight: 600, fontSize: '0.82rem', cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={manualSubmitting}
+                    className="btn-primary"
+                    style={{
+                      padding: '9px 22px',
+                      borderRadius: 8,
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      background: '#2563eb',
+                      borderColor: '#2563eb'
+                    }}
+                  >
+                    <LucideUpload size={16} />
+                    {manualSubmitting ? 'Posting to HDD / FiberForce...' : 'Post to HDD / FiberForce'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
       {showConfirmModal && (
         <div className="modal-overlay" style={{ zIndex: 1100 }}>
           <div className="modal-card" style={{ maxWidth: '600px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }}>

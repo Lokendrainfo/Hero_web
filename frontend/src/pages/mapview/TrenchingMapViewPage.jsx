@@ -513,27 +513,27 @@ export const TrenchingMapViewPage = () => {
                                       <tr key={ex.id}>
                                         <td><strong>{ex.user || '—'}</strong></td>
                                         <td>
-                                            {ex.workExecutionMode && ex.workExecutionMode !== 'N/A' ? (
-                                              <span className="badge-pill badge-neutral">{ex.workExecutionMode}</span>
-                                            ) : (
-                                              <span style={{ color: 'var(--text-muted)' }}>—</span>
-                                            )}
-                                          </td>
-                                          <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                                            {compactWhen(ex.updatedAt || ex.lastModified, ex.id, ex.updatedAt ? 'updatedAt' : 'lastModified')}
-                                          </td>
-                                          <td style={{ textAlign: 'right' }}>
-                                            <a
-                                              className="exec-tree-map"
-                                              href={`/map-view/${ex.id}${selectedDate && (ex.availableDates || []).includes(selectedDate) ? `?date=${selectedDate}` : ''}`}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              onClick={(e) => e.stopPropagation()}
-                                            >
-                                              Open map
-                                            </a>
-                                          </td>
-                                        </tr>
+                                          {ex.workExecutionMode && ex.workExecutionMode !== 'N/A' ? (
+                                            <span className="badge-pill badge-neutral">{ex.workExecutionMode}</span>
+                                          ) : (
+                                            <span style={{ color: 'var(--text-muted)' }}>—</span>
+                                          )}
+                                        </td>
+                                        <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                                          {compactWhen(ex.updatedAt || ex.lastModified, ex.id, ex.updatedAt ? 'updatedAt' : 'lastModified')}
+                                        </td>
+                                        <td style={{ textAlign: 'right' }}>
+                                          <a
+                                            className="exec-tree-map"
+                                            href={`/map-view/${ex.id}${selectedDate && (ex.availableDates || []).includes(selectedDate) ? `?date=${selectedDate}` : ''}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            Open map
+                                          </a>
+                                        </td>
+                                      </tr>
                                     ))}
                                   </tbody>
                                 </table>
@@ -554,3 +554,4 @@ export const TrenchingMapViewPage = () => {
     </div>
   );
 };
+

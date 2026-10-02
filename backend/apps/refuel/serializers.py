@@ -15,3 +15,19 @@ class RefuelEntrySerializer(serializers.ModelSerializer):
         if obj.performed_by:
             return obj.performed_by.get_full_name() or obj.performed_by.username
         return 'Field Operator'
+
+
+from .models import FuelSquareOff
+
+class FuelSquareOffSerializer(serializers.ModelSerializer):
+    performed_by_name = serializers.SerializerMethodField()
+    machine_code = serializers.CharField(source='machine.code', read_only=True)
+
+    class Meta:
+        model = FuelSquareOff
+        fields = '__all__'
+
+    def get_performed_by_name(self, obj):
+        if obj.performed_by:
+            return obj.performed_by.get_full_name() or obj.performed_by.username
+        return 'System Operator'

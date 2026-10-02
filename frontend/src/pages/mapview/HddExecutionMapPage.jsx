@@ -139,7 +139,7 @@ export const HddExecutionMapPage = () => {
     if (mapInstanceRef.current) {
       // Clear existing per-plan layer groups
       plannerLayerGroupsRef.current.forEach((fg) => {
-        try { mapInstanceRef.current.removeLayer(fg); } catch (e) {}
+        try { mapInstanceRef.current.removeLayer(fg); } catch (e) { }
       });
       plannerLayerGroupsRef.current.clear();
 
@@ -203,7 +203,7 @@ export const HddExecutionMapPage = () => {
       const next = prev.filter((p) => p.planId !== planId);
       const fg = plannerLayerGroupsRef.current.get(planId);
       if (fg && mapInstanceRef.current) {
-        try { mapInstanceRef.current.removeLayer(fg); } catch (e) {}
+        try { mapInstanceRef.current.removeLayer(fg); } catch (e) { }
         plannerLayerGroupsRef.current.delete(planId);
       }
 
@@ -296,8 +296,8 @@ export const HddExecutionMapPage = () => {
         try {
           const myTasksRes = await taskService.getMyTasks();
           const list = myTasksRes?.data?.data?.results || myTasksRes?.data?.results || myTasksRes?.data?.data || myTasksRes?.data || [];
-          const matched = Array.isArray(list) && list.find(t => 
-            String(t.id || t._id) === String(targetId) || 
+          const matched = Array.isArray(list) && list.find(t =>
+            String(t.id || t._id) === String(targetId) ||
             String(t.id || t._id).startsWith(String(targetId)) ||
             String(t.taskCode) === String(targetId)
           );
