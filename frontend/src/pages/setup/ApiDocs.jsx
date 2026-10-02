@@ -189,6 +189,71 @@ const ENDPOINTS_CATALOG = [
       },
     ],
   },
+  {
+    category: 'BHARATNET T&D INTEGRATION',
+    items: [
+      {
+        id: 'bharatnet_td_monitoring',
+        method: 'GET',
+        title: 'BharatNet Phase-3 T&D Monitoring',
+        path: '/api/v1/bharatnet/td-monitoring/',
+        description: 'Read-only HTTPS GET endpoint for BharatNet Phase-3 Trenching & Ducting monitoring ingestion. Consumed by BharatNet to ingest daily depth captures. Returns the latest depth capture per operator/machine hierarchically grouped by circle, district, and block. Supports HTTP Basic Authentication and secure cryptographic live-view tokens.',
+        authType: 'Basic Auth (username:password) or X-Client-Key',
+        params: [
+          { name: 'circle', in: 'query', type: 'string', required: true, default: 'UPW', desc: 'Circle identifier (case-insensitive, e.g. UPW, RAJASTHAN, HARYANA)' },
+          { name: 'date', in: 'query', type: 'string', required: true, default: '2026-10-02', desc: 'Capture date in YYYY-MM-DD format (IST)' },
+          { name: 'state', in: 'query', type: 'string', required: false, default: '', desc: 'Alternative alias for circle filter' },
+          { name: 'date_from', in: 'query', type: 'string', required: false, default: '', desc: 'Optional start date boundary (YYYY-MM-DD)' },
+          { name: 'date_to', in: 'query', type: 'string', required: false, default: '', desc: 'Optional end date boundary (YYYY-MM-DD)' },
+        ],
+        sampleResponse: {
+          status: 'OK',
+          message: '3 blocks reported captures on 2026-10-02',
+          results: {
+            circles: [
+              {
+                circle_name: 'UPW',
+                districts: [
+                  {
+                    district_name: 'AGRA',
+                    blocks: [
+                      {
+                        block_name: 'BAH',
+                        user_urls: [
+                          {
+                            url: 'https://hero.pramaanu.co.in/live-view/eyJ0aWQiOiI2YWI1...secure-token',
+                            lastDepthCapturedAt: '2026-10-02T14:32:07+05:30',
+                            userName: 'Ram Kumar',
+                            userId: 'OP-4471',
+                            machineId: 'HDD-221',
+                            depthMeters: 1.65,
+                            state: 'UPW',
+                            district: 'AGRA',
+                            block: 'BAH'
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        emptyResponse: {
+          status: 'OK',
+          message: '0 blocks reported captures on 2026-10-02',
+          results: {
+            circles: []
+          }
+        },
+        errorResponse: {
+          status: 'ERROR',
+          message: 'Invalid or missing Basic authentication credentials'
+        }
+      },
+    ],
+  },
 ];
 
 export const ApiDocs = () => {
@@ -379,14 +444,22 @@ export const ApiDocs = () => {
           bodyParams[item.name] = paramValues[item.name];
         });
 
+      const isBharatNet = selectedEndpoint.id === 'bharatnet_td_monitoring';
+      const headers = isBharatNet
+        ? {
+            'Authorization': 'Basic ' + btoa('bharatnet_service:BharatNet@2026!Secure'),
+            'Accept': 'application/json',
+          }
+        : {
+            'X-API-Key': token,
+          };
+
       const response = await axios({
         method: selectedEndpoint.method,
         url: resolvedPath,
         params: qParams,
         data: Object.keys(bodyParams).length > 0 ? bodyParams : undefined,
-        headers: {
-          'X-API-Key': token,
-        },
+        headers,
       });
 
       const elapsed = Math.round(performance.now() - startTime);
@@ -413,8 +486,12 @@ export const ApiDocs = () => {
   const codeSnippet = useMemo(() => {
     const key = apiKeyData?.key || 'hero_live_your_key_here';
     const url = currentEndpointUrl;
+    const isBharatNet = selectedEndpoint.id === 'bharatnet_td_monitoring';
 
     if (codeTab === 'curl') {
+      if (isBharatNet) {
+        return `curl -X GET "${url}" \\\n  -u "bharatnet_service:your_service_password" \\\n  -H "Accept: application/json"`;
+      }
       if (selectedEndpoint.method === 'GET') {
         return `curl -X GET "${url}" \\\n  -H "X-API-Key: ${key}" \\\n  -H "Content-Type: application/json"`;
       } else {
@@ -426,6 +503,19 @@ export const ApiDocs = () => {
         return `curl -X POST "${url}" \\\n  -H "X-API-Key: ${key}" \\\n  -H "Content-Type: application/json" \\\n  -d "${bodyStr}"`;
       }
     } else if (codeTab === 'js') {
+      if (isBharatNet) {
+        return `// HTTP Basic Authentication for BharatNet Phase-3
+const authHeader = "Basic " + btoa("bharatnet_service:your_service_password");
+const response = await fetch("${url}", {
+  method: "GET",
+  headers: {
+    "Authorization": authHeader,
+    "Accept": "application/json"
+  }
+});
+const data = await response.json();
+console.log(data);`;
+      }
       return `const response = await fetch("${url}", {
   method: "${selectedEndpoint.method}",
   headers: {
@@ -436,6 +526,17 @@ export const ApiDocs = () => {
 const data = await response.json();
 console.log(data);`;
     } else if (codeTab === 'python') {
+      if (isBharatNet) {
+        return `import requests
+from requests.auth import HTTPBasicAuth
+
+url = "${url}"
+auth = HTTPBasicAuth("bharatnet_service", "your_service_password")
+
+response = requests.get(url, auth=auth, headers={"Accept": "application/json"})
+print(f"Status: {response.status_code}")
+print(response.json())`;
+      }
       return `import requests
 
 url = "${url}"
@@ -777,6 +878,45 @@ print(response.json())`;
             </div>
             <pre className="code-pre">{codeSnippet}</pre>
           </div>
+
+          {/* Response Schema & Examples (Schema A / Empty / Error) */}
+          {selectedEndpoint.sampleResponse && (
+            <div className="code-box-container" style={{ marginTop: '20px' }}>
+              <div className="code-box-header">
+                <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#f8fafc' }}>
+                  Response Schema (Schema A) & Examples
+                </div>
+              </div>
+              <div style={{ padding: '16px', background: '#0f172a', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#38bdf8', marginBottom: '6px', textTransform: 'uppercase' }}>
+                    1. Success Response (200 OK — Hierarchy & Latest Captures)
+                  </div>
+                  <pre className="code-pre" style={{ margin: 0, maxHeight: '240px', overflowY: 'auto' }}>
+                    {JSON.stringify(selectedEndpoint.sampleResponse, null, 2)}
+                  </pre>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#eab308', marginBottom: '6px', textTransform: 'uppercase' }}>
+                    2. Empty Response (200 OK — Unknown Circle or Zero Captures)
+                  </div>
+                  <pre className="code-pre" style={{ margin: 0 }}>
+                    {JSON.stringify(selectedEndpoint.emptyResponse, null, 2)}
+                  </pre>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#f87171', marginBottom: '6px', textTransform: 'uppercase' }}>
+                    3. Error Response (401 Unauthorized / 403 Forbidden)
+                  </div>
+                  <pre className="code-pre" style={{ margin: 0 }}>
+                    {JSON.stringify(selectedEndpoint.errorResponse, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Live Playground ("Try It") */}
           <div className="playground-box">

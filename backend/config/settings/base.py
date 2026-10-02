@@ -235,5 +235,12 @@ ILYNC_TASK_EXECUTION_TIMEOUT = _parse_task_execution_timeout()
 ILYNC_TASK_EXECUTION_MAX_WORKERS = int(os.environ.get('ILYNC_TASK_EXECUTION_MAX_WORKERS', 10))
 ILYNC_TASK_EXECUTION_BATCH_TIMEOUT = float(os.environ.get('ILYNC_TASK_EXECUTION_BATCH_TIMEOUT', 15.0))
 
+# BharatNet Phase-3 T&D Monitoring API Configuration
+BHARATNET_API_USERNAME = os.environ.get('BHARATNET_API_USERNAME', 'bharatnet_service')
+BHARATNET_API_PASSWORD = os.environ.get('BHARATNET_API_PASSWORD', 'BharatNet@2026!Secure')
+BHARATNET_ALLOWED_CIRCLES = os.environ.get('BHARATNET_ALLOWED_CIRCLES', '*')
+BHARATNET_CLIENT_KEY = os.environ.get('BHARATNET_CLIENT_KEY', '')
+HERO_PUBLIC_URL = os.environ.get('HERO_PUBLIC_URL', 'https://hero.pramaanu.co.in')
+
 
 

@@ -37,7 +37,8 @@ class ApiRootView(APIView):
                     "reports": "/api/v1/reports/",
                     "integrations": "/api/v1/integrations/",
                     "machine-shift": "/api/v1/machine-shift/",
-                    "planner": "/api/v1/planner/"
+                    "planner": "/api/v1/planner/",
+                    "bharatnet": "/api/v1/bharatnet/td-monitoring/"
                 }
             },
             message="Hero Web REST API v1 Root"
@@ -73,4 +74,5 @@ urlpatterns = [
     path('geography/', include('apps.common.urls')),
     path('machine-shift/', include('apps.machine_shift.urls')),
     path('planner/', include('apps.planner.urls')),
+    path('bharatnet/', include('apps.integrations.bharatnet_urls')),
 ]

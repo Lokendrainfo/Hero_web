@@ -28,6 +28,7 @@ const TaskDetailPage = lazyComponent(() => import('../pages/tasks/TaskDetailPage
 const MapViewPage = lazyComponent(() => import('../pages/mapview/MapViewPage'), 'MapViewPage');
 const TrenchingMapViewPage = lazyComponent(() => import('../pages/mapview/TrenchingMapViewPage'), 'TrenchingMapViewPage');
 const HddExecutionMapPage = lazyComponent(() => import('../pages/mapview/HddExecutionMapPage'), 'HddExecutionMapPage');
+const BharatNetLiveViewPage = lazyComponent(() => import('../pages/mapview/BharatNetLiveViewPage'), 'BharatNetLiveViewPage');
 const ChartViewPage = lazyComponent(() => import('../pages/mapview/ChartViewPage'), 'ChartViewPage');
 const Team = lazyComponent(() => import('../pages/team/Team'), 'Team');
 const Attendance = lazyComponent(() => import('../pages/attendance/Attendance'), 'Attendance');
@@ -79,6 +80,7 @@ export const AppRoutes = () => {
       <Routes>
         <Route element={<PublicRoute />}>
           <Route path="/login" element={<Login />} />
+          <Route path="/live-view/:token" element={<BharatNetLiveViewPage />} />
         </Route>
 
         <Route element={<ProtectedRoute />}>
