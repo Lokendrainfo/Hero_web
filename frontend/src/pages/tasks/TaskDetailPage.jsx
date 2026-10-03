@@ -640,6 +640,7 @@ export const TaskDetailPage = () => {
           taskId={code}
           taskCode={task.taskCode || code}
           taskName={name}
+          ring={task?.ring || task?.ringId || task?.routeSnapshot?.ringId || ''}
           onClose={() => setLightboxPhotos(null)}
           onNavigate={(newIdx) => setLightboxIndex(newIdx)}
         />

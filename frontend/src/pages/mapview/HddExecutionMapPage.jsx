@@ -363,6 +363,13 @@ export const HddExecutionMapPage = () => {
                 const k = `${dp.id || ''}_${dp.lat}_${dp.lng}_${dp.capturedAt || ''}`;
                 if (!seenDpKeys.has(k)) {
                   seenDpKeys.add(k);
+                  const cSegName = childNorm.segmentName || childNorm.displayName || childNorm.taskName;
+                  if (cSegName && !isMongoHexId(cSegName)) {
+                    dp.segmentName = cSegName;
+                    dp.taskName = cSegName;
+                  }
+                  if (childNorm.taskCode && !isMongoHexId(childNorm.taskCode)) dp.taskCode = childNorm.taskCode;
+                  if (childNorm.ring || childNorm.ringId) dp.ring = childNorm.ring || childNorm.ringId;
                   mergedDps.push(dp);
                 }
               });
@@ -434,6 +441,13 @@ export const HddExecutionMapPage = () => {
                   const k = `${dp.id || ''}_${dp.lat}_${dp.lng}_${dp.capturedAt || ''}`;
                   if (!seenDpKeys.has(k)) {
                     seenDpKeys.add(k);
+                    const sSegName = sibNorm.segmentName || sibNorm.displayName || sibNorm.taskName;
+                    if (sSegName && !isMongoHexId(sSegName)) {
+                      dp.segmentName = sSegName;
+                      dp.taskName = sSegName;
+                    }
+                    if (sibNorm.taskCode && !isMongoHexId(sibNorm.taskCode)) dp.taskCode = sibNorm.taskCode;
+                    if (sibNorm.ring || sibNorm.ringId) dp.ring = sibNorm.ring || sibNorm.ringId;
                     mergedDps.push(dp);
                   }
                 });
@@ -680,6 +694,7 @@ export const HddExecutionMapPage = () => {
 
     const taskCodeForMedia = [executionData.taskCode, executionData.taskId].find(v => v && !isMongoHexId(v)) || '';
     const taskNameForMedia = [executionData.displayName, executionData.taskName].find(v => v && !isMongoHexId(v)) || '';
+    const ringForMedia = [executionData.ring, executionData.ringId, executionData.ringCode].find(v => v && !isMongoHexId(v)) || '';
 
     // Build complete list of all depth photos for sequential lightbox navigation
     const allDepthPhotos = (executionData.depthPoints || []).map((dp, idx) => {
@@ -689,7 +704,10 @@ export const HddExecutionMapPage = () => {
       const dpId = dp.id || `ASH-DPT${String(dp.pointNo || idx + 1).padStart(8, '0')}`;
 
       const photoCode = (dp.taskCode && !isMongoHexId(dp.taskCode)) ? dp.taskCode : taskCodeForMedia;
-      const photoName = (dp.taskName && !isMongoHexId(dp.taskName)) ? dp.taskName : taskNameForMedia;
+      const photoName = (dp.segmentName && !isMongoHexId(dp.segmentName))
+        ? dp.segmentName
+        : ((dp.taskName && !isMongoHexId(dp.taskName)) ? dp.taskName : taskNameForMedia);
+      const photoRing = (dp.ring && !isMongoHexId(dp.ring)) ? dp.ring : (dp.ringId || ringForMedia || 'R02');
 
       return {
         id: dpId,
@@ -697,11 +715,14 @@ export const HddExecutionMapPage = () => {
         photoUrl: imgUrl,
         url: imgUrl,
         src: imgUrl,
-        label: `Depth Point ${dpId}`,
-        title: `Depth Point ${dpId}`,
+        label: dpId.startsWith('Depth Point') ? dpId : `Depth Point ${dpId}`,
+        title: dpId.startsWith('Depth Point') ? dpId : `Depth Point ${dpId}`,
         taskId: photoCode,
         taskCode: photoCode,
         taskName: photoName,
+        segmentName: photoName,
+        ring: photoRing,
+        ringId: photoRing,
         depth: dp.depth,
         capturedAt: dp.capturedAt,
         latitude: dp.lat,
@@ -1110,6 +1131,7 @@ export const HddExecutionMapPage = () => {
 
   const activeTaskCode = [executionData?.taskCode, executionData?.taskId].find(v => v && !isMongoHexId(v)) || '';
   const activeTaskName = [executionData?.displayName, executionData?.taskName].find(v => v && !isMongoHexId(v)) || '';
+  const activeRing = [executionData?.ring, executionData?.ringId, executionData?.ringCode].find(v => v && !isMongoHexId(v)) || 'R02';
 
   return (
     <div className="map-viewer-page">
@@ -1121,6 +1143,8 @@ export const HddExecutionMapPage = () => {
           taskId={activeTaskCode}
           taskCode={activeTaskCode}
           taskName={activeTaskName}
+          ring={activeRing}
+          ringId={activeRing}
           onClose={() => setLightboxPhotos(null)}
           onNavigate={(newIdx) => setLightboxIndex(newIdx)}
         />

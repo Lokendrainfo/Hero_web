@@ -29,6 +29,8 @@ export const PhotoLightbox = ({
   taskId = '',
   taskCode = '',
   taskName = '',
+  ring = '',
+  ringId = '',
   onNavigate,
   defaultExpanded = false
 }) => {
@@ -56,8 +58,30 @@ export const PhotoLightbox = ({
     currentPhoto.taskName,
     taskName,
     currentPhoto.task_name,
+    currentPhoto.displayName,
   ];
   const activeTaskName = candidateNames.find(n => n && typeof n === 'string' && !isMongoHexId(n)) || '';
+
+  const candidateRings = [
+    currentPhoto.ring,
+    currentPhoto.ringId,
+    currentPhoto.ringCode,
+    currentPhoto.ringName,
+    ring,
+    ringId,
+  ];
+  const rawRing = candidateRings.find(r => r && typeof r === 'string' && !isMongoHexId(r)) || '';
+  let activeRing = '';
+  if (rawRing) {
+    const trimmed = String(rawRing).trim();
+    if (trimmed.toLowerCase().startsWith('ring')) {
+      activeRing = trimmed;
+    } else if (/^r\d+/i.test(trimmed)) {
+      activeRing = trimmed.toUpperCase();
+    } else {
+      activeRing = `R${trimmed}`;
+    }
+  }
 
   // Determine if this photo specifically belongs to a PIT
   const isPitPhoto = Boolean(
@@ -265,12 +289,28 @@ export const PhotoLightbox = ({
                 fontWeight: '600',
                 padding: '1px 6px',
                 borderRadius: '5px',
-                maxWidth: '180px',
+                maxWidth: '220px',
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis'
               }} title={activeTaskName}>
                 {activeTaskName}
+              </span>
+            )}
+            {activeRing && (
+              <span style={{
+                background: 'rgba(20, 184, 166, 0.2)',
+                border: '1px solid rgba(45, 212, 191, 0.4)',
+                color: '#5eead4',
+                fontSize: '0.68rem',
+                fontWeight: '700',
+                padding: '1px 6px',
+                borderRadius: '5px',
+                letterSpacing: '0.02em',
+                display: 'inline-flex',
+                alignItems: 'center'
+              }}>
+                {activeRing}
               </span>
             )}
             {isPitPhoto && activePitSide && (
@@ -295,7 +335,9 @@ export const PhotoLightbox = ({
             {isVideo ? 'Video' : 'Photo'} {currentIndex + 1} of {photos.length}
             {(activeTaskId || activeTaskName) && (
               <span style={{ marginLeft: '6px', color: '#cbd5e1' }}>
-                · <span style={{ color: '#60a5fa', fontWeight: '600' }}>Task:</span> {activeTaskId}{activeTaskName && activeTaskName !== activeTaskId ? ` (${activeTaskName})` : ''}
+                · <span style={{ color: '#60a5fa', fontWeight: '600' }}>Task:</span> {activeTaskId}
+                {activeTaskName && activeTaskName !== activeTaskId ? ` (${activeTaskName})` : ''}
+                {activeRing ? ` · ${activeRing}` : ''}
               </span>
             )}
           </div>
@@ -506,10 +548,17 @@ export const PhotoLightbox = ({
           boxSizing: 'border-box'
         }}
       >
-        {(activeTaskId || activeTaskName) && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#e2e8f0', fontSize: '0.75rem' }}>
+        {(activeTaskId || activeTaskName || activeRing) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#e2e8f0', fontSize: '0.75rem', flexWrap: 'wrap' }}>
             <LucideFileText size={13} color="#60a5fa" />
-            <span>Task: <strong style={{ color: '#93c5fd' }}>{activeTaskId}</strong>{activeTaskName && activeTaskName !== activeTaskId ? ` · ${activeTaskName}` : ''}</span>
+            <span>
+              <span style={{ color: '#94a3b8' }}>Task: </span>
+              {activeTaskName && <strong style={{ color: '#38bdf8' }}>{activeTaskName}</strong>}
+              {activeTaskName && activeTaskId ? ' (' : ''}
+              {activeTaskId && <strong style={{ color: '#93c5fd' }}>{activeTaskId}</strong>}
+              {activeTaskName && activeTaskId ? ')' : ''}
+              {activeRing && <span style={{ marginLeft: '6px', color: '#e9d5ff', fontWeight: '600' }}>· Ring: {activeRing}</span>}
+            </span>
           </div>
         )}
 

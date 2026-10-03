@@ -297,6 +297,51 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     ''
   );
 
+  const ringVal = String(
+    task.ring ||
+    task.ringId ||
+    task.ringCode ||
+    task.ringName ||
+    task.routeSnapshot?.ringId ||
+    task.routeSnapshot?.ringName ||
+    task.routeSnapshot?.ring ||
+    loc.ringId ||
+    loc.ringName ||
+    loc.ring ||
+    execData?.ring ||
+    execData?.ringId ||
+    execData?.ringCode ||
+    ''
+  );
+
+  let cleanDescriptionSegment = '';
+  if (task.description && typeof task.description === 'string') {
+    const rawDesc = task.description.split('(')[0].split(' - Source')[0].split(' -Source')[0].trim();
+    if (rawDesc && rawDesc.length > 2 && rawDesc.length < 80) {
+      cleanDescriptionSegment = rawDesc;
+    }
+  }
+
+  const segmentSnapshots = Array.isArray(task.segmentSnapshots) ? task.segmentSnapshots : [];
+  const firstSeg = segmentSnapshots[0] || {};
+  const segmentNameVal = String(
+    task.segmentName ||
+    task.segment_name ||
+    firstSeg.segmentName ||
+    firstSeg.name ||
+    firstSeg.displayName ||
+    task.routeSnapshot?.segmentName ||
+    task.routeSnapshot?.routeName ||
+    cleanDescriptionSegment ||
+    (task.displayName && !task.displayName.toUpperCase().endsWith('-BOQ') && !task.displayName.toUpperCase().endsWith('-BLOCK') ? task.displayName : '') ||
+    task.taskName ||
+    (task.title && task.title !== readableTaskCode && !isMongoHexId(task.title) ? task.title : '') ||
+    (task.name && task.name !== readableTaskCode && !isMongoHexId(task.name) ? task.name : '') ||
+    task.displayName ||
+    loc.locationName ||
+    ''
+  );
+
   const createMediaItem = (rawMedia, defaultLabel = 'Photo', isVidFallback = false) => {
     if (!rawMedia) return null;
     let urlKey = typeof rawMedia === 'string' ? rawMedia : (rawMedia.photoUrl || rawMedia.url || rawMedia.src);
@@ -308,6 +353,8 @@ export const mapHddExecutionResponse = (task, execution = null) => {
 
     const mediaCode = (rawMedia && (rawMedia.taskCode || rawMedia.taskId || rawMedia.task_id)) || readableTaskCode;
     const cleanMediaCode = isMongoHexId(mediaCode) ? readableTaskCode : mediaCode;
+    const mediaRing = (rawMedia && (rawMedia.ring || rawMedia.ringId || rawMedia.ringCode)) || ringVal;
+    const mediaSegName = (rawMedia && (rawMedia.segmentName || rawMedia.taskName || rawMedia.task_name)) || segmentNameVal;
 
     return {
       id: (rawMedia && rawMedia.id) || urlKey,
@@ -318,7 +365,10 @@ export const mapHddExecutionResponse = (task, execution = null) => {
       label: (rawMedia && rawMedia.label) || defaultLabel,
       taskId: cleanMediaCode || '',
       taskCode: cleanMediaCode || '',
-      taskName: (rawMedia && (rawMedia.taskName || rawMedia.task_name)) || taskDisplayName,
+      taskName: mediaSegName,
+      segmentName: mediaSegName,
+      ring: mediaRing || '',
+      ringId: mediaRing || '',
       capturedAt: (rawMedia && rawMedia.capturedAt) || null,
       latitude: rawMedia && rawMedia.latitude ? Number(rawMedia.latitude) : null,
       longitude: rawMedia && rawMedia.longitude ? Number(rawMedia.longitude) : null,
@@ -473,12 +523,18 @@ export const mapHddExecutionResponse = (task, execution = null) => {
         dpPhotos.push(dpMedia);
       }
 
+      const dpRing = (photoObj && (photoObj.ring || photoObj.ringId || photoObj.ringCode)) || dp.ring || dp.ringId || dp.ringCode || ringVal;
+      const dpSegName = dp.segmentName || dp.segment_name || dp.taskName || (photoObj && photoObj.taskName) || segmentNameVal;
+
       return {
         id: dp.id || dp.depthPointId || `DPT-${shotId}-${dIdx + 1}`,
         pointNo: dIdx + 1,
         taskId: readableTaskCode,
         taskCode: readableTaskCode,
-        taskName: taskDisplayName,
+        taskName: dpSegName,
+        segmentName: dpSegName,
+        ring: dpRing,
+        ringId: dpRing,
         depth: dVal,
         temp: dp.temperature,
         offset: dp.offsetFromCenterOfRoad,
@@ -598,6 +654,8 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     taskCode: readableTaskCode,
     displayName: taskDisplayName || loc.locationName || 'HDD Execution Task',
     taskName: taskDisplayName,
+    ring: ringVal,
+    ringId: ringVal,
     state: loc.circle || task.circle || task.state || loc.state || 'RAJASTHAN',
     district: loc.district || task.district || loc.districtName || 'OTHER',
     block: loc.blockName || loc.block || task.block || task.blockName || 'OTHER',

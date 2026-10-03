@@ -1135,6 +1135,7 @@ export const ChartViewPage = () => {
           taskId={currentExecution?.taskCode || currentExecution?.taskId || ''}
           taskCode={currentExecution?.taskCode || ''}
           taskName={currentExecution?.displayName || currentExecution?.taskName || ''}
+          ring={currentExecution?.ring || currentExecution?.ringId || ''}
           onClose={() => setLightboxPhotos(null)}
           onNavigate={(newIdx) => setLightboxIndex(newIdx)}
         />
