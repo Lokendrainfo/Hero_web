@@ -667,6 +667,7 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     ringId: ringVal,
     state: loc.circle || task.circle || task.state || loc.state || 'RAJASTHAN',
     district: loc.district || task.district || loc.districtName || 'OTHER',
+    block: loc.blockName || loc.block || task.block || task.blockName || 'OTHER',
     userId: String(task.userId || task.assigneeId || task.assigneeSnapshot?.userId || task.assigneeSnapshot?.id || task.assignedTo || (task.taskExecution || {}).userId || (task.taskExecution || {}).createdById || ''),
     user: task.userName || task.assigneeName || task.assigneeSnapshot?.name || task.assignee?.name || task.assignedTo?.name || task.user?.name || task.username || 'Field Supervisor',
     userRole: task.assigneeSnapshot?.designation || task.assignee?.designation || 'Project Manager',

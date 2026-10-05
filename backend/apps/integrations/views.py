@@ -909,13 +909,13 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
                 if req_state in (str(t.get('state') or t.get('circle') or '').strip().lower())
             ]
 
-        if req_district and req_district != 'all':
+        if req_district and req_district not in ['all', 'other']:
             enriched_tasks = [
                 t for t in enriched_tasks
                 if req_district == (str(t.get('district') or '').strip().lower())
             ]
 
-        if req_block and req_block != 'all':
+        if req_block and req_block not in ['all', 'other']:
             def _match_blk(t):
                 b = str(t.get('block') or '').strip().lower()
                 clean_req = req_block.replace('-boq', '').replace('-block', '').strip()

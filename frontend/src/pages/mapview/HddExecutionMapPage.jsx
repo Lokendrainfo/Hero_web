@@ -600,6 +600,7 @@ export const HddExecutionMapPage = () => {
 
     const isBlockMode = mode === 'block' || executionId === 'block';
     const isUserMode = mode === 'user' || Boolean(paramUserId) || Boolean(paramUserName);
+    const cleanId = String(executionId || '').replace('_route_', '').split('_')[0];
 
     try {
       if (isBlockMode) {
@@ -609,12 +610,12 @@ export const HddExecutionMapPage = () => {
           size: 50
         };
         if (paramState && paramState !== 'all') blkParams.state = paramState;
-        if (paramDistrict && paramDistrict !== 'all') blkParams.district = paramDistrict;
-        if (paramBlock && paramBlock !== 'all') blkParams.block = paramBlock;
+        if (paramDistrict && paramDistrict !== 'all' && paramDistrict !== 'OTHER') blkParams.district = paramDistrict;
+        if (paramBlock && paramBlock !== 'all' && paramBlock !== 'OTHER') blkParams.block = paramBlock;
 
         const res = await taskService.getMapViewExecutions(blkParams);
         const resData = res?.data?.data || res?.data || res;
-        const tasks = resData?.results || resData?.content || (Array.isArray(resData) ? resData : []);
+        let tasks = resData?.results || resData?.content || (Array.isArray(resData) ? resData : []);
 
         if (!tasks || tasks.length === 0) {
           setError('No execution data found for this block.');
@@ -668,12 +669,31 @@ export const HddExecutionMapPage = () => {
           userId: targetUserId
         };
         if (paramState && paramState !== 'all') userParams.state = paramState;
-        if (paramDistrict && paramDistrict !== 'all') userParams.district = paramDistrict;
-        if (paramBlock && paramBlock !== 'all') userParams.block = paramBlock;
+        if (paramDistrict && paramDistrict !== 'all' && paramDistrict !== 'OTHER') userParams.district = paramDistrict;
+        if (paramBlock && paramBlock !== 'all' && paramBlock !== 'OTHER') userParams.block = paramBlock;
 
         const res = await taskService.getMapViewExecutions(userParams);
         const resData = res?.data?.data || res?.data || res;
-        const tasks = resData?.results || resData?.content || (Array.isArray(resData) ? resData : []);
+        let tasks = resData?.results || resData?.content || (Array.isArray(resData) ? resData : []);
+
+        // If block parameter was overly restrictive or caused 0 results, retry without block
+        if ((!tasks || tasks.length === 0) && userParams.block) {
+          const { block, ...relaxedParams } = userParams;
+          const retryRes = await taskService.getMapViewExecutions(relaxedParams);
+          const rData = retryRes?.data?.data || retryRes?.data || retryRes;
+          const rTasks = rData?.results || rData?.content || (Array.isArray(rData) ? rData : []);
+          if (rTasks && rTasks.length > 0) {
+            tasks = rTasks;
+          }
+        }
+
+        // If still 0 tasks and cleanId is a valid task ID, try resolving the specific task
+        if ((!tasks || tasks.length === 0) && cleanId && cleanId !== 'block' && cleanId !== 'user') {
+          const directTask = await resolveExecutionData(cleanId);
+          if (directTask && (directTask.shots?.length || directTask.pits?.length || directTask.depthPoints?.length)) {
+            tasks = [directTask];
+          }
+        }
 
         if (!tasks || tasks.length === 0) {
           setError('No execution data found for this user.');
@@ -721,7 +741,6 @@ export const HddExecutionMapPage = () => {
       }
 
       // Fallback: direct task ID resolution
-      const cleanId = String(executionId).replace('_route_', '').split('_')[0];
       const rawResult = await resolveExecutionData(cleanId);
       if (!rawResult) {
         setError(`Execution ID "${executionId}" not found.`);
