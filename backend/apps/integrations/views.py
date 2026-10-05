@@ -973,13 +973,19 @@ class IlyncTrenchingDashboardSummaryView(IlyncBaseView):
             request=request,
             task_type='FIBER_TRENCHING_DUCTING_TASK',
             page=0,
-            size=50,
+            size=100,
             extra_params=extra_params,
             expand_hierarchy=True,
             include_telemetry=True
         )
 
         tasks = scoped_data.get('results', []) if isinstance(scoped_data, dict) else []
+
+        # Collect IDs of container tasks that have children so we only calculate planned scope,
+        # task counts, and pending status on executable leaf tasks (avoiding double/triple-counting container routes)
+        all_task_ids = set(str(t.get('id')) for t in tasks if t.get('id'))
+        parent_task_ids = set(str(t.get('parentTaskId')) for t in tasks if t.get('parentTaskId'))
+        container_ids = parent_task_ids.intersection(all_task_ids)
 
         # Helper to extract date (YYYY-MM-DD) from shot
         def parse_shot_date(shot):
@@ -1075,6 +1081,8 @@ class IlyncTrenchingDashboardSummaryView(IlyncBaseView):
         pending_not_started = 0
         pending_in_progress = 0
         pending_distance_m = 0
+        pending_not_started_distance_m = 0
+        pending_in_progress_distance_m = 0
 
         rework_tasks_count = 0
         rework_shots_count = 0
@@ -1104,15 +1112,19 @@ class IlyncTrenchingDashboardSummaryView(IlyncBaseView):
         })
 
         for t in tasks:
+            tid = str(t.get('id') or '')
+            is_leaf = tid not in container_ids
+
             loc = t.get('location') or t.get('locationSnapshot') or {}
             dist = (t.get('district') or loc.get('district') or 'OTHER').upper().strip()
             blk = (t.get('block') or loc.get('blockName') or 'OTHER').upper().strip()
             circle = t.get('circle') or loc.get('circle') or t.get('state') or 'RAJASTHAN'
 
-            # Planned distance
+            # Planned distance: only count on leaf execution tasks to avoid multi-counting parent container routes
             r_snap = t.get('routeSnapshot') if isinstance(t.get('routeSnapshot'), dict) else {}
             planned_m = float(t.get('totalLengthKm') or t.get('plannedLengthKm') or r_snap.get('lengthKm') or 0) * 1000
-            tot_planned_m += planned_m
+            if is_leaf:
+                tot_planned_m += planned_m
 
             # Execution & Telemetry
             ex = t.get('taskExecution') or {}
@@ -1185,22 +1197,24 @@ class IlyncTrenchingDashboardSummaryView(IlyncBaseView):
             if task_has_rework:
                 rework_tasks_count += 1
 
-            if status in ['COMPLETED', 'FINISHED', 'DONE', 'CLOSED']:
-                pass
-            else:
-                pending_tasks_count += 1
-                rem_m = max(0, planned_m - task_cov_m)
-                pending_distance_m += rem_m
-                if status == 'CREATED' and task_cov_m == 0:
-                    pending_not_started += 1
+            # Only track pending metrics on executable leaf tasks
+            if is_leaf:
+                if status in ['COMPLETED', 'FINISHED', 'DONE', 'CLOSED']:
+                    pass
                 else:
-                    pending_in_progress += 1
+                    pending_tasks_count += 1
+                    rem_m = max(0, planned_m - task_cov_m)
+                    pending_distance_m += rem_m
+                    if (status == 'CREATED' or not status) and task_cov_m == 0:
+                        pending_not_started += 1
+                        pending_not_started_distance_m += planned_m
+                    else:
+                        pending_in_progress += 1
+                        pending_in_progress_distance_m += rem_m
 
             # Populate district & block map
             d_data = districts_map[dist]
             d_data['circle'] = circle
-            d_data['tasks_count'] += 1
-            d_data['planned_m'] += planned_m
             d_data['completed_m'] += task_cov_m
             d_data['period_completed_m'] += task_period_m
             if mid:
@@ -1209,12 +1223,8 @@ class IlyncTrenchingDashboardSummaryView(IlyncBaseView):
                     d_data['machines_active'].add(mid)
             if task_has_rework:
                 d_data['rework_tasks'] += 1
-            if status != 'COMPLETED':
-                d_data['pending_tasks'] += 1
 
             b_data = d_data['blocks'][blk]
-            b_data['tasks_count'] += 1
-            b_data['planned_m'] += planned_m
             b_data['completed_m'] += task_cov_m
             b_data['period_completed_m'] += task_period_m
             if mid:
@@ -1223,8 +1233,15 @@ class IlyncTrenchingDashboardSummaryView(IlyncBaseView):
                     b_data['machines_active'].add(mid)
             if task_has_rework:
                 b_data['rework_tasks'] += 1
-            if status != 'COMPLETED':
-                b_data['pending_tasks'] += 1
+
+            if is_leaf:
+                d_data['tasks_count'] += 1
+                d_data['planned_m'] += planned_m
+                b_data['tasks_count'] += 1
+                b_data['planned_m'] += planned_m
+                if status not in ['COMPLETED', 'FINISHED', 'DONE', 'CLOSED']:
+                    d_data['pending_tasks'] += 1
+                    b_data['pending_tasks'] += 1
 
         # Format districts & blocks for response
         districts_list = []
@@ -1282,14 +1299,7 @@ class IlyncTrenchingDashboardSummaryView(IlyncBaseView):
         act_mach_count = len(machines_active_period)
         mach_act_pct = round((act_mach_count / dep_mach_count * 100) if dep_mach_count > 0 else 0, 1)
 
-        # Fallback reasons if empty
-        if not rework_reasons:
-            rework_reasons = {
-                "HDD machine stopped during bore": 14,
-                "Depth below telecom standard (<1.40m)": 12,
-                "Supervisor alignment rework": 7
-            }
-
+        total_executable_tasks = len([t for t in tasks if str(t.get('id') or '') not in container_ids])
         reasons_list = [{"reason": k, "count": v} for k, v in rework_reasons.items()]
 
         return success_response(
@@ -1312,29 +1322,29 @@ class IlyncTrenchingDashboardSummaryView(IlyncBaseView):
                     "period_td_completed_km": period_km_tot,
                     "overall_progress_percent": overall_pct,
                     "remaining_td_km": rem_km_tot,
-                    "total_tasks": len(tasks),
+                    "total_tasks": total_executable_tasks,
                     "pending_tasks_count": pending_tasks_count,
                     "pending_not_started_count": pending_not_started,
                     "pending_in_progress_count": pending_in_progress,
                     "pending_distance_km": round(pending_distance_m / 1000.0, 2),
-                    "rework_tasks_count": rework_tasks_count or 33,
-                    "rework_shots_count": rework_shots_count or 48,
-                    "rework_distance_km": round(rework_distance_m / 1000.0, 2) or 6.84,
+                    "rework_tasks_count": rework_tasks_count,
+                    "rework_shots_count": rework_shots_count,
+                    "rework_distance_km": round(rework_distance_m / 1000.0, 2),
                 },
                 "districts": districts_list,
                 "rework_summary": {
-                    "total_rework_items": rework_tasks_count or 33,
-                    "rework_distance_km": round(rework_distance_m / 1000.0, 2) or 6.84,
+                    "total_rework_items": rework_tasks_count,
+                    "rework_distance_km": round(rework_distance_m / 1000.0, 2),
                     "reasons": reasons_list
                 },
                 "pending_summary": {
                     "not_started": {
                         "count": pending_not_started,
-                        "distance_km": round((tot_planned_m - (tot_completed_m if pending_not_started == 0 else 0)) / 1000.0 * 0.8, 2)
+                        "distance_km": round(pending_not_started_distance_m / 1000.0, 2)
                     },
                     "in_progress": {
                         "count": pending_in_progress,
-                        "distance_km": round(pending_distance_m / 1000.0 * 0.2, 2)
+                        "distance_km": round(pending_in_progress_distance_m / 1000.0, 2)
                     },
                     "approval_pending": {
                         "count": pending_tasks_count
