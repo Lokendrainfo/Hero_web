@@ -165,11 +165,17 @@ export const BharatNetMapPage = () => {
           const blkName = blkObj.block_name || 'N/A';
           const rawUsers = blkObj.user_urls || [];
 
-          // Map users with ONLY required fields: userName, lastDepthCapturedAt, url, map_url
+          // Map users with all Pragati Patal fields: userName, userId, machineId, depthMeters, state, district, block, lastDepthCapturedAt
           const mappedUsers = rawUsers.map((u) => {
             const freshness = calculateFreshness(u.lastDepthCapturedAt);
             return {
               userName: u.userName || 'N/A',
+              userId: u.userId || '',
+              machineId: u.machineId || '',
+              depthMeters: u.depthMeters != null ? u.depthMeters : null,
+              state: u.state || circleName,
+              district: u.district || distName,
+              block: u.block || blkName,
               lastDepthCapturedAt: u.lastDepthCapturedAt,
               url: u.url,
               map_url: u.map_url,
@@ -759,16 +765,16 @@ export const BharatNetMapPage = () => {
                     </td>
 
                     {/* MONITORING LINKS CELL */}
-                    {/* ONLY: <User Name>    Last Depth Captured at: <timestamp>    [Eye/View Button] */}
-                    <td style={{ padding: '6px 14px' }}>
+                    {/* User Name + Full Pragati Patal details + [Eye/View Button] */}
+                    <td style={{ padding: '8px 14px' }}>
                       {block.user_urls.map((user, idx) => {
                         const isLast = idx === block.user_urls.length - 1;
 
                         return (
                           <div
-                            key={user.userName + idx}
+                            key={user.userName + (user.userId || idx)}
                             style={{
-                              padding: '10px 0',
+                              padding: '8px 0',
                               borderBottom: isLast ? 'none' : '1px solid #e9ecef',
                               display: 'flex',
                               alignItems: 'center',
@@ -776,13 +782,39 @@ export const BharatNetMapPage = () => {
                               gap: 16,
                             }}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-                              <span style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a' }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a', marginBottom: 3 }}>
                                 {user.userName}
-                              </span>
-                              <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
-                                Last Depth Captured at: {formatCapturedTimestamp(user.lastDepthCapturedAt)}
-                              </span>
+                              </div>
+                              <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.45 }}>
+                                {user.userId && (
+                                  <>
+                                    <span>ID: {user.userId}</span>
+                                    {' | '}
+                                  </>
+                                )}
+                                {user.machineId && (
+                                  <>
+                                    <span>Machine ID: {user.machineId}</span>
+                                    {' | '}
+                                  </>
+                                )}
+                                {user.depthMeters != null && (
+                                  <>
+                                    <span>Depth: {Number(user.depthMeters).toFixed(2)}m</span>
+                                    {' | '}
+                                  </>
+                                )}
+                                <span>State: {user.state || block.state}</span>
+                                {' | '}
+                                <span>District: {user.district || block.district}</span>
+                                {' | '}
+                                <span>Block: {user.block || block.block}</span>
+                                {' '}
+                                <span style={{ color: '#64748b' }}>
+                                  Last Depth Captured at: {formatCapturedTimestamp(user.lastDepthCapturedAt)}
+                                </span>
+                              </div>
                             </div>
 
                             {/* Eye/View Button */}

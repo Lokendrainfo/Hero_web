@@ -38,12 +38,6 @@ export const BharatNetLiveViewPage = () => {
       .catch(() => axios.get(`/api/v1/bharatnet/live-view/${token}/`))
       .then((res) => {
         if (res.data && res.data.data) {
-          const d = res.data.data;
-          if (d.taskId) {
-            const redirectUrl = `/map-view/${d.taskId}?userId=${encodeURIComponent(d.userId || '')}&userName=${encodeURIComponent(d.userName || d.userId || '')}&block=${encodeURIComponent(d.block || '')}&district=${encodeURIComponent(d.district || '')}&state=${encodeURIComponent(d.circle || '')}&date=${encodeURIComponent(d.date || '')}&mode=user`;
-            window.location.replace(redirectUrl);
-            return;
-          }
           setData(d);
         } else {
           setError('No telemetry data available for this live view session.');

@@ -169,8 +169,6 @@ class BharatNetTDMonitoringView(APIView):
             'live': 'true',
             'telemetry': 'true'
         }
-        if circle_param:
-            extra_params['circle'] = circle_param
 
         is_bharatnet_service = (
             getattr(request.user, 'role', '') == 'BHARATNET_SERVICE'
@@ -183,7 +181,7 @@ class BharatNetTDMonitoringView(APIView):
             request=request,
             task_type='FIBER_TRENCHING_DUCTING_TASK',
             page=0,
-            size=100,
+            size=500,
             extra_params=extra_params,
             expand_hierarchy=True,
             include_telemetry=True
