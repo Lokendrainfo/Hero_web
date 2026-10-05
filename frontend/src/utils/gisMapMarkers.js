@@ -225,15 +225,15 @@ export function pitLabelHtml(role, name = '', tag = '', depthVal = null) {
   </span>`;
 }
 
-export function pitIcon({ role = 'mid', name = '', tag = '', depth = null, showLabel = false }) {
-  const pin = role === 'start' ? START_PIN : role === 'end' ? END_PIN : MID_PIN;
+export function pitIcon({ role = 'mid', name = '', tag = '', depth = null, showLabel = false, isLive = false }) {
+  const pin = isLive ? GREEN_LIVE_PIN : (role === 'start' ? START_PIN : role === 'end' ? END_PIN : MID_PIN);
 
-  const label = showLabel ? pitLabelHtml(role, name, tag, depth) : '';
+  const label = (showLabel || isLive) ? pitLabelHtml(role, name, tag, depth) : '';
   return L.divIcon({
-    className: `gis-marker gis-pit-marker gis-pit-marker--${role}`,
+    className: `gis-marker gis-pit-marker gis-pit-marker--${role}${isLive ? ' gis-pit-marker--live' : ''}`,
     html: `<div class="gis-pit gis-pit--${role}">${pin}${label}</div>`,
-    iconSize: showLabel ? [120, 42] : [28, 36],
-    iconAnchor: showLabel ? [14, 36] : [14, 32],
+    iconSize: (showLabel || isLive) ? [120, 42] : [28, 36],
+    iconAnchor: (showLabel || isLive) ? [14, 36] : [14, 32],
     popupAnchor: [0, -32],
   });
 }

@@ -463,7 +463,9 @@ export const mapHddExecutionResponse = (task, execution = null) => {
       stage: p.taskStage || 'LOCKED',
       diggingTime: p.pitDiggingTime || 'N/A',
       executionDate,
-      photos
+      photos,
+      userId: String(task.userId || task.assigneeId || (task.assigneeSnapshot || {}).userId || (task.assigneeSnapshot || {}).id || task.assignedTo || ''),
+      user: task.userName || task.assigneeName || (task.assigneeSnapshot || {}).name || task.assignedTo?.name || 'Field Supervisor',
     };
 
     if (pitId) pitsMap.set(pitId, pitObj);
@@ -552,7 +554,9 @@ export const mapHddExecutionResponse = (task, execution = null) => {
         capturedAt,
         executionDate: dpDate,
         photo: photoObj,
-        photos: dpPhotos
+        photos: dpPhotos,
+        userId: String(task.userId || task.assigneeId || (task.assigneeSnapshot || {}).userId || (task.assigneeSnapshot || {}).id || task.assignedTo || ''),
+        user: task.userName || task.assigneeName || (task.assigneeSnapshot || {}).name || task.assignedTo?.name || 'Field Supervisor',
       };
     }).filter(dp => !isNaN(dp.lat) && !isNaN(dp.lng) && dp.lat !== 0);
 
@@ -597,7 +601,9 @@ export const mapHddExecutionResponse = (task, execution = null) => {
       endTime: shot.hddEndTime || null,
       executionDate,
       cableType: shot.cableType || 'OFC',
-      strataType: shot.strataType || 'Normal Soil'
+      strataType: shot.strataType || 'Normal Soil',
+      userId: String(task.userId || task.assigneeId || (task.assigneeSnapshot || {}).userId || (task.assigneeSnapshot || {}).id || task.assignedTo || ''),
+      user: task.userName || task.assigneeName || (task.assigneeSnapshot || {}).name || task.assignedTo?.name || 'Field Supervisor',
     };
   });
 
@@ -722,7 +728,11 @@ export const mergeMultipleTasksExecution = (tasksList, activeDate = null, option
       const k = `${s.id || s.serialNo || s.name || ''}_${s.startTime || ''}_${s.endTime || ''}`;
       if (!seenShots.has(k)) {
         seenShots.add(k);
-        allShots.push(s);
+        allShots.push({
+          ...s,
+          user: s.user || t.user,
+          userId: s.userId || t.userId,
+        });
       }
     });
 
@@ -730,7 +740,11 @@ export const mergeMultipleTasksExecution = (tasksList, activeDate = null, option
       const k = `${p.id || p.serialNo || p.name || ''}_${p.diggingTime || ''}_${p.lat}_${p.lng}`;
       if (!seenPits.has(k)) {
         seenPits.add(k);
-        allPits.push(p);
+        allPits.push({
+          ...p,
+          user: p.user || t.user,
+          userId: p.userId || t.userId,
+        });
       }
     });
 
@@ -738,7 +752,13 @@ export const mergeMultipleTasksExecution = (tasksList, activeDate = null, option
       const k = `${dp.id || ''}_${dp.lat}_${dp.lng}_${dp.capturedAt || ''}_${dp.depth || ''}`;
       if (!seenDepthPoints.has(k)) {
         seenDepthPoints.add(k);
-        allDepthPoints.push(dp);
+        allDepthPoints.push({
+          ...dp,
+          user: dp.user || t.user,
+          userId: dp.userId || t.userId,
+          taskCode: dp.taskCode || t.taskCode,
+          taskId: dp.taskId || t.taskId,
+        });
       }
     });
   });

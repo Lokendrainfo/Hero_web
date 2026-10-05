@@ -1062,11 +1062,30 @@ export const HddExecutionMapPage = () => {
 
     // 2. Pits — only show if HDD shot / trenching has started
     const pits = getVisiblePitsForMap(executionData);
+    const depthPoints = executionData.depthPoints || [];
+
+    // Identify users who have depth points vs users who only have pits
+    const usersWithDepths = new Set(depthPoints.map(dp => String(dp.userId || dp.user || '').trim().toLowerCase()).filter(Boolean));
+    const userLatestPitMap = new Map();
+
+    pits.forEach((pit, pIdx) => {
+      const uKey = String(pit.userId || pit.user || '').trim().toLowerCase();
+      if (uKey && !usersWithDepths.has(uKey)) {
+        const pTime = parseAnyDate(pit.diggingTime || pit.createdAt);
+        const t = pTime ? pTime.getTime() : pIdx;
+        if (!userLatestPitMap.has(uKey) || t >= userLatestPitMap.get(uKey).time) {
+          userLatestPitMap.set(uKey, { pitId: String(pit.id || pit.serialNo || pit.name), time: t });
+        }
+      }
+    });
+    const livePitIds = new Set(Array.from(userLatestPitMap.values()).map(v => v.pitId));
 
     pits.forEach((pit) => {
       const pt = [pit.lat, pit.lng];
       allBounds.push(pt);
       frameBounds.push(pt);
+
+      const isLivePit = livePitIds.has(String(pit.id)) || livePitIds.has(String(pit.serialNo)) || livePitIds.has(String(pit.name));
 
       const pitPhotosList = (pit.photos && pit.photos.length > 0) ? pit.photos.map(ph => {
         const photoCode = (ph.taskCode && !isMongoHexId(ph.taskCode)) ? ph.taskCode : taskCodeForMedia;
@@ -1089,11 +1108,15 @@ export const HddExecutionMapPage = () => {
       const pitName = pit.name || pit.id || 'Pit';
       const depthStr = pit.depth != null ? formatDepthM(pit.depth) : '';
 
-      const tooltipText = [depthStr, pitName].filter(Boolean).join(' · ');
+      const tooltipText = [
+        pit.user ? `User: ${pit.user}` : '',
+        depthStr,
+        pitName
+      ].filter(Boolean).join(' · ');
 
       const m = L.marker(pt, {
-        icon: pitIcon({ role: 'mid', name: pitName, depth: pit.depth, showLabel: false }),
-        zIndexOffset: 450
+        icon: pitIcon({ role: 'mid', name: pitName, depth: pit.depth, showLabel: isLivePit, isLive: isLivePit }),
+        zIndexOffset: isLivePit ? 550 : 450
       });
 
       m.bindTooltip(tooltipText, {
@@ -1107,9 +1130,10 @@ export const HddExecutionMapPage = () => {
         m.on('click', () => openLightbox(pitPhotosList, 0));
       } else {
         m.bindPopup(gisPopupHtml({
-          eyebrow: 'Pit',
+          eyebrow: isLivePit ? (pit.user ? `Live Pit · ${pit.user}` : 'Live Pit') : 'Pit',
           title: pitName,
           rows: [
+            ['User', pit.user || '—'],
             ['Depth', pit.depth != null ? formatDepthM(pit.depth) : '—'],
             ['Width', pit.width != null ? `${Number(pit.width).toFixed(2)}m` : '—'],
             ['Side', pit.side],
@@ -1123,7 +1147,6 @@ export const HddExecutionMapPage = () => {
     });
 
     // 3. Depth captures — sample + scale with zoom so pins do not stack
-    const depthPoints = executionData.depthPoints || [];
     depthPoints.forEach((dp) => {
       if (dp.lat != null && dp.lng != null) allBounds.push([dp.lat, dp.lng]);
     });
@@ -1136,6 +1159,35 @@ export const HddExecutionMapPage = () => {
       const z = map.getZoom();
       const lastIdx = depthPoints.length - 1;
       const step = depthSampleStep(z, depthPoints.length);
+
+      // Determine latest capture index FOR EACH USER!
+      // In Full Block Map (or multi-user map), each active user working in the block gets their own live green bulb.
+      const liveIndicesSet = new Set();
+      const userLatestMap = new Map(); // userKey -> { idx, time }
+
+      depthPoints.forEach((dp, idx) => {
+        const uKey = String(dp.userId || dp.user || 'default').trim().toLowerCase();
+        const capTime = parseAnyDate(dp.capturedAt || dp.createdAt);
+        const t = capTime ? capTime.getTime() : idx;
+
+        if (!userLatestMap.has(uKey)) {
+          userLatestMap.set(uKey, { idx, time: t });
+        } else {
+          const current = userLatestMap.get(uKey);
+          if (t >= current.time) {
+            userLatestMap.set(uKey, { idx, time: t });
+          }
+        }
+      });
+
+      userLatestMap.forEach(({ idx }) => {
+        liveIndicesSet.add(idx);
+      });
+
+      // Always include lastIdx as fallback
+      if (lastIdx >= 0) {
+        liveIndicesSet.add(lastIdx);
+      }
 
       // Pixel-based collision detection to ensure depth badges never overlap on screen
       const MIN_BADGE_DIST_PX = 75;
@@ -1153,17 +1205,17 @@ export const HddExecutionMapPage = () => {
         return true;
       };
 
-      // 1. Always prioritize live/last point depth badge
-      if (lastIdx >= 0) {
-        const dpLast = depthPoints[lastIdx];
-        if (dpLast && dpLast.lat != null && dpLast.lng != null) {
+      // 1. Always prioritize live/last point depth badges for all users
+      liveIndicesSet.forEach((liveIdx) => {
+        const dpLive = depthPoints[liveIdx];
+        if (dpLive && dpLive.lat != null && dpLive.lng != null) {
           try {
-            const pt = map.latLngToContainerPoint([dpLast.lat, dpLast.lng]);
-            labeledIndices.add(lastIdx);
+            const pt = map.latLngToContainerPoint([dpLive.lat, dpLive.lng]);
+            labeledIndices.add(liveIdx);
             placedPositions.push(pt);
           } catch (e) { }
         }
-      }
+      });
 
       // 2. Prioritize start point depth badge
       if (depthPoints.length > 1) {
@@ -1181,7 +1233,7 @@ export const HddExecutionMapPage = () => {
 
       // 3. Sample intermediate depth points with screen pixel collision check
       depthPoints.forEach((dp, idx) => {
-        if (idx === 0 || idx === lastIdx) return;
+        if (idx === 0 || liveIndicesSet.has(idx)) return;
         if (dp.lat == null || dp.lng == null) return;
         if (idx % step !== 0) return;
 
@@ -1196,12 +1248,12 @@ export const HddExecutionMapPage = () => {
 
       // Render markers
       depthPoints.forEach((dp, idx) => {
-        const isLast = idx === lastIdx;
+        const isLast = liveIndicesSet.has(idx);
         const isKey = idx === 0 || isLast;
         if (!isKey && idx % step !== 0) return;
 
-        // Last depth capture always shows static green depth badge; intermediate depth pins reveal dark tooltip on cursor hover
-        const showLabel = isLast;
+        // Last depth capture for EACH user always shows static green depth badge
+        const showLabel = isLast || labeledIndices.has(idx);
 
         let dateStr = '';
         if (dp.capturedAt) {
@@ -1259,6 +1311,7 @@ export const HddExecutionMapPage = () => {
         const isBelowThreshold = !isNaN(parsedDepth) && parsedDepth < 1.65;
 
         const tooltipText = [
+          dp.user ? `User: ${dp.user}` : '',
           formatDepthM(dp.depth) + (isBelowThreshold ? ' (Below 1.65m)' : ''),
           dateStr
         ].filter(Boolean).join(' · ');
