@@ -18,7 +18,8 @@ import {
   parseAnyDate,
   isMongoHexId,
   hasHddShotOrTrenchingStarted,
-  getVisiblePitsForMap
+  getVisiblePitsForMap,
+  mergeMultipleTasksExecution
 } from '../../utils/mapHddExecutionResponse';
 import { PhotoLightbox, formatImageUrl } from '../../components/common/PhotoLightbox';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
@@ -478,7 +479,15 @@ export const HddExecutionMapPage = () => {
           const parentChildrenRes = await taskService.getTaskChildren(taskData.parentTaskId);
           const siblings = parentChildrenRes?.data?.data || parentChildrenRes?.data || [];
           if (Array.isArray(siblings) && siblings.length > 1) {
-            const siblingTasks = siblings.filter(s => (s.id || s._id) && String(s.id || s._id) !== String(targetId));
+            const thisUserId = taskData.assignee?.id || taskData.assignee?._id || taskData.assigneeId || (typeof taskData.assignee === 'string' ? taskData.assignee : null);
+            const siblingTasks = siblings.filter(s => {
+              if (!(s.id || s._id) || String(s.id || s._id) === String(targetId)) return false;
+              if (thisUserId) {
+                const sUserId = s.assignee?.id || s.assignee?._id || s.assigneeId || (typeof s.assignee === 'string' ? s.assignee : null);
+                if (sUserId && String(sUserId) !== String(thisUserId)) return false;
+              }
+              return true;
+            });
             const siblingResults = await Promise.all(
               siblingTasks.map(sib => {
                 const sibId = sib.id || sib._id;
@@ -581,9 +590,138 @@ export const HddExecutionMapPage = () => {
       setIsRefreshing(true);
     }
     setError(null);
-    const cleanId = String(executionId).replace('_route_', '').split('_')[0];
+
+    const mode = searchParams.get('mode');
+    const paramUserId = searchParams.get('userId');
+    const paramUserName = searchParams.get('userName');
+    const paramBlock = searchParams.get('block');
+    const paramDistrict = searchParams.get('district');
+    const paramState = searchParams.get('state');
+
+    const isBlockMode = mode === 'block' || executionId === 'block';
+    const isUserMode = mode === 'user' || Boolean(paramUserId) || Boolean(paramUserName);
 
     try {
+      if (isBlockMode) {
+        const blkParams = {
+          task_type: 'FIBER_TRENCHING_DUCTING_TASK',
+          page: 0,
+          size: 50
+        };
+        if (paramState && paramState !== 'all') blkParams.state = paramState;
+        if (paramDistrict && paramDistrict !== 'all') blkParams.district = paramDistrict;
+        if (paramBlock && paramBlock !== 'all') blkParams.block = paramBlock;
+
+        const res = await taskService.getMapViewExecutions(blkParams);
+        const resData = res?.data?.data || res?.data || res;
+        const tasks = resData?.results || resData?.content || (Array.isArray(resData) ? resData : []);
+
+        if (!tasks || tasks.length === 0) {
+          setError('No execution data found for this block.');
+          setLoading(false);
+          setIsRefreshing(false);
+          return;
+        }
+
+        const mergedBlock = mergeMultipleTasksExecution(tasks, selectedDate || dateParam, {
+          mode: 'block',
+          block: paramBlock,
+          district: paramDistrict,
+          state: paramState
+        });
+
+        if (!mergedBlock || ((mergedBlock.shots || []).length === 0 && (mergedBlock.pits || []).length === 0 && (mergedBlock.depthPoints || []).length === 0)) {
+          setError('No execution data found for this block.');
+          setLoading(false);
+          setIsRefreshing(false);
+          return;
+        }
+
+        setRawExecutionData(mergedBlock);
+
+        let activeDate = dateParam || selectedDate;
+        if (!activeDate && mergedBlock.availableDates && mergedBlock.availableDates.length > 0) {
+          activeDate = mergedBlock.availableDates[mergedBlock.availableDates.length - 1];
+        }
+        if (!activeDate) {
+          activeDate = new Date().toISOString().split('T')[0];
+        }
+        setSelectedDate(activeDate);
+
+        const dateFiltered = filterHddExecutionByDate(mergedBlock, activeDate);
+        const fullyResolved = await resolvePhotoUrlsForExecution(dateFiltered);
+        setExecutionData(fullyResolved);
+
+        const now = new Date();
+        setLastUpdated(now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }).toLowerCase());
+        setLoading(false);
+        setIsRefreshing(false);
+        return;
+      }
+
+      if (isUserMode) {
+        const targetUserId = paramUserId || paramUserName;
+        const userParams = {
+          task_type: 'FIBER_TRENCHING_DUCTING_TASK',
+          page: 0,
+          size: 50,
+          userId: targetUserId
+        };
+        if (paramState && paramState !== 'all') userParams.state = paramState;
+        if (paramDistrict && paramDistrict !== 'all') userParams.district = paramDistrict;
+        if (paramBlock && paramBlock !== 'all') userParams.block = paramBlock;
+
+        const res = await taskService.getMapViewExecutions(userParams);
+        const resData = res?.data?.data || res?.data || res;
+        const tasks = resData?.results || resData?.content || (Array.isArray(resData) ? resData : []);
+
+        if (!tasks || tasks.length === 0) {
+          setError('No execution data found for this user.');
+          setLoading(false);
+          setIsRefreshing(false);
+          return;
+        }
+
+        const mergedUser = mergeMultipleTasksExecution(tasks, selectedDate || dateParam, {
+          mode: 'user',
+          userId: targetUserId,
+          userName: paramUserName,
+          block: paramBlock,
+          district: paramDistrict,
+          state: paramState
+        });
+
+        if (!mergedUser || ((mergedUser.shots || []).length === 0 && (mergedUser.pits || []).length === 0 && (mergedUser.depthPoints || []).length === 0)) {
+          setError('No execution data found for this user.');
+          setLoading(false);
+          setIsRefreshing(false);
+          return;
+        }
+
+        setRawExecutionData(mergedUser);
+
+        let activeDate = dateParam || selectedDate;
+        if (!activeDate && mergedUser.availableDates && mergedUser.availableDates.length > 0) {
+          activeDate = mergedUser.availableDates[mergedUser.availableDates.length - 1];
+        }
+        if (!activeDate) {
+          activeDate = new Date().toISOString().split('T')[0];
+        }
+        setSelectedDate(activeDate);
+
+        const dateFiltered = filterHddExecutionByDate(mergedUser, activeDate);
+        const fullyResolved = await resolvePhotoUrlsForExecution(dateFiltered);
+        setExecutionData(fullyResolved);
+
+        const now = new Date();
+        setLastUpdated(now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }).toLowerCase());
+        setLoading(false);
+        setIsRefreshing(false);
+        return;
+      }
+
+      // Fallback: direct task ID resolution
+      const cleanId = String(executionId).replace('_route_', '').split('_')[0];
       const rawResult = await resolveExecutionData(cleanId);
       if (!rawResult) {
         setError(`Execution ID "${executionId}" not found.`);
@@ -594,10 +732,8 @@ export const HddExecutionMapPage = () => {
 
       setRawExecutionData(rawResult);
 
-      // Determine initial date if not set via query param
       let activeDate = dateParam || selectedDate;
       if (!activeDate && rawResult.availableDates && rawResult.availableDates.length > 0) {
-        // Default to latest available execution date
         activeDate = rawResult.availableDates[rawResult.availableDates.length - 1];
       }
       if (!activeDate) {
@@ -606,40 +742,15 @@ export const HddExecutionMapPage = () => {
 
       setSelectedDate(activeDate);
 
-      // Filter raw result by activeDate
       const dateFiltered = filterHddExecutionByDate(rawResult, activeDate);
       const fullyResolved = await resolvePhotoUrlsForExecution(dateFiltered);
       setExecutionData(fullyResolved);
-
-      console.log('[HddExecutionMapPage Debug]', {
-        executionId: cleanId,
-        requestedDate: activeDate,
-        apiUrl: `/api/v1/integrations/tasks/${cleanId}/execution/`,
-        apiResponse: rawResult,
-        matchedExecutionId: rawResult.id,
-        matchedExecutionDate: rawResult.date,
-        userId: rawResult.user,
-        block: rawResult.block,
-        district: rawResult.district,
-        numberOfTrenches: (fullyResolved?.shots || []).length,
-        numberOfPits: (fullyResolved?.pits || []).length,
-        numberOfDepthPoints: (fullyResolved?.depthPoints || []).length,
-      });
-
-      console.log('[Execution Timestamp Debug]', {
-        execution_id: executionId,
-        raw_timestamp_from_api: fullyResolved?.updatedAt || fullyResolved?.lastModified,
-        timestamp_field_name: fullyResolved?.updatedAt ? 'updatedAt' : 'lastModified',
-        parsed_timestamp: fullyResolved?.updatedAt,
-        final_display_timestamp: fullyResolved?.lastModified,
-        timezone: 'Asia/Kolkata (IST, UTC+05:30)'
-      });
 
       const now = new Date();
       setLastUpdated(now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }).toLowerCase());
     } catch (err) {
       console.error('[HddExecutionMapPage] Error loading execution detail:', err);
-      setError(err?.message || 'Failed to load HDD map execution data.');
+      setError(err?.message || (isBlockMode ? 'Failed to load block execution map.' : 'Failed to load user execution map.'));
     } finally {
       setLoading(false);
       setIsRefreshing(false);
@@ -648,32 +759,38 @@ export const HddExecutionMapPage = () => {
 
   useEffect(() => {
     isInitialFitDoneRef.current = false;
+    setRawExecutionData(null);
+    setExecutionData(null);
+    setError(null);
     fetchExecutionDetail(true);
-  }, [executionId]);
+  }, [
+    executionId,
+    searchParams.get('userId'),
+    searchParams.get('userName'),
+    searchParams.get('mode'),
+    searchParams.get('block'),
+    searchParams.get('district')
+  ]);
 
   // Handle Date Change
   const handleDateChange = async (newDate) => {
     setSelectedDate(newDate);
     isInitialFitDoneRef.current = false;
+    const nextParams = new URLSearchParams(searchParams);
     if (newDate) {
-      setSearchParams({ date: newDate }, { replace: true });
+      nextParams.set('date', newDate);
     } else {
-      setSearchParams({}, { replace: true });
+      nextParams.delete('date');
     }
+    setSearchParams(nextParams, { replace: true });
 
     if (rawExecutionData) {
-      setLoading(true);
-      try {
-        const dateFiltered = filterHddExecutionByDate(rawExecutionData, newDate);
-        const fullyResolved = await resolvePhotoUrlsForExecution(dateFiltered);
-        setExecutionData(fullyResolved);
-      } catch (err) {
-        console.error('[HddExecutionMapPage] Error filtering date:', err);
-      } finally {
-        setLoading(false);
-      }
+      const dateFiltered = filterHddExecutionByDate(rawExecutionData, newDate);
+      const fullyResolved = await resolvePhotoUrlsForExecution(dateFiltered);
+      setExecutionData(fullyResolved);
     }
   };
+
 
   // Leaflet Cleanup on Unmount
   useEffect(() => {
@@ -1214,12 +1331,14 @@ export const HddExecutionMapPage = () => {
     return <LoadingSpinner title="Loading..." subtitle="Fetching map data & telemetry" />;
   }
 
+  const isBlockMode = searchParams.get('mode') === 'block' || executionId === 'block';
+
   if (error || !executionData) {
     return (
       <div className="screen-container">
         <EmptyState
-          title="Map could not load"
-          subtitle={error || 'Unable to display this HDD execution.'}
+          title={isBlockMode ? "Block map could not load" : "User map could not load"}
+          subtitle={error || (isBlockMode ? 'No execution data found for this block.' : 'No execution data found for this user.')}
         >
           <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
             <button type="button" className="btn-secondary" onClick={closeMap}>Close</button>
@@ -1263,9 +1382,20 @@ export const HddExecutionMapPage = () => {
             <LucideArrowLeft size={16} /> Close
           </button>
           <div style={{ minWidth: 0 }}>
-            <div className="page-title" style={{ fontSize: '0.9375rem' }}>Execution map</div>
+            <div className="page-title" style={{ fontSize: '0.9375rem' }}>
+              {executionData.isBlockMap ? `Block Map: ${executionData.block || '—'}` : 'Execution map'}
+            </div>
             <div className="page-subtitle" style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <span>{executionData.user || 'Supervisor'} · {executionData.district || executionData.state || '—'}</span>
+              {executionData.isBlockMap ? (
+                <span>
+                  <strong>Block: {executionData.block || '—'}</strong> · {executionData.district || '—'}, {executionData.state || '—'}
+                  {executionData.usersList?.length ? ` · ${executionData.usersList.length} ${executionData.usersList.length === 1 ? 'user' : 'users'}` : ''}
+                </span>
+              ) : (
+                <span>
+                  <strong>User: {executionData.user || 'Supervisor'}</strong> · Block: {executionData.block || '—'} · {executionData.district || executionData.state || '—'}
+                </span>
+              )}
               {(executionData.lastModified || executionData.updatedAt) && (
                 <>
                   <span>·</span>
@@ -1384,7 +1514,13 @@ export const HddExecutionMapPage = () => {
           <div className="gis-empty-overlay">
             <EmptyState
               title={!hddStarted ? "HDD Shot / Trenching Not Started" : "No execution on this date"}
-              subtitle={!hddStarted ? "HDD shot / trenching has not started yet. Pits will be displayed on the map once execution begins." : `No pits, trenches, or depth points for ${selectedDate || 'the selected day'}.`}
+              subtitle={!hddStarted 
+                ? "HDD shot / trenching has not started yet. Pits will be displayed on the map once execution begins." 
+                : (isBlockMode 
+                    ? `No pits, trenches, or depth points found for block ${executionData?.block || ''} on ${selectedDate || 'the selected day'}.`
+                    : `No pits, trenches, or depth points found for ${executionData?.user || 'this user'} on ${selectedDate || 'the selected day'}.`
+                  )
+              }
             />
           </div>
         )}

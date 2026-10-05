@@ -683,6 +683,14 @@ class IlyncTaskExecutionView(IlyncBaseView):
             except Exception as ce:
                 print(f"[IlyncTaskExecutionView] Error checking children for {task_id}: {ce}")
 
+        # Enforce user isolation: do not merge sibling segments from other users unless block mode
+        req_user_id = (request.query_params.get('userId') or request.query_params.get('user_id') or '').strip().lower()
+        is_block_mode = str(request.query_params.get('mode') or '').strip().lower() == 'block'
+        target_owner_id = req_user_id
+        if not target_owner_id and not is_block_mode and isinstance(task_detail, dict):
+            snap = task_detail.get('assigneeSnapshot') or {}
+            target_owner_id = str(snap.get('userId') or snap.get('id') or task_detail.get('assignedTo') or '').strip().lower()
+
         # Fetch executions for related segments
         exec_list = []
         if direct_exec:
@@ -690,28 +698,28 @@ class IlyncTaskExecutionView(IlyncBaseView):
 
         for rid in related_task_ids:
             try:
-                r_res = client.get_task_execution(rid)
-                if r_res and isinstance(r_res, dict) and r_res.get('data'):
-                    r_exec = r_res.get('data')
+                rd_res = client.get_task_detail(rid)
+                rd_data = rd_res.get('data') or rd_res if isinstance(rd_res, dict) else {}
+                if target_owner_id and not is_block_mode and isinstance(rd_data, dict):
+                    r_snap = rd_data.get('assigneeSnapshot') or {}
+                    r_uid = str(r_snap.get('userId') or r_snap.get('id') or rd_data.get('assignedTo') or '').strip().lower()
+                    r_name = str(r_snap.get('name') or rd_data.get('assigneeName') or '').strip().lower()
+                    if r_uid and r_uid != target_owner_id and target_owner_id not in r_name:
+                        continue
+
+                r_exec = None
+                if isinstance(rd_data, dict) and rd_data.get('taskExecution'):
+                    r_exec = rd_data.get('taskExecution')
+                if not r_exec:
+                    e_lookup = client.get_task_execution(rid)
+                    if e_lookup and isinstance(e_lookup, dict) and e_lookup.get('data'):
+                        r_exec = e_lookup.get('data')
+
+                if r_exec and isinstance(r_exec, dict):
                     r_fd = r_exec.get('fieldData', {}) if isinstance(r_exec, dict) else {}
                     r_tr = r_fd.get('trenching', {}) if isinstance(r_fd, dict) else {}
                     if r_tr.get('hddShot') or r_tr.get('pitDetails') or r_fd.get('hddShot') or r_fd.get('pitDetails'):
                         exec_list.append(r_exec)
-                        continue
-            except Exception:
-                pass
-
-            # Fallback to task detail check for child/sibling
-            try:
-                rd_res = client.get_task_detail(rid)
-                if rd_res and isinstance(rd_res, dict):
-                    rd_data = rd_res.get('data') or rd_res
-                    if isinstance(rd_data, dict) and rd_data.get('taskExecution'):
-                        re_obj = rd_data.get('taskExecution')
-                        r_fd = re_obj.get('fieldData', {}) if isinstance(re_obj, dict) else {}
-                        r_tr = r_fd.get('trenching', {}) if isinstance(r_fd, dict) else {}
-                        if r_tr.get('hddShot') or r_tr.get('pitDetails') or r_fd.get('hddShot') or r_fd.get('pitDetails'):
-                            exec_list.append(re_obj)
             except Exception:
                 pass
 
@@ -846,8 +854,8 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
         from apps.common.task_scope import get_user_authorized_tasks
         user = request.user if request.user and request.user.is_authenticated else None
 
-        # Fetch fully expanded hierarchy with live telemetry directly from iLync
-        extra_params = {k: v for k, v in request.query_params.items() if k not in ['page', 'size', 'taskType', 'task_type']}
+        q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
+        extra_params = {k: v for k, v in q_params.items() if k not in ['page', 'size', 'taskType', 'task_type']}
         extra_params['live'] = 'true'
         extra_params['telemetry'] = 'true'
 
@@ -864,7 +872,7 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
 
         raw_tasks = scoped_data.get('results', []) if isinstance(scoped_data, dict) else []
 
-        # Enrich and ensure every task has circle, district, and block populated from location object
+        # Enrich and ensure every task has circle, district, block, and user populated
         enriched_tasks = []
         for t in raw_tasks:
             loc = t.get('locationSnapshot') or t.get('location') or {}
@@ -876,7 +884,53 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
                 t['block'] = loc.get('blockName') or loc.get('block')
             if not t.get('state') and (loc.get('state') or loc.get('circle')):
                 t['state'] = loc.get('state') or loc.get('circle')
+
+            snap = t.get('assigneeSnapshot') or {}
+            uid = str(snap.get('userId') or snap.get('id') or t.get('assignedTo') or t.get('userId') or (t.get('taskExecution') or {}).get('userId') or (t.get('taskExecution') or {}).get('createdById') or '').strip()
+            uname = str(snap.get('name') or t.get('assigneeName') or (t.get('taskExecution') or {}).get('createdByName') or (t.get('assignedUser') or {}).get('name') or '').strip()
+            if uid:
+                t['userId'] = uid
+                t['assigneeId'] = uid
+            if uname:
+                t['userName'] = uname
+                t['assigneeName'] = uname
+
             enriched_tasks.append(t)
+
+        # Filters from query params: state, district, block, userId / user
+        req_state = (q_params.get('state') or q_params.get('circle') or '').strip().lower()
+        req_district = (q_params.get('district') or '').strip().lower()
+        req_block = (q_params.get('block') or q_params.get('blockName') or '').strip().lower()
+        req_user = (q_params.get('userId') or q_params.get('user_id') or q_params.get('user') or q_params.get('userName') or '').strip().lower()
+
+        if req_state and req_state != 'all':
+            enriched_tasks = [
+                t for t in enriched_tasks
+                if req_state in (str(t.get('state') or t.get('circle') or '').strip().lower())
+            ]
+
+        if req_district and req_district != 'all':
+            enriched_tasks = [
+                t for t in enriched_tasks
+                if req_district == (str(t.get('district') or '').strip().lower())
+            ]
+
+        if req_block and req_block != 'all':
+            def _match_blk(t):
+                b = str(t.get('block') or '').strip().lower()
+                clean_req = req_block.replace('-boq', '').replace('-block', '').strip()
+                clean_b = b.replace('-boq', '').replace('-block', '').strip()
+                return req_block == b or clean_req == clean_b or (clean_req in clean_b and len(clean_req) >= 3)
+            enriched_tasks = [t for t in enriched_tasks if _match_blk(t)]
+
+        # Strict user-specific isolation: only return tasks assigned to/executed by this user
+        if req_user and req_user != 'all':
+            def _match_usr(t):
+                snap = t.get('assigneeSnapshot') or {}
+                uid = str(t.get('userId') or snap.get('userId') or snap.get('id') or t.get('assignedTo') or (t.get('taskExecution') or {}).get('userId') or (t.get('taskExecution') or {}).get('createdById') or '').strip().lower()
+                uname = str(t.get('userName') or snap.get('name') or t.get('assigneeName') or (t.get('taskExecution') or {}).get('createdByName') or (t.get('assignedUser') or {}).get('name') or '').strip().lower()
+                return req_user == uid or req_user == uname or (len(req_user) >= 3 and req_user in uname)
+            enriched_tasks = [t for t in enriched_tasks if _match_usr(t)]
 
         return success_response(
             data={

@@ -4,7 +4,8 @@ import {
   LucideRefreshCw,
   LucideChevronDown,
   LucideChevronRight,
-  LucideArrowLeft
+  LucideArrowLeft,
+  LucideGlobe
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 import { useAuth } from '../../hooks/useAuth';
@@ -197,7 +198,11 @@ export const TrenchingMapViewPage = () => {
         userExecMap.set(key, {
           ...primary,
           id: targetId,
+          userId: primary.userId || ex.userId || existing.userId,
           user: existing.user || ex.user,
+          state: primary.state || ex.state || existing.state,
+          district: primary.district || ex.district || existing.district,
+          block: primary.block || ex.block || existing.block,
           updatedAt: greenBulbTimestamp,
           lastModified: greenBulbTimestamp,
           shots: mergedShots,
@@ -496,9 +501,21 @@ export const TrenchingMapViewPage = () => {
 
                             {isBlockExpanded && (
                               <div className="exec-tree-users">
-                                {blockNames.length === 1 && bName && bName !== 'OTHER' && (
-                                  <div className="exec-tree-meta" style={{ padding: '8px 12px 0' }}>{bName}</div>
-                                )}
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px 8px', flexWrap: 'wrap', gap: 8 }}>
+                                  <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-secondary, #475569)', letterSpacing: '0.02em', textTransform: 'uppercase' }}>
+                                    {bName && bName !== 'OTHER' ? bName : 'Block'}
+                                  </div>
+                                  <a
+                                    className="btn-secondary"
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, padding: '4px 10px', textDecoration: 'none', height: 28 }}
+                                    href={`/map-view/block?block=${encodeURIComponent(bName)}&district=${encodeURIComponent(dName)}&state=${encodeURIComponent(selectedState || '')}${selectedDate ? `&date=${selectedDate}` : ''}&mode=block`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <LucideGlobe size={13} /> Open Full Block Map
+                                  </a>
+                                </div>
                                 <table className="data-table">
                                   <thead>
                                     <tr>
@@ -525,7 +542,7 @@ export const TrenchingMapViewPage = () => {
                                         <td style={{ textAlign: 'right' }}>
                                           <a
                                             className="exec-tree-map"
-                                            href={`/map-view/${ex.id}${selectedDate && (ex.availableDates || []).includes(selectedDate) ? `?date=${selectedDate}` : ''}`}
+                                            href={`/map-view/${ex.id}?userId=${encodeURIComponent(ex.userId || ex.user)}&userName=${encodeURIComponent(ex.user)}&block=${encodeURIComponent(ex.block || bName)}&district=${encodeURIComponent(ex.district || dName)}&state=${encodeURIComponent(ex.state || selectedState || '')}${selectedDate ? `&date=${selectedDate}` : ''}&mode=user`}
                                             target="_blank"
                                             rel="noopener noreferrer"
                                             onClick={(e) => e.stopPropagation()}

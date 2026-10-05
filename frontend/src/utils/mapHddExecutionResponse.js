@@ -667,8 +667,8 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     ringId: ringVal,
     state: loc.circle || task.circle || task.state || loc.state || 'RAJASTHAN',
     district: loc.district || task.district || loc.districtName || 'OTHER',
-    block: loc.blockName || loc.block || task.block || task.blockName || 'OTHER',
-    user: task.assigneeSnapshot?.name || task.assigneeName || task.assignee?.name || task.assignedTo?.name || task.user?.name || task.username || 'Field Supervisor',
+    userId: String(task.userId || task.assigneeId || task.assigneeSnapshot?.userId || task.assigneeSnapshot?.id || task.assignedTo || (task.taskExecution || {}).userId || (task.taskExecution || {}).createdById || ''),
+    user: task.userName || task.assigneeName || task.assigneeSnapshot?.name || task.assignee?.name || task.assignedTo?.name || task.user?.name || task.username || 'Field Supervisor',
     userRole: task.assigneeSnapshot?.designation || task.assignee?.designation || 'Project Manager',
     vendorId: task.vendorId,
     vendorName: task.vendorName,
@@ -696,3 +696,142 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     }
   };
 };
+
+export const mergeMultipleTasksExecution = (tasksList, activeDate = null, options = {}) => {
+  if (!Array.isArray(tasksList) || tasksList.length === 0) return null;
+
+  const normalizedList = tasksList.map(t => mapHddExecutionResponse(t)).filter(Boolean);
+  if (normalizedList.length === 0) return null;
+
+  const primary = normalizedList[0];
+  const allShots = [];
+  const allPits = [];
+  const allDepthPoints = [];
+  const seenShots = new Set();
+  const seenPits = new Set();
+  const seenDepthPoints = new Set();
+  const availableDatesSet = new Set();
+  const usersSet = new Set();
+
+  normalizedList.forEach(t => {
+    if (t.user && t.user !== 'Field Supervisor') usersSet.add(t.user);
+    (t.availableDates || []).forEach(d => availableDatesSet.add(d));
+
+    (t.shots || []).forEach(s => {
+      const k = `${s.id || s.serialNo || s.name || ''}_${s.startTime || ''}_${s.endTime || ''}`;
+      if (!seenShots.has(k)) {
+        seenShots.add(k);
+        allShots.push(s);
+      }
+    });
+
+    (t.pits || []).forEach(p => {
+      const k = `${p.id || p.serialNo || p.name || ''}_${p.diggingTime || ''}_${p.lat}_${p.lng}`;
+      if (!seenPits.has(k)) {
+        seenPits.add(k);
+        allPits.push(p);
+      }
+    });
+
+    (t.depthPoints || []).forEach(dp => {
+      const k = `${dp.id || ''}_${dp.lat}_${dp.lng}_${dp.capturedAt || ''}_${dp.depth || ''}`;
+      if (!seenDepthPoints.has(k)) {
+        seenDepthPoints.add(k);
+        allDepthPoints.push(dp);
+      }
+    });
+  });
+
+  const availableDates = Array.from(availableDatesSet).sort();
+  const isBlockMode = options.mode === 'block' || options.isBlock;
+
+  let latestPosition = null;
+  let greenBulbTime = null;
+  let maxTime = -Infinity;
+
+  allDepthPoints.forEach(dp => {
+    const d = parseAnyDate(dp.capturedAt || dp.createdAt);
+    if (d && d.getTime() > maxTime) {
+      maxTime = d.getTime();
+      greenBulbTime = d.toISOString();
+      latestPosition = { lat: dp.lat, lng: dp.lng, label: `Latest Depth Pt ${dp.pointNo || ''} (${dp.depth}m)` };
+    }
+  });
+
+  if (!greenBulbTime) {
+    allPits.forEach(p => {
+      const d = parseAnyDate(p.diggingTime || p.createdAt);
+      if (d && d.getTime() > maxTime) {
+        maxTime = d.getTime();
+        greenBulbTime = d.toISOString();
+        latestPosition = { lat: p.lat, lng: p.lng, label: `Latest Pit ${p.id || ''}` };
+      }
+    });
+  }
+
+  if (!greenBulbTime && normalizedList.length > 0) {
+    normalizedList.forEach(t => {
+      const d = parseAnyDate(t.updatedAt || t.lastModified);
+      if (d && d.getTime() > maxTime) {
+        maxTime = d.getTime();
+        greenBulbTime = d.toISOString();
+      }
+    });
+  }
+
+  const totalTrenchMeters = allShots.reduce((sum, s) => sum + (s.lengthMeters || 0), 0);
+  const formattedTrenchDistance = totalTrenchMeters >= 1000 ? `${(totalTrenchMeters / 1000).toFixed(2)} km` : `${totalTrenchMeters.toFixed(2)} m`;
+
+  const depths = allDepthPoints.map(dp => Number(dp.depth)).filter(d => !isNaN(d) && d > 0);
+  const minDepth = depths.length > 0 ? Math.min(...depths) : 0;
+  const maxDepth = depths.length > 0 ? Math.max(...depths) : 0;
+  const depthRangeStr = depths.length > 0 ? `${minDepth.toFixed(2)}m – ${maxDepth.toFixed(2)}m` : 'N/A';
+
+  const userDisplayName = isBlockMode 
+    ? `Block ${options.block || primary.block} (${usersSet.size} ${usersSet.size === 1 ? 'user' : 'users'})`
+    : (options.userName || primary.user);
+
+  return {
+    id: options.taskId || primary.id || 'merged-task',
+    mongoId: primary.mongoId || primary.id,
+    taskId: options.taskCode || primary.taskCode || (isBlockMode ? `BLOCK-${primary.block}` : primary.taskId),
+    taskCode: options.taskCode || primary.taskCode || (isBlockMode ? `BLOCK-${primary.block}` : primary.taskCode),
+    displayName: isBlockMode ? `Block: ${options.block || primary.block}` : `Task Execution: ${userDisplayName}`,
+    taskName: isBlockMode ? `Block: ${options.block || primary.block}` : `Task Execution: ${userDisplayName}`,
+    ring: primary.ring,
+    ringId: primary.ringId,
+    state: options.state || primary.state,
+    district: options.district || primary.district,
+    block: options.block || primary.block,
+    userId: isBlockMode ? 'BLOCK' : (options.userId || primary.userId),
+    user: isBlockMode ? `Full Block: ${options.block || primary.block}` : (options.userName || primary.user),
+    userRole: isBlockMode ? 'Block Level' : primary.userRole,
+    usersList: Array.from(usersSet),
+    isBlockMap: isBlockMode,
+    vendorId: primary.vendorId,
+    vendorName: primary.vendorName,
+    date: greenBulbTime ? greenBulbTime.split('T')[0] : (primary.date || new Date().toISOString().split('T')[0]),
+    updatedAt: greenBulbTime || primary.updatedAt,
+    lastModified: greenBulbTime || primary.lastModified,
+    status: primary.status,
+    workExecutionMode: primary.workExecutionMode,
+    shots: allShots,
+    pits: allPits,
+    depthPoints: allDepthPoints,
+    latestPosition: latestPosition || primary.latestPosition,
+    availableDates,
+    trench: {
+      lengthMeters: totalTrenchMeters,
+      formattedDistance: formattedTrenchDistance,
+      numShots: allShots.length
+    },
+    statistics: {
+      totalShots: allShots.length,
+      totalPits: allPits.length,
+      totalDepthReadings: allDepthPoints.length,
+      formattedDistance: formattedTrenchDistance,
+      depthRange: depthRangeStr
+    }
+  };
+};
+
