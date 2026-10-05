@@ -122,8 +122,11 @@ def _ff_row_is_running(item):
         rpm = 0
     state = str(item.get('state') or item.get('state_label') or item.get('status') or '').upper()
     engine_on = bool(item.get('engine_on')) or rpm > 0
-    return engine_on or state in (
-        'RUNNING', 'WORKING', 'WORKING_RPM_LIMIT', 'DRILLING', 'MOVING',
+    status_str = str(item.get('status') or '').upper()
+    return (
+        engine_on
+        or status_str == 'RUNNING'
+        or any(kw in state for kw in ('RUNNING', 'WORKING', 'WORKING_RPM_LIMIT', 'DRILLING', 'MOVING'))
     )
 
 
@@ -133,7 +136,7 @@ def _ff_list_has_live_signals(ff_machines):
             continue
         if item.get('rpm') is not None or item.get('engine_on') is not None:
             return True
-        if item.get('state') or item.get('state_label'):
+        if item.get('state') or item.get('state_label') or item.get('status'):
             return True
     return False
 
@@ -141,8 +144,9 @@ def _ff_list_has_live_signals(ff_machines):
 def _commissioned_machine_kpis(att_date, assigned_chassis, ff_machines=None, att_res=None):
     """
     Total = Machines "Commissioned" tab: FiberForce machines that are vendor-assigned on iLync.
-    Not raw iLync machine list length (that can include IDs not present on FiberForce).
-    Pass att_res to avoid a second FiberForce fleet-attendance round-trip.
+    - M/C Running Live: 100% computed live from FiberForce telemetry state.
+    - M/C One Time Turned on By Operator: 100% computed live from FiberForce fleet attendance.
+    No static DB lookups or DB fallbacks.
     """
     assigned_set = set(_unique_chassis(assigned_chassis))
     chassis_list = []
@@ -150,7 +154,13 @@ def _commissioned_machine_kpis(att_date, assigned_chassis, ff_machines=None, att
     for m in (ff_machines or []):
         if not isinstance(m, dict):
             continue
-        chassis = str(m.get('machine_chassis_no') or '').strip()
+        chassis = str(
+            m.get('machine_chassis_no')
+            or m.get('chassis_no')
+            or m.get('serial_number')
+            or m.get('machineNo')
+            or ''
+        ).strip()
         if not chassis or chassis not in assigned_set:
             continue
         if chassis in chassis_list:
@@ -168,14 +178,18 @@ def _commissioned_machine_kpis(att_date, assigned_chassis, ff_machines=None, att
     machine_attendance_present = 0
     machine_attendance_total = commissioned
 
-    if commissioned_rows and _ff_list_has_live_signals(ff_machines):
+    # Compute LIVE running machines 100% dynamically from live FiberForce telemetry (no DB query)
+    if commissioned_rows:
         running = sum(1 for m in commissioned_rows if _ff_row_is_running(m))
-    elif chassis_list:
-        running = Machine.objects.filter(
-            Q(machine_chassis_no__in=chassis_list) | Q(serial_number__in=chassis_list),
-            status='RUNNING',
-        ).count()
+    elif ff_machines:
+        running = sum(
+            1 for m in ff_machines
+            if isinstance(m, dict)
+            and str(m.get('machine_chassis_no') or m.get('chassis_no') or '').strip() in assigned_set
+            and _ff_row_is_running(m)
+        )
 
+    # Compute LIVE one time turned on by operator count from FiberForce fleet attendance (no DB query)
     if chassis_list:
         try:
             if att_res is None:
@@ -187,7 +201,12 @@ def _commissioned_machine_kpis(att_date, assigned_chassis, ff_machines=None, att
             rows = att_data.get('machines') if isinstance(att_data.get('machines'), list) else []
             counts = att_data.get('counts') if isinstance(att_data.get('counts'), dict) else {}
             if rows:
-                actual_shift = sum(1 for row in rows if _row_started_shift(row))
+                chassis_set_filter = set(chassis_list)
+                actual_shift = sum(
+                    1 for row in rows
+                    if str(row.get('machine_chassis_no') or row.get('chassis_no') or '').strip() in chassis_set_filter
+                    and _row_started_shift(row)
+                )
             else:
                 actual_shift = int(counts.get('present') or 0) + int(counts.get('late_punch_in') or 0)
         except Exception as exc:
@@ -490,12 +509,30 @@ class DashboardSummaryView(APIView):
                 print("[Dashboard] Open machine issues fetch error:", exc)
                 return {}, {}
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        def _ilync_payloads():
+            try:
+                return _fetch_ilync_vendor_payloads(target_vendors)
+            except Exception as exc:
+                print("[Dashboard] iLync vendor payloads fetch error:", exc)
+                return []
+
+        def _ff_attendance():
+            try:
+                from apps.integrations.fiberforce.client import FiberForceClient
+                return FiberForceClient().get_fleet_attendance_today()
+            except Exception as exc:
+                print("[Dashboard] FiberForce fleet attendance error:", exc)
+                return {}
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
             ff_future = pool.submit(_ff_machines)
+            ilync_future = pool.submit(_ilync_payloads)
             issues_future = pool.submit(_ff_open_issues)
             output_future = pool.submit(_compute_machine_hdd_output, user, request, req_v, date_param)
-            vendor_pairs = _fetch_ilync_vendor_payloads(target_vendors)
+            att_future = pool.submit(_ff_attendance)
+
             ff_machines = ff_future.result()
+            vendor_pairs = ilync_future.result()
             oem_by_chassis, ops_by_chassis = issues_future.result()
             try:
                 total_machine_output = output_future.result()
@@ -513,28 +550,16 @@ class DashboardSummaryView(APIView):
                     "vendor_name": "All Vendors",
                     "machines": []
                 }
+            try:
+                att_res = att_future.result()
+            except Exception:
+                att_res = {}
 
         assigned_chassis = []
         for _v_obj, payload in vendor_pairs:
             for code in _extract_chassis_from_payload(payload):
                 if code not in assigned_chassis:
                     assigned_chassis.append(code)
-
-        # Start fleet attendance early while we build local fuel widgets
-        chassis_preview = _quick_commissioned_chassis(assigned_chassis, ff_machines)
-
-        def _ff_attendance():
-            if not chassis_preview:
-                return {}
-            try:
-                from apps.integrations.fiberforce.client import FiberForceClient
-                return FiberForceClient().get_fleet_attendance_today(chassis_preview)
-            except Exception as exc:
-                print("[Dashboard] FiberForce fleet attendance error:", exc)
-                return {}
-
-        att_executor = ThreadPoolExecutor(max_workers=1)
-        att_future = att_executor.submit(_ff_attendance)
 
         machines_qs = filter_queryset_by_vendor(Machine.objects.all().order_by('id'), user, 'vendor_id', request=request)
         if assigned_chassis:
@@ -652,13 +677,6 @@ class DashboardSummaryView(APIView):
             "last_audit": current_date_str,
             "acknowledged_by": user_name
         }
-
-        try:
-            att_res = att_future.result(timeout=10)
-        except Exception:
-            att_res = {}
-        finally:
-            att_executor.shutdown(wait=False)
 
         machine_kpis = _commissioned_machine_kpis(att_date, assigned_chassis, ff_machines, att_res=att_res)
         commissioned = machine_kpis.get('commissioned') or 0

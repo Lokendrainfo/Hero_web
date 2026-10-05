@@ -466,7 +466,7 @@ def _fetch_live_fiberforce_machines_impl(user, params=None):
 
     telemetry_map = {}
     if target_machines:
-        max_workers = min(12, len(target_machines))
+        max_workers = min(32, len(target_machines))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             tele_pairs = list(executor.map(fetch_telemetry_for_machine, target_machines))
             telemetry_map = dict(tele_pairs)

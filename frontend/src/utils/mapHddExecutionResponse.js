@@ -325,6 +325,7 @@ export const mapHddExecutionResponse = (task, execution = null) => {
   const segmentSnapshots = Array.isArray(task.segmentSnapshots) ? task.segmentSnapshots : [];
   const firstSeg = segmentSnapshots[0] || {};
   const segmentNameVal = String(
+    (task.displayName && !task.displayName.toUpperCase().endsWith('-BOQ') && !task.displayName.toUpperCase().endsWith('-BLOCK') ? task.displayName : '') ||
     task.segmentName ||
     task.segment_name ||
     firstSeg.segmentName ||
@@ -333,7 +334,6 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     task.routeSnapshot?.segmentName ||
     task.routeSnapshot?.routeName ||
     cleanDescriptionSegment ||
-    (task.displayName && !task.displayName.toUpperCase().endsWith('-BOQ') && !task.displayName.toUpperCase().endsWith('-BLOCK') ? task.displayName : '') ||
     task.taskName ||
     (task.title && task.title !== readableTaskCode && !isMongoHexId(task.title) ? task.title : '') ||
     (task.name && task.name !== readableTaskCode && !isMongoHexId(task.name) ? task.name : '') ||
@@ -474,10 +474,10 @@ export const mapHddExecutionResponse = (task, execution = null) => {
 
   // 2. Extract HDD Shots / Trenches (Pit-to-Pit)
   const rawShots = Array.isArray(trenching?.hddShot) ? trenching.hddShot :
-                   (Array.isArray(fieldData?.hddShot) ? fieldData.hddShot :
-                   (Array.isArray(execData?.hddShot) ? execData.hddShot :
-                   (Array.isArray(execData?.shots) ? execData.shots :
-                   (Array.isArray(fieldData?.shots) ? fieldData.shots : []))));
+    (Array.isArray(fieldData?.hddShot) ? fieldData.hddShot :
+      (Array.isArray(execData?.hddShot) ? execData.hddShot :
+        (Array.isArray(execData?.shots) ? execData.shots :
+          (Array.isArray(fieldData?.shots) ? fieldData.shots : []))));
   let allDepthReadings = [];
   let minDepth = Infinity;
   let maxDepth = -Infinity;
@@ -526,11 +526,20 @@ export const mapHddExecutionResponse = (task, execution = null) => {
       const dpRing = (photoObj && (photoObj.ring || photoObj.ringId || photoObj.ringCode)) || dp.ring || dp.ringId || dp.ringCode || ringVal;
       const dpSegName = dp.segmentName || dp.segment_name || dp.taskName || (photoObj && photoObj.taskName) || segmentNameVal;
 
+      const dpCodeCandidate = [
+        dp.taskCode,
+        dp.task_code,
+        dp.taskId,
+        photoObj?.taskCode,
+        photoObj?.taskId,
+        readableTaskCode
+      ].find(c => c && typeof c === 'string' && !isMongoHexId(c)) || readableTaskCode;
+
       return {
         id: dp.id || dp.depthPointId || `DPT-${shotId}-${dIdx + 1}`,
         pointNo: dIdx + 1,
-        taskId: readableTaskCode,
-        taskCode: readableTaskCode,
+        taskId: dpCodeCandidate,
+        taskCode: dpCodeCandidate,
         taskName: dpSegName,
         segmentName: dpSegName,
         ring: dpRing,

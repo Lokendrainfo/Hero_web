@@ -42,6 +42,51 @@ import {
 
 const GisExecutionMap3D = lazy(() => import('../../components/maps/GisExecutionMap3D'));
 
+const segmentMetaCache = new Map();
+
+const registerSegmentMeta = (task) => {
+  if (!task) return;
+  const mongoId = String(task.id || task._id || task.taskId || '');
+  if (!mongoId || !isMongoHexId(mongoId)) return;
+
+  const rawCodes = [task.taskCode, task.task_code, task.code, task.title, task.name, task.externalTaskId];
+  const tCode = rawCodes.find(c => c && typeof c === 'string' && !isMongoHexId(c)) || '';
+
+  const segmentSnapshots = Array.isArray(task.segmentSnapshots) ? task.segmentSnapshots : [];
+  const firstSeg = segmentSnapshots[0] || {};
+  const sName = String(
+    (task.displayName && !task.displayName.toUpperCase().endsWith('-BOQ') && !task.displayName.toUpperCase().endsWith('-BLOCK') ? task.displayName : '') ||
+    task.segmentName ||
+    task.segment_name ||
+    firstSeg.segmentName ||
+    firstSeg.name ||
+    firstSeg.displayName ||
+    task.routeSnapshot?.segmentName ||
+    task.routeSnapshot?.routeName ||
+    task.taskName ||
+    ''
+  );
+
+  const rawRing = String(
+    task.ring ||
+    task.ringId ||
+    task.ringCode ||
+    task.ringName ||
+    task.routeSnapshot?.parentRouteName ||
+    task.routeSnapshot?.ringName ||
+    task.routeSnapshot?.ring ||
+    ''
+  );
+
+  if (tCode || sName) {
+    segmentMetaCache.set(mongoId, {
+      taskCode: tCode,
+      segmentName: sName,
+      ring: rawRing
+    });
+  }
+};
+
 const formatLastModified = (val) => {
   if (!val || val === '—' || val === 'N/A') return '—';
   const d = parseAnyDate(val) || new Date(val);
@@ -356,20 +401,52 @@ export const HddExecutionMapPage = () => {
               });
               normalized.pits = mergedPits;
             }
+            registerSegmentMeta(childNorm);
             if (childNorm.depthPoints && childNorm.depthPoints.length > 0) {
               const mergedDps = [...(normalized.depthPoints || [])];
-              const seenDpKeys = new Set(mergedDps.map(dp => `${dp.id || ''}_${dp.lat}_${dp.lng}_${dp.capturedAt || ''}`));
               childNorm.depthPoints.forEach(dp => {
-                const k = `${dp.id || ''}_${dp.lat}_${dp.lng}_${dp.capturedAt || ''}`;
-                if (!seenDpKeys.has(k)) {
-                  seenDpKeys.add(k);
-                  const cSegName = childNorm.segmentName || childNorm.displayName || childNorm.taskName;
+                const existingIdx = mergedDps.findIndex(d => {
+                  if (d.id && dp.id && String(d.id) === String(dp.id)) return true;
+                  if (d.lat != null && dp.lat != null && d.lng != null && dp.lng != null) {
+                    const dLat = Math.abs(Number(d.lat) - Number(dp.lat));
+                    const dLng = Math.abs(Number(d.lng) - Number(dp.lng));
+                    if (dLat < 0.00005 && dLng < 0.00005) return true;
+                  }
+                  const u1 = (d.photo && (d.photo.photoUrl || d.photo.url)) || d.photoUrl;
+                  const u2 = (dp.photo && (dp.photo.photoUrl || dp.photo.url)) || dp.photoUrl;
+                  if (u1 && u2 && String(u1) === String(u2)) return true;
+                  return false;
+                });
+                const cSegName = childNorm.segmentName || childNorm.displayName || childNorm.taskName;
+                const cTaskCode = childNorm.taskCode || childNorm.taskId;
+                const cRing = childNorm.ring || childNorm.ringId;
+
+                if (existingIdx !== -1) {
+                  if (cSegName && !isMongoHexId(cSegName)) {
+                    mergedDps[existingIdx].segmentName = cSegName;
+                    mergedDps[existingIdx].taskName = cSegName;
+                  }
+                  if (cTaskCode && !isMongoHexId(cTaskCode)) {
+                    mergedDps[existingIdx].taskCode = cTaskCode;
+                    mergedDps[existingIdx].taskId = cTaskCode;
+                  }
+                  if (cRing) {
+                    mergedDps[existingIdx].ring = cRing;
+                    mergedDps[existingIdx].ringId = cRing;
+                  }
+                } else {
                   if (cSegName && !isMongoHexId(cSegName)) {
                     dp.segmentName = cSegName;
                     dp.taskName = cSegName;
                   }
-                  if (childNorm.taskCode && !isMongoHexId(childNorm.taskCode)) dp.taskCode = childNorm.taskCode;
-                  if (childNorm.ring || childNorm.ringId) dp.ring = childNorm.ring || childNorm.ringId;
+                  if (cTaskCode && !isMongoHexId(cTaskCode)) {
+                    dp.taskCode = cTaskCode;
+                    dp.taskId = cTaskCode;
+                  }
+                  if (cRing) {
+                    dp.ring = cRing;
+                    dp.ringId = cRing;
+                  }
                   mergedDps.push(dp);
                 }
               });
@@ -436,18 +513,39 @@ export const HddExecutionMapPage = () => {
               }
               if (sibNorm.depthPoints && sibNorm.depthPoints.length > 0) {
                 const mergedDps = [...(normalized.depthPoints || [])];
-                const seenDpKeys = new Set(mergedDps.map(dp => `${dp.id || ''}_${dp.lat}_${dp.lng}_${dp.capturedAt || ''}`));
                 sibNorm.depthPoints.forEach(dp => {
                   const k = `${dp.id || ''}_${dp.lat}_${dp.lng}_${dp.capturedAt || ''}`;
-                  if (!seenDpKeys.has(k)) {
-                    seenDpKeys.add(k);
-                    const sSegName = sibNorm.segmentName || sibNorm.displayName || sibNorm.taskName;
+                  const existingIdx = mergedDps.findIndex(d => `${d.id || ''}_${d.lat}_${d.lng}_${d.capturedAt || ''}` === k);
+                  const sSegName = sibNorm.segmentName || sibNorm.displayName || sibNorm.taskName;
+                  const sTaskCode = sibNorm.taskCode || sibNorm.taskId;
+                  const sRing = sibNorm.ring || sibNorm.ringId;
+
+                  if (existingIdx !== -1) {
+                    if (sSegName && !isMongoHexId(sSegName)) {
+                      mergedDps[existingIdx].segmentName = sSegName;
+                      mergedDps[existingIdx].taskName = sSegName;
+                    }
+                    if (sTaskCode && !isMongoHexId(sTaskCode)) {
+                      mergedDps[existingIdx].taskCode = sTaskCode;
+                      mergedDps[existingIdx].taskId = sTaskCode;
+                    }
+                    if (sRing) {
+                      mergedDps[existingIdx].ring = sRing;
+                      mergedDps[existingIdx].ringId = sRing;
+                    }
+                  } else {
                     if (sSegName && !isMongoHexId(sSegName)) {
                       dp.segmentName = sSegName;
                       dp.taskName = sSegName;
                     }
-                    if (sibNorm.taskCode && !isMongoHexId(sibNorm.taskCode)) dp.taskCode = sibNorm.taskCode;
-                    if (sibNorm.ring || sibNorm.ringId) dp.ring = sibNorm.ring || sibNorm.ringId;
+                    if (sTaskCode && !isMongoHexId(sTaskCode)) {
+                      dp.taskCode = sTaskCode;
+                      dp.taskId = sTaskCode;
+                    }
+                    if (sRing) {
+                      dp.ring = sRing;
+                      dp.ringId = sRing;
+                    }
                     mergedDps.push(dp);
                   }
                 });
@@ -703,11 +801,20 @@ export const HddExecutionMapPage = () => {
       const imgUrl = photoObj.photoUrl || (dp.photo && (dp.photo.photoUrl || dp.photo.url)) || photoObj.key || null;
       const dpId = dp.id || `ASH-DPT${String(dp.pointNo || idx + 1).padStart(8, '0')}`;
 
-      const photoCode = (dp.taskCode && !isMongoHexId(dp.taskCode)) ? dp.taskCode : taskCodeForMedia;
+      const urlMatch = imgUrl ? String(imgUrl).match(/surveys\/([0-9a-fA-F]{24})\//) : null;
+      const urlMeta = urlMatch ? segmentMetaCache.get(urlMatch[1]) : null;
+
+      const photoCode = (dp.taskCode && !isMongoHexId(dp.taskCode))
+        ? dp.taskCode
+        : (urlMeta?.taskCode || (photoObj.taskCode && !isMongoHexId(photoObj.taskCode) ? photoObj.taskCode : taskCodeForMedia));
+
       const photoName = (dp.segmentName && !isMongoHexId(dp.segmentName))
         ? dp.segmentName
-        : ((dp.taskName && !isMongoHexId(dp.taskName)) ? dp.taskName : taskNameForMedia);
-      const photoRing = (dp.ring && !isMongoHexId(dp.ring)) ? dp.ring : (dp.ringId || ringForMedia || 'R02');
+        : (urlMeta?.segmentName || ((dp.taskName && !isMongoHexId(dp.taskName)) ? dp.taskName : (photoObj.segmentName || photoObj.taskName || taskNameForMedia)));
+
+      const photoRing = (dp.ring && !isMongoHexId(dp.ring))
+        ? dp.ring
+        : (urlMeta?.ring || dp.ringId || ringForMedia || '');
 
       return {
         id: dpId,
@@ -1131,7 +1238,7 @@ export const HddExecutionMapPage = () => {
 
   const activeTaskCode = [executionData?.taskCode, executionData?.taskId].find(v => v && !isMongoHexId(v)) || '';
   const activeTaskName = [executionData?.displayName, executionData?.taskName].find(v => v && !isMongoHexId(v)) || '';
-  const activeRing = [executionData?.ring, executionData?.ringId, executionData?.ringCode].find(v => v && !isMongoHexId(v)) || 'R02';
+  const activeRing = [executionData?.ring, executionData?.ringId, executionData?.ringCode].find(v => v && !isMongoHexId(v)) || '';
 
   return (
     <div className="map-viewer-page">

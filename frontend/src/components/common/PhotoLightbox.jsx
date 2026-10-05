@@ -55,12 +55,14 @@ export const PhotoLightbox = ({
   const activeTaskId = candidateCodes.find(c => c && typeof c === 'string' && !isMongoHexId(c)) || '';
 
   const candidateNames = [
+    currentPhoto.segmentName,
+    currentPhoto.segment_name,
     currentPhoto.taskName,
-    taskName,
     currentPhoto.task_name,
     currentPhoto.displayName,
+    taskName,
   ];
-  const activeTaskName = candidateNames.find(n => n && typeof n === 'string' && !isMongoHexId(n)) || '';
+  const activeTaskName = candidateNames.find(n => n && typeof n === 'string' && !isMongoHexId(n) && !n.toUpperCase().endsWith('-BOQ') && !n.toUpperCase().endsWith('-BLOCK')) || '';
 
   const candidateRings = [
     currentPhoto.ring,
@@ -190,50 +192,50 @@ export const PhotoLightbox = ({
           hour12: true
         });
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // Floating side panel styles vs Expanded full screen styles
   const containerStyle = isExpanded
     ? {
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(15, 23, 42, 0.94)',
-        backdropFilter: 'blur(8px)',
-        zIndex: 99999,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '12px',
-        boxSizing: 'border-box',
-        maxWidth: '100vw',
-        maxHeight: '100vh',
-        overflow: 'hidden'
-      }
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: 'rgba(15, 23, 42, 0.94)',
+      backdropFilter: 'blur(8px)',
+      zIndex: 99999,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      padding: '12px',
+      boxSizing: 'border-box',
+      maxWidth: '100vw',
+      maxHeight: '100vh',
+      overflow: 'hidden'
+    }
     : {
-        position: 'fixed',
-        top: '76px',
-        right: '16px',
-        bottom: '16px',
-        width: 'min(480px, calc(100vw - 32px))',
-        maxHeight: 'calc(100vh - 92px)',
-        background: 'rgba(15, 23, 42, 0.95)',
-        backdropFilter: 'blur(16px)',
-        borderRadius: '16px',
-        border: '1px solid rgba(255, 255, 255, 0.15)',
-        boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.1)',
-        zIndex: 99999,
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-        padding: '12px',
-        boxSizing: 'border-box',
-        overflow: 'hidden'
-      };
+      position: 'fixed',
+      top: '76px',
+      right: '16px',
+      bottom: '16px',
+      width: 'min(480px, calc(100vw - 32px))',
+      maxHeight: 'calc(100vh - 92px)',
+      background: 'rgba(15, 23, 42, 0.95)',
+      backdropFilter: 'blur(16px)',
+      borderRadius: '16px',
+      border: '1px solid rgba(255, 255, 255, 0.15)',
+      boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.1)',
+      zIndex: 99999,
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'space-between',
+      padding: '12px',
+      boxSizing: 'border-box',
+      overflow: 'hidden'
+    };
 
   return (
     <div
@@ -333,13 +335,6 @@ export const PhotoLightbox = ({
           </div>
           <div style={{ fontSize: '0.7rem', color: '#94a3b8', marginTop: '2px' }}>
             {isVideo ? 'Video' : 'Photo'} {currentIndex + 1} of {photos.length}
-            {(activeTaskId || activeTaskName) && (
-              <span style={{ marginLeft: '6px', color: '#cbd5e1' }}>
-                · <span style={{ color: '#60a5fa', fontWeight: '600' }}>Task:</span> {activeTaskId}
-                {activeTaskName && activeTaskName !== activeTaskId ? ` (${activeTaskName})` : ''}
-                {activeRing ? ` · ${activeRing}` : ''}
-              </span>
-            )}
           </div>
         </div>
 
