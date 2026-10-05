@@ -10,7 +10,7 @@ import { PageHeader } from '../../components/common/PageHeader';
 import { DateField } from '../../components/common/DateField';
 import { LeafletMap } from '../../components/common/LeafletMap';
 import { getTodayDateString } from '../../utils/dateUtils';
-import { LucideMapPin, LucideShieldAlert, LucideCheckCircle2, LucideWrench, LucideGauge } from 'lucide-react';
+import { LucideMapPin, LucideShieldAlert, LucideCheckCircle2, LucideWrench, LucideGauge, LucideRadio } from 'lucide-react';
 
 const isCommissioned = (m) => Boolean(m?.is_vendor_assigned || m?.is_commissioned_tab);
 
@@ -163,6 +163,51 @@ export const Dashboard = () => {
               {data?.quick_stats?.running_machines ?? 0}
               <small> / {data?.quick_stats?.commissioned_machines ?? 0}</small>
             </span>
+          </button>
+        </div>
+      </section>
+
+      {/* BharatNet T&D Monitoring Navigation Card */}
+      <section className="panel" style={{ padding: '16px 20px', marginBottom: '16px', borderLeft: '4px solid #10b981' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div style={{
+              width: 44,
+              height: 44,
+              borderRadius: '10px',
+              background: 'rgba(16, 185, 129, 0.1)',
+              color: '#059669',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <LucideRadio size={22} />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                BharatNet T&amp;D Monitoring
+              </h3>
+              <p style={{ margin: '2px 0 0', fontSize: '0.84rem', color: 'var(--text-muted)' }}>
+                Live Trenching &amp; Ducting Monitoring
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn-primary"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 18px',
+              fontSize: '0.88rem',
+              fontWeight: 600,
+              borderRadius: '6px',
+              cursor: 'pointer'
+            }}
+            onClick={() => navigate('/map-view/bharatnet')}
+          >
+            <LucideMapPin size={15} /> Open Monitoring Map
           </button>
         </div>
       </section>

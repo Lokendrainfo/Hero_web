@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.renderers import JSONRenderer
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.common.task_scope import get_user_authorized_tasks
 from .bharatnet_auth import BharatNetBasicAuthentication
@@ -67,7 +68,7 @@ class BharatNetTDMonitoringView(APIView):
     Specification: T&D Monitoring API Integration Specification, Version 1.0, dated 7 June 2026.
     Endpoint: GET /api/v1/bharatnet/td-monitoring/?circle=UPW&date=2026-10-02
     """
-    authentication_classes = [BharatNetBasicAuthentication]
+    authentication_classes = [JWTAuthentication, BharatNetBasicAuthentication]
     renderer_classes = [JSONRenderer]
 
     def handle_exception(self, exc):
@@ -107,6 +108,11 @@ class BharatNetTDMonitoringView(APIView):
             or request.query_params.get('state')
             or ''
         ).strip()
+
+        # Optional district, block, and user filters
+        district_param = (request.query_params.get('district') or '').strip().upper()
+        block_param = (request.query_params.get('block') or '').strip().upper()
+        user_param = (request.query_params.get('userId') or request.query_params.get('user_id') or '').strip().upper()
 
         # 2. Date parameter validation
         date_param = (request.query_params.get('date') or '').strip()
@@ -166,8 +172,14 @@ class BharatNetTDMonitoringView(APIView):
         if circle_param:
             extra_params['circle'] = circle_param
 
+        is_bharatnet_service = (
+            getattr(request.user, 'role', '') == 'BHARATNET_SERVICE'
+            or getattr(request.user, 'username', '') == 'bharatnet_service'
+        )
+        task_user_scope = None if is_bharatnet_service else request.user
+
         scoped_tasks = get_user_authorized_tasks(
-            user=None,  # Root integration scope for BharatNet
+            user=task_user_scope,
             request=request,
             task_type='FIBER_TRENCHING_DUCTING_TASK',
             page=0,
@@ -196,6 +208,12 @@ class BharatNetTDMonitoringView(APIView):
             if req_circle_upper and task_circle.upper() != req_circle_upper:
                 continue
 
+            # District & Block filtering
+            if district_param and task_district.upper() != district_param:
+                continue
+            if block_param and task_block.upper() != block_param:
+                continue
+
             ex = t.get('taskExecution') if isinstance(t.get('taskExecution'), dict) else {}
             fd = ex.get('fieldData') if isinstance(ex.get('fieldData'), dict) else {}
             tr = fd.get('trenching') if isinstance(fd.get('trenching'), dict) else {}
@@ -208,6 +226,10 @@ class BharatNetTDMonitoringView(APIView):
             op_name = str(op.get('name') or t.get('assigneeName') or 'Operator').strip()
             op_id = str(t.get('assigneeUserId') or op.get('id') or op.get('userId') or t.get('taskCode') or 'OP-001').strip()
             task_id = str(t.get('id') or t.get('taskCode') or '')
+
+            # User filter
+            if user_param and op_id.upper() != user_param and op_name.upper() != user_param:
+                continue
 
             # Each machine or operator key within this block
             group_key = f"{machine_id}_{op_id}"
@@ -271,6 +293,35 @@ class BharatNetTDMonitoringView(APIView):
                             f"date={quote_plus(str(date_param or ''))}&"
                             f"mode=user"
                         )
+
+                        dp_lat = (
+                            dp.get('latitude')
+                            or img.get('latitude')
+                            or s.get('latitude')
+                            or loc.get('latitude')
+                        )
+                        dp_lng = (
+                            dp.get('longitude')
+                            or img.get('longitude')
+                            or s.get('longitude')
+                            or loc.get('longitude')
+                        )
+                        try:
+                            dp_lat = float(dp_lat) if dp_lat is not None else None
+                            dp_lng = float(dp_lng) if dp_lng is not None else None
+                        except (ValueError, TypeError):
+                            dp_lat = None
+                            dp_lng = None
+
+                        if (dp_lat is None or dp_lat == 0) and tr.get('pitDetails'):
+                            pits_list = tr.get('pitDetails')
+                            if isinstance(pits_list, list) and len(pits_list) > 0 and isinstance(pits_list[0], dict):
+                                try:
+                                    dp_lat = float(pits_list[0].get('latitude')) if pits_list[0].get('latitude') is not None else None
+                                    dp_lng = float(pits_list[0].get('longitude')) if pits_list[0].get('longitude') is not None else None
+                                except (ValueError, TypeError):
+                                    pass
+
                         hierarchy[task_circle][task_district][task_block][group_key] = {
                             '_dt': cap_dt,
                             'url': f"{hero_base_url}/live-view/{secure_token}",
@@ -280,6 +331,8 @@ class BharatNetTDMonitoringView(APIView):
                             'userId': op_id,
                             'machineId': machine_id,
                             'depthMeters': depth_meters,
+                            'latitude': dp_lat,
+                            'longitude': dp_lng,
                             'state': task_circle,
                             'district': task_district,
                             'block': task_block,
