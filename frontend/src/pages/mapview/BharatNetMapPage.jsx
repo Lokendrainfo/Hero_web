@@ -1,17 +1,13 @@
-import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
 import {
   LucideArrowLeft,
   LucideRefreshCw,
+  LucideEye,
   LucideMapPin,
-  LucideRadio,
-  LucideSearch,
-  LucideExternalLink,
-  LucideCheckCircle2,
-  LucideAlertTriangle,
-  LucideFilter
+  LucideChevronsUpDown,
+  LucideChevronUp,
+  LucideChevronDown,
 } from 'lucide-react';
 import api, { extractErrorMessage } from '../../services/api';
 import { PageHeader } from '../../components/common/PageHeader';
@@ -20,23 +16,83 @@ import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
 import { getTodayDateString } from '../../utils/dateUtils';
 
-const formatCaptureTime = (isoString) => {
-  if (!isoString) return '—';
+// Format timestamp strictly as "DD-MM-YY HH:mm:ss" in Indian Standard Time (UTC+05:30)
+const formatCapturedTimestamp = (isoString) => {
+  if (!isoString) return 'N/A';
   try {
+    const str = String(isoString).trim();
+    // If already in DD-MM-YY HH:mm:ss or DD-MM-YYYY HH:mm:ss format
+    const matched = str.match(/^(\d{2})[-/](\d{2})[-/](\d{2,4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (matched) {
+      const [, d, m, y, h = '00', min = '00', s = '00'] = matched;
+      const yy = y.length === 4 ? y.slice(-2) : y;
+      return `${d}-${m}-${yy} ${h}:${min}:${s}`;
+    }
+
     const d = new Date(isoString);
-    if (isNaN(d.getTime())) return isoString;
-    return new Intl.DateTimeFormat('en-IN', {
-      timeZone: 'Asia/Kolkata',
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true,
-    }).format(d);
+    if (isNaN(d.getTime())) return str;
+
+    // Convert to IST (UTC+05:30)
+    const istOffsetMs = 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(d.getTime() + (d.getTimezoneOffset() * 60 * 1000) + istOffsetMs);
+
+    const pad = (n) => String(n).padStart(2, '0');
+    const dd = pad(istDate.getDate());
+    const mm = pad(istDate.getMonth() + 1);
+    const yy = String(istDate.getFullYear()).slice(-2);
+    const h = pad(istDate.getHours());
+    const min = pad(istDate.getMinutes());
+    const s = pad(istDate.getSeconds());
+
+    return `${dd}-${mm}-${yy} ${h}:${min}:${s}`;
   } catch (e) {
-    return isoString;
+    return String(isoString);
+  }
+};
+
+// Calculate data freshness (<1h, <6h, <24h, >24h) from lastDepthCapturedAt
+const calculateFreshness = (isoTimestamp) => {
+  if (!isoTimestamp) {
+    return { label: '>24h', bg: '#dc3545', text: '#ffffff', rank: 4 };
+  }
+  try {
+    const captureTime = new Date(isoTimestamp).getTime();
+    if (isNaN(captureTime)) {
+      return { label: '>24h', bg: '#dc3545', text: '#ffffff', rank: 4 };
+    }
+    const now = Date.now();
+    const diffHours = (now - captureTime) / (1000 * 60 * 60);
+
+    if (diffHours < 1) {
+      return { label: '<1h', bg: '#198754', text: '#ffffff', rank: 1 };
+    } else if (diffHours < 6) {
+      return { label: '<6h', bg: '#0dcaf0', text: '#000000', rank: 2 };
+    } else if (diffHours < 24) {
+      return { label: '<24h', bg: '#ffc107', text: '#000000', rank: 3 };
+    } else {
+      return { label: '>24h', bg: '#dc3545', text: '#ffffff', rank: 4 };
+    }
+  } catch (e) {
+    return { label: '>24h', bg: '#dc3545', text: '#ffffff', rank: 4 };
+  }
+};
+
+// Target URL for user-specific live monitoring map
+const getTargetUrl = (userObj) => {
+  const target = userObj.map_url || userObj.url;
+  if (!target) return '#';
+  try {
+    if (target.startsWith('/')) {
+      return target;
+    }
+    const parsed = new URL(target);
+    // In local development on localhost, keep relative path so it loads inside local dev port
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return `${parsed.pathname}${parsed.search}`;
+    }
+    return target;
+  } catch (e) {
+    return target;
   }
 };
 
@@ -44,285 +100,212 @@ export const BharatNetMapPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Filters State
+  // Top Filters
   const initialDate = searchParams.get('date') || getTodayDateString();
-  const initialCircle = searchParams.get('circle') || '';
+  const initialCircle = searchParams.get('circle') || 'Rajasthan';
   const [selectedDate, setSelectedDate] = useState(initialDate);
-  const [selectedCircle, setSelectedCircle] = useState(initialCircle);
-  const [districtFilter, setDistrictFilter] = useState('');
-  const [blockFilter, setBlockFilter] = useState('');
+  const [selectedState, setSelectedState] = useState(initialCircle);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Data & Request State
+  // Table Sorting State
+  const [sortColumn, setSortColumn] = useState('state'); // 'state' | 'district' | 'block' | 'freshness'
+  const [sortDirection, setSortDirection] = useState('asc'); // 'asc' | 'desc'
+
+  // Request & Data State
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [apiResponse, setApiResponse] = useState(null);
-  const [selectedRecordKey, setSelectedRecordKey] = useState(null);
+  const [lastFetchedTime, setLastFetchedTime] = useState(null);
 
-  // Leaflet Map Refs
-  const mapContainerRef = useRef(null);
-  const mapInstanceRef = useRef(null);
-  const markersRef = useRef(new Map());
-
-  // 1. Fetch BharatNet T&D Monitoring Data (ONLY on this map page)
+  // 1. Fetch live API data from GET /api/v1/td-monitoring/
   const fetchMonitoringData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const params = {};
       if (selectedDate) params.date = selectedDate;
-      if (selectedCircle && selectedCircle !== 'ALL') params.circle = selectedCircle;
+      if (selectedState && selectedState !== 'ALL') params.circle = selectedState;
 
       const res = await api.get('/td-monitoring/', { params });
       setApiResponse(res);
+      setLastFetchedTime(new Date().toLocaleTimeString('en-IN', { hour12: true }));
     } catch (err) {
       console.error('[BharatNetMapPage] Failed to fetch T&D monitoring data:', err);
       const msg = extractErrorMessage(err?.response?.data || err);
-      setError(msg || 'Failed to load BharatNet T&D monitoring data. Please check network or credentials.');
+      setError(msg || 'Failed to load BharatNet T&D monitoring data.');
     } finally {
       setLoading(false);
     }
-  }, [selectedDate, selectedCircle]);
+  }, [selectedDate, selectedState]);
 
   useEffect(() => {
     fetchMonitoringData();
   }, [fetchMonitoringData]);
 
-  // 2. Flatten and filter records from the API response structure
-  // API Structure: results.circles[] -> districts[] -> blocks[] -> user_urls[]
-  const allRecords = useMemo(() => {
+  // Available states for filter dropdown
+  const availableStates = useMemo(() => {
+    const set = new Set(['Rajasthan', 'UPW', 'Punjab', 'Haryana', 'ALL']);
+    (apiResponse?.results?.circles || []).forEach((c) => {
+      if (c.circle_name) set.add(c.circle_name);
+    });
+    return Array.from(set);
+  }, [apiResponse]);
+
+  // 2. Map API Response strictly into Grouped Blocks
+  // results -> circles -> districts -> blocks -> user_urls
+  const groupedBlocks = useMemo(() => {
     const list = [];
     const circles = apiResponse?.results?.circles || [];
+
     circles.forEach((circleObj) => {
-      const circleName = circleObj.circle_name || 'UPW';
+      const circleName = circleObj.circle_name || selectedState || 'Rajasthan';
       (circleObj.districts || []).forEach((distObj) => {
-        const distName = distObj.district_name || 'OTHER';
+        const distName = distObj.district_name || 'N/A';
         (distObj.blocks || []).forEach((blkObj) => {
-          const blkName = blkObj.block_name || 'OTHER';
-          (blkObj.user_urls || []).forEach((rec, idx) => {
-            const key = `${rec.machineId || 'M'}_${rec.userId || 'U'}_${rec.block || blkName}_${idx}`;
-            list.push({
-              ...rec,
-              key,
-              circle: rec.state || circleName,
-              district: rec.district || distName,
-              block: rec.block || blkName,
-            });
+          const blkName = blkObj.block_name || 'N/A';
+          const rawUsers = blkObj.user_urls || [];
+
+          // Map users with ONLY required fields: userName, lastDepthCapturedAt, url, map_url
+          const mappedUsers = rawUsers.map((u) => {
+            const freshness = calculateFreshness(u.lastDepthCapturedAt);
+            return {
+              userName: u.userName || 'N/A',
+              lastDepthCapturedAt: u.lastDepthCapturedAt,
+              url: u.url,
+              map_url: u.map_url,
+              freshness,
+            };
+          });
+
+          // Block freshness is the freshest capture among users in this block
+          let bestFreshness = { label: '>24h', bg: '#dc3545', text: '#ffffff', rank: 4 };
+          mappedUsers.forEach((u) => {
+            if (u.freshness.rank < bestFreshness.rank) {
+              bestFreshness = u.freshness;
+            }
+          });
+
+          list.push({
+            id: `${circleName}_${distName}_${blkName}`,
+            state: circleName,
+            district: distName,
+            block: blkName,
+            freshness: bestFreshness,
+            user_urls: mappedUsers,
           });
         });
       });
     });
+
     return list;
-  }, [apiResponse]);
+  }, [apiResponse, selectedState]);
 
-  // Filtered records based on District, Block, and Search (user/machine)
-  const filteredRecords = useMemo(() => {
-    return allRecords.filter((rec) => {
-      if (districtFilter && !rec.district.toUpperCase().includes(districtFilter.toUpperCase())) {
-        return false;
-      }
-      if (blockFilter && !rec.block.toUpperCase().includes(blockFilter.toUpperCase())) {
-        return false;
-      }
-      if (searchQuery) {
-        const q = searchQuery.toUpperCase();
-        const matchesUser = (rec.userName || '').toUpperCase().includes(q);
-        const matchesUserId = (rec.userId || '').toUpperCase().includes(q);
-        const matchesMachine = (rec.machineId || '').toUpperCase().includes(q);
-        const matchesBlock = (rec.block || '').toUpperCase().includes(q);
-        if (!matchesUser && !matchesUserId && !matchesMachine && !matchesBlock) {
-          return false;
+  // 3. Client-side Search Filtering across: State/Circle, District, Block, User Name
+  const filteredBlocks = useMemo(() => {
+    if (!searchQuery.trim()) return groupedBlocks;
+
+    const q = searchQuery.trim().toUpperCase();
+
+    return groupedBlocks
+      .map((blk) => {
+        const blockMatches =
+          blk.state.toUpperCase().includes(q) ||
+          blk.district.toUpperCase().includes(q) ||
+          blk.block.toUpperCase().includes(q);
+
+        if (blockMatches) {
+          return blk; // All users under this block match
         }
+
+        // Filter users within this block matching user name
+        const matchingUsers = blk.user_urls.filter((u) =>
+          (u.userName || '').toUpperCase().includes(q)
+        );
+
+        if (matchingUsers.length > 0) {
+          return {
+            ...blk,
+            user_urls: matchingUsers,
+          };
+        }
+
+        return null;
+      })
+      .filter(Boolean);
+  }, [groupedBlocks, searchQuery]);
+
+  // 4. Sort Table Rows
+  const sortedBlocks = useMemo(() => {
+    const list = [...filteredBlocks];
+    list.sort((a, b) => {
+      let comparison = 0;
+      if (sortColumn === 'state') {
+        comparison = a.state.localeCompare(b.state);
+      } else if (sortColumn === 'district') {
+        comparison = a.district.localeCompare(b.district);
+      } else if (sortColumn === 'block') {
+        comparison = a.block.localeCompare(b.block);
+      } else if (sortColumn === 'freshness') {
+        comparison = (a.freshness?.rank || 4) - (b.freshness?.rank || 4);
       }
-      return true;
+      return sortDirection === 'asc' ? comparison : -comparison;
     });
-  }, [allRecords, districtFilter, blockFilter, searchQuery]);
+    return list;
+  }, [filteredBlocks, sortColumn, sortDirection]);
 
-  // Available districts and blocks for filter dropdowns
-  const availableDistricts = useMemo(() => {
-    const set = new Set();
-    allRecords.forEach((r) => r.district && set.add(r.district));
-    return Array.from(set).sort();
-  }, [allRecords]);
-
-  const availableBlocks = useMemo(() => {
-    const set = new Set();
-    allRecords.forEach((r) => {
-      if (!districtFilter || r.district.toUpperCase() === districtFilter.toUpperCase()) {
-        if (r.block) set.add(r.block);
-      }
-    });
-    return Array.from(set).sort();
-  }, [allRecords, districtFilter]);
-
-  // Available circles from response
-  const availableCircles = useMemo(() => {
-    const set = new Set(['ALL', 'UPW', 'RAJASTHAN', 'HARYANA']);
-    (apiResponse?.results?.circles || []).forEach((c) => c.circle_name && set.add(c.circle_name));
-    return Array.from(set);
-  }, [apiResponse]);
-
-  // Metrics summary
-  const metrics = useMemo(() => {
-    const total = filteredRecords.length;
-    if (total === 0) return { total: 0, compliant: 0, avgDepth: 0, blocksCount: 0 };
-    const compliant = filteredRecords.filter((r) => (Number(r.depthMeters) || 0) >= 1.65).length;
-    const sumDepth = filteredRecords.reduce((s, r) => s + (Number(r.depthMeters) || 0), 0);
-    const avgDepth = (sumDepth / total).toFixed(2);
-    const uniqueBlocks = new Set(filteredRecords.map((r) => `${r.district}_${r.block}`)).size;
-    return {
-      total,
-      compliant,
-      avgDepth,
-      blocksCount: uniqueBlocks,
-    };
-  }, [filteredRecords]);
-
-  // 3. Initialize & Update Leaflet Map with markers
-  useEffect(() => {
-    if (!mapContainerRef.current) return;
-
-    if (!mapInstanceRef.current) {
-      const map = L.map(mapContainerRef.current, {
-        zoomControl: true,
-        attributionControl: false,
-      }).setView([27.0, 78.0], 7);
-
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-        maxZoom: 19,
-      }).addTo(map);
-
-      mapInstanceRef.current = map;
-    }
-
-    const map = mapInstanceRef.current;
-
-    // Clear existing markers
-    markersRef.current.forEach((marker) => {
-      try {
-        marker.remove();
-      } catch (e) {
-        // ignore
-      }
-    });
-    markersRef.current.clear();
-
-    const bounds = [];
-
-    // Helper for marker colors based on depth
-    filteredRecords.forEach((rec) => {
-      const lat = parseFloat(rec.latitude);
-      const lng = parseFloat(rec.longitude);
-
-      if (isNaN(lat) || isNaN(lng) || (lat === 0 && lng === 0)) {
-        return;
-      }
-
-      bounds.push([lat, lng]);
-
-      const depth = parseFloat(rec.depthMeters) || 0;
-      const markerColor = depth >= 1.65 ? '#10b981' : depth >= 1.2 ? '#f59e0b' : '#ef4444';
-
-      const iconHtml = `
-        <div style="
-          background: ${markerColor};
-          color: white;
-          width: 32px;
-          height: 32px;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-weight: 700;
-          font-size: 11px;
-          border: 2px solid white;
-          box-shadow: 0 3px 8px rgba(0,0,0,0.3);
-          transform: translate(-50%, -50%);
-        ">
-          ${depth > 0 ? depth.toFixed(1) + 'm' : 'T&D'}
-        </div>
-      `;
-
-      const customIcon = L.divIcon({
-        className: 'bharatnet-marker-icon',
-        html: iconHtml,
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
-      });
-
-      const popupHtml = `
-        <div style="font-family: system-ui, -apple-system, sans-serif; font-size: 12px; line-height: 1.5; color: #1e293b; min-width: 220px; padding: 4px;">
-          <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 6px;">
-            <strong style="font-size: 13px; color: #0f172a;">${rec.userName || 'Operator'}</strong>
-            <span style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: ${markerColor}20; color: ${markerColor}; font-weight: 700;">
-              ${rec.depthMeters != null ? rec.depthMeters + ' m' : '—'}
-            </span>
-          </div>
-          <div style="margin-bottom: 4px;"><strong>User ID:</strong> ${rec.userId || '—'}</div>
-          <div style="margin-bottom: 4px;"><strong>Machine ID:</strong> ${rec.machineId || '—'}</div>
-          <div style="margin-bottom: 4px;"><strong>Circle:</strong> ${rec.circle || '—'}</div>
-          <div style="margin-bottom: 4px;"><strong>District:</strong> ${rec.district || '—'}</div>
-          <div style="margin-bottom: 4px;"><strong>Block:</strong> ${rec.block || '—'}</div>
-          <div style="margin-bottom: 6px;"><strong>Last Capture:</strong> ${formatCaptureTime(rec.lastDepthCapturedAt)}</div>
-          <div style="margin-top: 8px; pt: 6px; border-top: 1px solid #f1f5f9;">
-            <a href="${rec.map_url || rec.url}" target="_blank" rel="noopener noreferrer" style="
-              display: block;
-              text-align: center;
-              background: #0284c7;
-              color: white;
-              padding: 6px 10px;
-              border-radius: 4px;
-              text-decoration: none;
-              font-weight: 600;
-              font-size: 11px;
-            ">
-              Open Full Execution Map
-            </a>
-          </div>
-        </div>
-      `;
-
-      const marker = L.marker([lat, lng], { icon: customIcon })
-        .addTo(map)
-        .bindPopup(popupHtml);
-
-      marker.on('click', () => {
-        setSelectedRecordKey(rec.key);
-      });
-
-      markersRef.current.set(rec.key, marker);
-    });
-
-    if (bounds.length > 0) {
-      try {
-        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
-      } catch (e) {
-        // ignore bounds fit error
-      }
-    }
-  }, [filteredRecords]);
-
-  // Center on marker when clicking record in list
-  const handleSelectRecord = (rec) => {
-    setSelectedRecordKey(rec.key);
-    const marker = markersRef.current.get(rec.key);
-    if (marker && mapInstanceRef.current) {
-      const latLng = marker.getLatLng();
-      mapInstanceRef.current.setView(latLng, 14, { animate: true });
-      marker.openPopup();
+  const handleSort = (columnKey) => {
+    if (sortColumn === columnKey) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortColumn(columnKey);
+      setSortDirection('asc');
     }
   };
 
+  // 5. Dynamic Summary Metrics
+  const summaryMetrics = useMemo(() => {
+    const districtsSet = new Set();
+    const blocksSet = new Set();
+    let totalUsers = 0;
+
+    filteredBlocks.forEach((blk) => {
+      districtsSet.add(blk.district);
+      blocksSet.add(`${blk.district}_${blk.block}`);
+      totalUsers += (blk.user_urls || []).length;
+    });
+
+    return {
+      state: selectedState || 'Rajasthan',
+      date: selectedDate,
+      totalRecords: filteredBlocks.length,
+      districts: districtsSet.size,
+      blocks: blocksSet.size,
+      activeUsers: totalUsers,
+      lastFetched: lastFetchedTime || 'Just now',
+    };
+  }, [filteredBlocks, selectedState, selectedDate, lastFetchedTime]);
+
+  const renderSortIndicator = (columnKey) => {
+    if (sortColumn !== columnKey) {
+      return <LucideChevronsUpDown size={13} style={{ color: '#adb5bd', marginLeft: 4 }} />;
+    }
+    return sortDirection === 'asc' ? (
+      <LucideChevronUp size={13} style={{ color: '#0d6efd', marginLeft: 4 }} />
+    ) : (
+      <LucideChevronDown size={13} style={{ color: '#0d6efd', marginLeft: 4 }} />
+    );
+  };
+
   return (
-    <div className="screen-container">
-      {/* 1. Header with Back to Dashboard Button */}
+    <div className="screen-container" style={{ padding: '20px 24px', maxWidth: 1400, margin: '0 auto' }}>
+      {/* Header with Back to Dashboard */}
       <PageHeader
         title={
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <LucideRadio size={22} color="#10b981" /> BharatNet T&amp;D Monitoring
+            <LucideMapPin size={22} color="#5b3cc4" /> BharatNet T&amp;D Monitoring
           </span>
         }
-        subtitle="Live Trenching &amp; Ducting Monitoring GIS Map"
+        subtitle="Live Monitoring of Trenching and Ducting Data"
         actions={
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <button
@@ -340,320 +323,513 @@ export const BharatNetMapPage = () => {
               onClick={fetchMonitoringData}
               disabled={loading}
             >
-              <LucideRefreshCw size={14} className={loading ? 'spin' : ''} /> Refresh
+              <LucideRefreshCw size={14} className={loading ? 'spin' : ''} /> Refresh Data
             </button>
           </div>
         }
       />
 
-      {/* 2. Filters Bar */}
-      <section className="panel" style={{ padding: '14px 18px', marginBottom: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-          {/* Date Filter */}
-          <div style={{ minWidth: 150 }}>
-            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
-              Capture Date
+      {/* TOP FILTER SECTION */}
+      <section
+        className="panel"
+        style={{
+          padding: '16px 20px',
+          marginBottom: '16px',
+          background: '#ffffff',
+          borderRadius: 8,
+          border: '1px solid #e2e8f0',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '20px' }}>
+          <div>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                color: '#475569',
+                marginBottom: 6,
+              }}
+            >
+              Select Date
             </label>
             <DateField
               value={selectedDate}
               onChange={(e) => {
                 if (e.target.value) {
                   setSelectedDate(e.target.value);
-                  setSearchParams({ date: e.target.value, circle: selectedCircle });
+                  setSearchParams({ date: e.target.value, circle: selectedState });
                 }
               }}
-              aria-label="Capture Date"
+              aria-label="Select Date"
             />
           </div>
 
-          {/* Circle / State Filter */}
-          <div style={{ minWidth: 140 }}>
-            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
-              Circle / State
+          <div style={{ minWidth: 180 }}>
+            <label
+              style={{
+                display: 'block',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                color: '#475569',
+                marginBottom: 6,
+              }}
+            >
+              Select State
             </label>
             <select
               className="form-control"
-              value={selectedCircle}
+              value={selectedState}
               onChange={(e) => {
-                setSelectedCircle(e.target.value);
-                setDistrictFilter('');
-                setBlockFilter('');
+                setSelectedState(e.target.value);
+                setSearchParams({ date: selectedDate, circle: e.target.value });
               }}
               style={{
                 height: 38,
-                padding: '0 10px',
-                borderRadius: '6px',
-                border: '1px solid var(--border)',
-                background: 'var(--bg-input)',
-                color: 'var(--text-primary)',
-                fontSize: '0.85rem'
+                padding: '0 12px',
+                borderRadius: 6,
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                color: '#0f172a',
+                fontSize: '0.88rem',
+                fontWeight: 500,
+                width: '100%',
               }}
             >
-              <option value="">All Circles</option>
-              {availableCircles.map((c) => (
-                <option key={c} value={c}>{c}</option>
+              {availableStates.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
               ))}
             </select>
-          </div>
-
-          {/* District Filter */}
-          {availableDistricts.length > 0 && (
-            <div style={{ minWidth: 140 }}>
-              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
-                District
-              </label>
-              <select
-                className="form-control"
-                value={districtFilter}
-                onChange={(e) => {
-                  setDistrictFilter(e.target.value);
-                  setBlockFilter('');
-                }}
-                style={{
-                  height: 38,
-                  padding: '0 10px',
-                  borderRadius: '6px',
-                  border: '1px solid var(--border)',
-                  background: 'var(--bg-input)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem'
-                }}
-              >
-                <option value="">All Districts</option>
-                {availableDistricts.map((d) => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Block Filter */}
-          {availableBlocks.length > 0 && (
-            <div style={{ minWidth: 140 }}>
-              <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
-                Block
-              </label>
-              <select
-                className="form-control"
-                value={blockFilter}
-                onChange={(e) => setBlockFilter(e.target.value)}
-                style={{
-                  height: 38,
-                  padding: '0 10px',
-                  borderRadius: '6px',
-                  border: '1px solid var(--border)',
-                  background: 'var(--bg-input)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem'
-                }}
-              >
-                <option value="">All Blocks</option>
-                {availableBlocks.map((b) => (
-                  <option key={b} value={b}>{b}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {/* Operator / Machine Search */}
-          <div style={{ flex: 1, minWidth: 180 }}>
-            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
-              Search Operator / Machine
-            </label>
-            <div style={{ position: 'relative' }}>
-              <LucideSearch size={14} style={{ position: 'absolute', left: 10, top: 12, color: 'var(--text-muted)' }} />
-              <input
-                type="text"
-                placeholder="Search by name, ID, or machine..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{
-                  width: '100%',
-                  height: 38,
-                  paddingLeft: 30,
-                  paddingRight: 10,
-                  borderRadius: '6px',
-                  border: '1px solid var(--border)',
-                  background: 'var(--bg-input)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem'
-                }}
-              />
-            </div>
           </div>
         </div>
       </section>
 
-      {/* 3. Summary KPIs Bar */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-        <div className="panel" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 38, height: 38, borderRadius: 8, background: '#e0f2fe', color: '#0284c7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <LucideMapPin size={20} />
-          </div>
-          <div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Total Captures</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)' }}>{metrics.total}</div>
-          </div>
+      {/* SUMMARY INFORMATION BAR */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '14px 24px',
+          padding: '12px 18px',
+          background: '#f8fafc',
+          border: '1px solid #e2e8f0',
+          borderRadius: 6,
+          marginBottom: '16px',
+          fontSize: '0.84rem',
+          color: '#334155',
+          fontWeight: 500,
+        }}
+      >
+        <div>
+          <strong style={{ color: '#0f172a' }}>State:</strong> {summaryMetrics.state}
         </div>
-
-        <div className="panel" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 38, height: 38, borderRadius: 8, background: '#dcfce7', color: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <LucideCheckCircle2 size={20} />
-          </div>
-          <div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Standard Depth (≥ 1.65m)</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#16a34a' }}>{metrics.compliant}</div>
-          </div>
+        <div style={{ color: '#cbd5e1' }}>|</div>
+        <div>
+          <strong style={{ color: '#0f172a' }}>Date:</strong> {summaryMetrics.date}
         </div>
-
-        <div className="panel" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 38, height: 38, borderRadius: 8, background: '#fef3c7', color: '#d97706', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <LucideFilter size={20} />
-          </div>
-          <div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Average Depth</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)' }}>{metrics.avgDepth} m</div>
-          </div>
+        <div style={{ color: '#cbd5e1' }}>|</div>
+        <div>
+          <strong style={{ color: '#0f172a' }}>Total Records:</strong> {summaryMetrics.totalRecords}
         </div>
-
-        <div className="panel" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 38, height: 38, borderRadius: 8, background: '#f3e8ff', color: '#9333ea', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <LucideRadio size={20} />
-          </div>
-          <div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Active Blocks</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)' }}>{metrics.blocksCount}</div>
-          </div>
+        <div style={{ color: '#cbd5e1' }}>|</div>
+        <div>
+          <strong style={{ color: '#0f172a' }}>Districts:</strong> {summaryMetrics.districts}
+        </div>
+        <div style={{ color: '#cbd5e1' }}>|</div>
+        <div>
+          <strong style={{ color: '#0f172a' }}>Blocks:</strong> {summaryMetrics.blocks}
+        </div>
+        <div style={{ color: '#cbd5e1' }}>|</div>
+        <div>
+          <strong style={{ color: '#0f172a' }}>Active Users/URLs:</strong> {summaryMetrics.activeUsers}
+        </div>
+        <div style={{ color: '#cbd5e1' }}>|</div>
+        <div>
+          <strong style={{ color: '#0f172a' }}>Last Fetched:</strong> {summaryMetrics.lastFetched}
         </div>
       </div>
 
-      {/* 4. Main Content Area */}
-      {loading ? (
-        <div className="panel" style={{ minHeight: 450, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <LoadingSpinner title="Loading BharatNet T&D Monitoring Data..." subtitle="Fetching authoritative depth and trenching records" />
+      {/* LIVE MONITORING SECTION BANNER */}
+      <div
+        style={{
+          background: '#5b3cc4',
+          color: '#ffffff',
+          borderRadius: '6px 6px 0 0',
+          padding: '12px 18px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '10px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '0.95rem' }}>
+          <LucideMapPin size={18} />
+          <span>Live Monitoring of Trenching and Ducting Data</span>
         </div>
-      ) : error ? (
-        <div className="panel" style={{ padding: 32, textAlign: 'center' }}>
-          <div style={{ color: '#ef4444', marginBottom: 12 }}>
-            <LucideAlertTriangle size={36} style={{ margin: '0 auto' }} />
-          </div>
-          <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: 8 }}>Unable to Load BharatNet Data</h3>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: 480, margin: '0 auto 16px' }}>{error}</p>
-          <button type="button" className="btn-primary" onClick={fetchMonitoringData}>
-            Retry Request
-          </button>
-        </div>
-      ) : filteredRecords.length === 0 ? (
-        <div className="panel" style={{ padding: 48 }}>
-          <EmptyState
-            title="No BharatNet monitoring records found"
-            subtitle={`No trenching or depth captures reported on ${selectedDate} for the selected circle/filters.`}
-            actionLabel="Reset Filters"
-            onAction={() => {
-              setSelectedCircle('');
-              setDistrictFilter('');
-              setBlockFilter('');
-              setSearchQuery('');
+
+        {/* Freshness Chips Legend */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span
+            style={{
+              background: '#198754',
+              color: '#ffffff',
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              padding: '2px 8px',
+              borderRadius: 4,
             }}
-          />
+          >
+            &lt;1h
+          </span>
+          <span
+            style={{
+              background: '#0dcaf0',
+              color: '#000000',
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              padding: '2px 8px',
+              borderRadius: 4,
+            }}
+          >
+            &lt;6h
+          </span>
+          <span
+            style={{
+              background: '#ffc107',
+              color: '#000000',
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              padding: '2px 8px',
+              borderRadius: 4,
+            }}
+          >
+            &lt;24h
+          </span>
+          <span
+            style={{
+              background: '#dc3545',
+              color: '#ffffff',
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              padding: '2px 8px',
+              borderRadius: 4,
+            }}
+          >
+            &gt;24h
+          </span>
         </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: '16px', minHeight: 560 }}>
-          {/* Map Container */}
-          <div className="panel" style={{ padding: 0, overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
-            <div
-              ref={mapContainerRef}
+      </div>
+
+      {/* SEARCH BOX & TABLE CONTAINER */}
+      <div
+        style={{
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderTop: 'none',
+          borderRadius: '0 0 6px 6px',
+          padding: '16px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#334155' }}>
+            Search monitoring data:
+          </span>
+          <div style={{ width: 280 }}>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by state, district, block, user..."
               style={{
                 width: '100%',
-                flex: 1,
-                minHeight: 540,
-                background: '#e2e8f0',
-                zIndex: 1
+                height: 32,
+                padding: '4px 10px',
+                fontSize: '0.82rem',
+                borderRadius: 4,
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                color: '#0f172a',
               }}
             />
           </div>
+        </div>
 
-          {/* Records Sidebar List */}
-          <div className="panel" style={{ padding: 0, display: 'flex', flexDirection: 'column', maxHeight: 600 }}>
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <strong style={{ fontSize: '0.88rem' }}>Monitoring Records</strong>
-              <span className="badge-pill badge-running">{filteredRecords.length} records</span>
+        {/* MAIN TABLE MATCHING REFERENCE SCREENSHOT EXACTLY */}
+        {loading ? (
+          <div style={{ padding: '60px 20px', textAlign: 'center' }}>
+            <LoadingSpinner
+              title="Loading BharatNet T&D Monitoring Data..."
+              subtitle="Fetching live records from /api/v1/td-monitoring/"
+            />
+          </div>
+        ) : error ? (
+          <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+            <div style={{ color: '#dc3545', fontWeight: 700, marginBottom: 8 }}>
+              Failed to Load Monitoring Data
             </div>
-
-            <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
-              {filteredRecords.map((rec) => {
-                const isSelected = selectedRecordKey === rec.key;
-                const depth = parseFloat(rec.depthMeters) || 0;
-                const badgeColor = depth >= 1.65 ? '#16a34a' : depth >= 1.2 ? '#d97706' : '#dc2626';
-
-                return (
-                  <div
-                    key={rec.key}
-                    onClick={() => handleSelectRecord(rec)}
+            <p style={{ color: '#64748b', fontSize: '0.88rem', marginBottom: 16 }}>{error}</p>
+            <button type="button" className="btn-primary" onClick={fetchMonitoringData}>
+              Try Again
+            </button>
+          </div>
+        ) : sortedBlocks.length === 0 ? (
+          <div style={{ padding: '40px 20px' }}>
+            <EmptyState
+              title="No monitoring data available"
+              subtitle={`No trenching or ducting captures reported for ${selectedState} on ${selectedDate}.`}
+              actionLabel="Clear Search"
+              onAction={() => setSearchQuery('')}
+            />
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table
+              style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                fontSize: '0.85rem',
+                border: '1px solid #dee2e6',
+              }}
+            >
+              <thead>
+                <tr style={{ background: '#f8f9fa', borderBottom: '2px solid #dee2e6' }}>
+                  {/* Column 1: State/Circle */}
+                  <th
+                    onClick={() => handleSort('state')}
                     style={{
-                      padding: '10px 12px',
-                      borderRadius: '6px',
-                      background: isSelected ? 'var(--bg-subtle, #f1f5f9)' : 'transparent',
-                      border: isSelected ? '1px solid #0284c7' : '1px solid transparent',
+                      padding: '10px 14px',
+                      textAlign: 'left',
+                      fontWeight: 700,
+                      color: '#212529',
+                      width: '15%',
+                      borderRight: '1px solid #dee2e6',
                       cursor: 'pointer',
-                      marginBottom: '6px',
-                      transition: 'all 0.15s ease'
+                      userSelect: 'none',
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <strong style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>
-                        {rec.userName || 'Operator'}
-                      </strong>
+                    <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                      <span>State/Circle</span>
+                      {renderSortIndicator('state')}
+                    </div>
+                  </th>
+
+                  {/* Column 2: District */}
+                  <th
+                    onClick={() => handleSort('district')}
+                    style={{
+                      padding: '10px 14px',
+                      textAlign: 'left',
+                      fontWeight: 700,
+                      color: '#212529',
+                      width: '15%',
+                      borderRight: '1px solid #dee2e6',
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                    }}
+                  >
+                    <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                      <span>District</span>
+                      {renderSortIndicator('district')}
+                    </div>
+                  </th>
+
+                  {/* Column 3: Block */}
+                  <th
+                    onClick={() => handleSort('block')}
+                    style={{
+                      padding: '10px 14px',
+                      textAlign: 'left',
+                      fontWeight: 700,
+                      color: '#212529',
+                      width: '15%',
+                      borderRight: '1px solid #dee2e6',
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                    }}
+                  >
+                    <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                      <span>Block</span>
+                      {renderSortIndicator('block')}
+                    </div>
+                  </th>
+
+                  {/* Column 4: Data Freshness */}
+                  <th
+                    onClick={() => handleSort('freshness')}
+                    style={{
+                      padding: '10px 14px',
+                      textAlign: 'center',
+                      fontWeight: 700,
+                      color: '#212529',
+                      width: '14%',
+                      borderRight: '1px solid #dee2e6',
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                    }}
+                  >
+                    <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <span>Data Freshness</span>
+                      {renderSortIndicator('freshness')}
+                    </div>
+                  </th>
+
+                  {/* Column 5: Monitoring Links */}
+                  <th
+                    style={{
+                      padding: '10px 16px',
+                      textAlign: 'left',
+                      fontWeight: 700,
+                      color: '#212529',
+                    }}
+                  >
+                    Monitoring Links
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedBlocks.map((block) => (
+                  <tr
+                    key={block.id}
+                    style={{
+                      borderBottom: '1px solid #dee2e6',
+                      verticalAlign: 'top',
+                    }}
+                  >
+                    {/* State/Circle */}
+                    <td
+                      style={{
+                        padding: '14px',
+                        fontWeight: 600,
+                        color: '#212529',
+                        borderRight: '1px solid #dee2e6',
+                      }}
+                    >
+                      {block.state}
+                    </td>
+
+                    {/* District */}
+                    <td
+                      style={{
+                        padding: '14px',
+                        fontWeight: 600,
+                        color: '#212529',
+                        borderRight: '1px solid #dee2e6',
+                      }}
+                    >
+                      {block.district}
+                    </td>
+
+                    {/* Block */}
+                    <td
+                      style={{
+                        padding: '14px',
+                        fontWeight: 600,
+                        color: '#212529',
+                        borderRight: '1px solid #dee2e6',
+                      }}
+                    >
+                      {block.block}
+                    </td>
+
+                    {/* Data Freshness */}
+                    <td
+                      style={{
+                        padding: '14px',
+                        textAlign: 'center',
+                        borderRight: '1px solid #dee2e6',
+                      }}
+                    >
                       <span
                         style={{
-                          fontSize: '0.78rem',
+                          background: block.freshness.bg,
+                          color: block.freshness.text,
+                          padding: '3px 10px',
+                          borderRadius: 4,
                           fontWeight: 700,
-                          color: badgeColor,
-                          background: `${badgeColor}15`,
-                          padding: '2px 6px',
-                          borderRadius: 4
+                          fontSize: '0.74rem',
+                          display: 'inline-block',
                         }}
                       >
-                        {rec.depthMeters != null ? `${rec.depthMeters} m` : '—'}
+                        {block.freshness.label}
                       </span>
-                    </div>
+                    </td>
 
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      <span>M/C: <strong>{rec.machineId || '—'}</strong></span>
-                      <span>•</span>
-                      <span>Block: <strong>{rec.block || '—'}</strong></span>
-                    </div>
+                    {/* MONITORING LINKS CELL */}
+                    {/* ONLY: <User Name>    Last Depth Captured at: <timestamp>    [Eye/View Button] */}
+                    <td style={{ padding: '6px 14px' }}>
+                      {block.user_urls.map((user, idx) => {
+                        const isLast = idx === block.user_urls.length - 1;
 
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                      Capture: {formatCaptureTime(rec.lastDepthCapturedAt)}
-                    </div>
+                        return (
+                          <div
+                            key={user.userName + idx}
+                            style={{
+                              padding: '10px 0',
+                              borderBottom: isLast ? 'none' : '1px solid #e9ecef',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 16,
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a' }}>
+                                {user.userName}
+                              </span>
+                              <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                                Last Depth Captured at: {formatCapturedTimestamp(user.lastDepthCapturedAt)}
+                              </span>
+                            </div>
 
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
-                      <a
-                        href={rec.map_url || rec.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 4,
-                          fontSize: '0.75rem',
-                          color: '#0284c7',
-                          textDecoration: 'none',
-                          fontWeight: 600
-                        }}
-                      >
-                        Map View <LucideExternalLink size={12} />
-                      </a>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                            {/* Eye/View Button */}
+                            <div>
+                              <button
+                                type="button"
+                                title={`Open live monitoring map for ${user.userName}`}
+                                onClick={() => {
+                                  const targetUrl = getTargetUrl(user);
+                                  window.open(targetUrl, '_blank');
+                                }}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  width: 32,
+                                  height: 32,
+                                  border: '1px solid #0d6efd',
+                                  borderRadius: 4,
+                                  background: '#ffffff',
+                                  color: '#0d6efd',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.15s ease',
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background = '#0d6efd';
+                                  e.currentTarget.style.color = '#ffffff';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background = '#ffffff';
+                                  e.currentTarget.style.color = '#0d6efd';
+                                }}
+                              >
+                                <LucideEye size={16} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };
