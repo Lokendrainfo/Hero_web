@@ -198,7 +198,7 @@ export const ChartViewPage = () => {
         size: 100
       });
 
-      const rawList = res?.data?.data?.content || res?.data?.data?.results || res?.data?.data || res?.data?.results || (Array.isArray(res?.data) ? res.data : []);
+      const rawList = res?.data?.data?.results || res?.data?.data?.content || res?.data?.data || res?.data?.results || (Array.isArray(res?.data) ? res.data : []);
       
       const filtered = rawList.filter(t => {
         const ttype = String(t.taskType || t.task_type || '').toUpperCase();

@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 285 336" width="285" height="336" fill="none">
+  <!-- Top vertical bars -->
+  <rect x="78" y="6" width="10" height="96" rx="1" fill="#306eab" />
+  <rect x="138" y="6" width="10" height="123" rx="1" fill="#306eab" />
+  <rect x="198" y="6" width="10" height="96" rx="1" fill="#306eab" />
+
+  <!-- Shadow / bracket under top shelf -->
+  <rect x="21" y="194" width="243" height="18" rx="1" fill="#475965" />
+
+  <!-- Connector bar between shelves -->
+  <rect x="138" y="212" width="10" height="39" fill="#306eab" />
+
+  <!-- Feet under bottom shelf -->
+  <rect x="30" y="317" width="25" height="11" rx="1" fill="#074f97" />
+  <rect x="230" y="317" width="25" height="11" rx="1" fill="#074f97" />
+
+  <!-- Top Shelf Unit -->
+  <rect x="6" y="128" width="272" height="66" rx="8" fill="#369ad6" />
+  <!-- 5 indicator lights (dots) -->
+  <circle cx="32.5" cy="161" r="7" fill="#f4d6a2" />
+  <circle cx="57" cy="161" r="7" fill="#f4d6a2" />
+  <circle cx="81.5" cy="161" r="7" fill="#f4d6a2" />
+  <circle cx="106" cy="161" r="7" fill="#f4d6a2" />
+  <circle cx="130.5" cy="161" r="7" fill="#f4d6a2" />
+  <!-- Slot -->
+  <rect x="153" y="153" width="55" height="16" rx="8" fill="#306eab" />
+  <!-- Right circular port (Yellow status) -->
+  <circle cx="242" cy="161" r="20" fill="#074f97" />
+  <circle cx="242" cy="161" r="10" fill="#ecd642" />
+
+  <!-- Bottom Shelf Unit -->
+  <rect x="6" y="251" width="272" height="66" rx="8" fill="#369ad6" />
+  <!-- 5 indicator lights (dots) -->
+  <circle cx="32.5" cy="284" r="7" fill="#f4d6a2" />
+  <circle cx="57" cy="284" r="7" fill="#f4d6a2" />
+  <circle cx="81.5" cy="284" r="7" fill="#f4d6a2" />
+  <circle cx="106" cy="284" r="7" fill="#f4d6a2" />
+  <circle cx="130.5" cy="284" r="7" fill="#f4d6a2" />
+  <!-- Slot -->
+  <rect x="153" y="276" width="55" height="16" rx="8" fill="#306eab" />
+  <!-- Right circular port (Red status) -->
+  <circle cx="242" cy="284" r="20" fill="#074f97" />
+  <circle cx="242" cy="284" r="10" fill="#ee592f" />
+</svg>

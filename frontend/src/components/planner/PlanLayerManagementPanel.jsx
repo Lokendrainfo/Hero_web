@@ -10,6 +10,7 @@ import {
   LucidePlus,
   LucideInfo
 } from 'lucide-react';
+import { isGpNode } from '../../utils/plannerMapUtils';
 
 export const PlanLayerManagementPanel = ({
   activePlansList = [],
@@ -32,6 +33,7 @@ export const PlanLayerManagementPanel = ({
   const uniqueRouteIds = new Set();
   const uniqueNodeIds = new Set();
   let totalCombinedLengthKm = 0;
+  let totalGpCount = 0;
 
   activePlansList.forEach((plan) => {
     if (!plan.visible) return;
@@ -48,6 +50,9 @@ export const PlanLayerManagementPanel = ({
     nodeFeats.forEach((feat) => {
       const nodeId = feat.properties?.nodeId || feat.properties?.id || feat.id;
       if (nodeId) uniqueNodeIds.add(nodeId);
+      if (isGpNode(feat.properties, feat.properties?.nodeType)) {
+        totalGpCount++;
+      }
     });
 
     // Length summation
@@ -139,7 +144,7 @@ export const PlanLayerManagementPanel = ({
             <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#475569', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
               <LucideInfo size={13} style={{ color: '#0284c7' }} /> Combined Active Scope
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, textAlign: 'center' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: totalGpCount > 0 ? '1fr 1fr 1fr' : '1fr 1fr', gap: 8, textAlign: 'center' }}>
               <div style={{ background: '#ffffff', padding: '6px 4px', borderRadius: 4, border: '1px solid #cbd5e1' }}>
                 <div style={{ fontSize: '1rem', fontWeight: 700, color: '#0f172a' }}>{totalRoutesCount}</div>
                 <div style={{ fontSize: '0.6875rem', color: '#64748b' }}>Unique Routes</div>
@@ -148,7 +153,13 @@ export const PlanLayerManagementPanel = ({
                 <div style={{ fontSize: '1rem', fontWeight: 700, color: '#0f172a' }}>{totalNodesCount}</div>
                 <div style={{ fontSize: '0.6875rem', color: '#64748b' }}>Unique Nodes</div>
               </div>
-              <div style={{ background: '#ffffff', padding: '6px 4px', borderRadius: 4, border: '1px solid #cbd5e1', gridColumn: 'span 2' }}>
+              {totalGpCount > 0 && (
+                <div style={{ background: '#f0f9ff', padding: '6px 4px', borderRadius: 4, border: '1px solid #bae6fd' }}>
+                  <div style={{ fontSize: '1rem', fontWeight: 700, color: '#0284c7' }}>{totalGpCount}</div>
+                  <div style={{ fontSize: '0.6875rem', color: '#0369a1', fontWeight: 600 }}>GP Nodes</div>
+                </div>
+              )}
+              <div style={{ background: '#ffffff', padding: '6px 4px', borderRadius: 4, border: '1px solid #cbd5e1', gridColumn: totalGpCount > 0 ? 'span 3' : 'span 2' }}>
                 <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#0284c7' }}>
                   {totalCombinedLengthKm.toFixed(2)} km
                 </div>
@@ -242,24 +253,37 @@ export const PlanLayerManagementPanel = ({
                 </div>
 
                 {/* Per-Plan Sub-Details */}
-                <div
-                  style={{
-                    fontSize: '0.71875rem',
-                    color: '#64748b',
-                    marginTop: 4,
-                    paddingLeft: 23,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    flexWrap: 'wrap'
-                  }}
-                >
-                  <span><strong>{plan.summary?.totalRoutes || 0}</strong> routes</span>
-                  <span>·</span>
-                  <span><strong>{plan.summary?.totalNodes || 0}</strong> nodes</span>
-                  <span>·</span>
-                  <span><strong>{plan.summary?.formattedLength || '0 km'}</strong></span>
-                </div>
+                {(() => {
+                  const planGpCount = (plan.nodes?.features || []).filter(f => isGpNode(f.properties, f.properties?.nodeType)).length;
+                  return (
+                    <div
+                      style={{
+                        fontSize: '0.71875rem',
+                        color: '#64748b',
+                        marginTop: 4,
+                        paddingLeft: 23,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        flexWrap: 'wrap'
+                      }}
+                    >
+                      <span><strong>{plan.summary?.totalRoutes || 0}</strong> routes</span>
+                      <span>·</span>
+                      <span><strong>{plan.summary?.totalNodes || 0}</strong> nodes</span>
+                      {planGpCount > 0 && (
+                        <>
+                          <span>·</span>
+                          <span style={{ color: '#0284c7', fontWeight: 600 }}>
+                            <strong>{planGpCount}</strong> GP{planGpCount > 1 ? 's' : ''}
+                          </span>
+                        </>
+                      )}
+                      <span>·</span>
+                      <span><strong>{plan.summary?.formattedLength || '0 km'}</strong></span>
+                    </div>
+                  );
+                })()}
               </div>
             ))}
           </div>

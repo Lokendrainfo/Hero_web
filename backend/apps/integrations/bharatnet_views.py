@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.renderers import JSONRenderer
 
 from apps.common.task_scope import get_user_authorized_tasks
 from .bharatnet_auth import BharatNetBasicAuthentication
@@ -67,6 +68,7 @@ class BharatNetTDMonitoringView(APIView):
     Endpoint: GET /api/v1/bharatnet/td-monitoring/?circle=UPW&date=2026-10-02
     """
     authentication_classes = [BharatNetBasicAuthentication]
+    renderer_classes = [JSONRenderer]
 
     def handle_exception(self, exc):
         if isinstance(exc, AuthenticationFailed):
@@ -258,9 +260,21 @@ class BharatNetTDMonitoringView(APIView):
                             user_id=op_id,
                             date_str=date_param
                         )
+                        from urllib.parse import quote_plus
+                        dynamic_map_url = (
+                            f"{hero_base_url}/map-view/{task_id}?"
+                            f"userId={quote_plus(str(op_id or ''))}&"
+                            f"userName={quote_plus(str(op_name or ''))}&"
+                            f"block={quote_plus(str(task_block or ''))}&"
+                            f"district={quote_plus(str(task_district or ''))}&"
+                            f"state={quote_plus(str(task_circle or ''))}&"
+                            f"date={quote_plus(str(date_param or ''))}&"
+                            f"mode=user"
+                        )
                         hierarchy[task_circle][task_district][task_block][group_key] = {
                             '_dt': cap_dt,
                             'url': f"{hero_base_url}/live-view/{secure_token}",
+                            'map_url': dynamic_map_url,
                             'lastDepthCapturedAt': iso_time,
                             'userName': op_name,
                             'userId': op_id,
@@ -333,6 +347,7 @@ class BharatNetLiveViewAPIView(APIView):
     """
     authentication_classes = []
     permission_classes = []
+    renderer_classes = [JSONRenderer]
 
     def get(self, request, token):
         token_data = verify_bharatnet_live_token(token)

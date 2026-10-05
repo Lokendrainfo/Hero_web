@@ -78,9 +78,14 @@ export const AppRoutes = () => {
   return (
     <Suspense fallback={<LoadingFallback />}>
       <Routes>
+        {/* Public standalone map view for BharatNet Pragati Patal & external links */}
+        <Route element={<MapViewerLayout />}>
+          <Route path="/map-view/:executionId" element={<HddExecutionMapPage />} />
+          <Route path="/live-view/:token" element={<BharatNetLiveViewPage />} />
+        </Route>
+
         <Route element={<PublicRoute />}>
           <Route path="/login" element={<Login />} />
-          <Route path="/live-view/:token" element={<BharatNetLiveViewPage />} />
         </Route>
 
         <Route element={<ProtectedRoute />}>
@@ -122,9 +127,6 @@ export const AppRoutes = () => {
             <Route path="/settings" element={<Profile />} />
             <Route path="/setup/api" element={<PermissionRoute perm="api_docs.view"><ApiDocs /></PermissionRoute>} />
             <Route path="/api-docs" element={<Navigate to="/setup/api" replace />} />
-          </Route>
-          <Route element={<MapViewerLayout />}>
-            <Route path="/map-view/:executionId" element={<HddExecutionMapPage />} />
           </Route>
         </Route>
 

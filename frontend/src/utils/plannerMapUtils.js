@@ -164,6 +164,126 @@ export const getPlanColor = (index = 0) => {
 };
 
 /**
+ * Checks whether a node feature represents a GP (Gram Panchayat) node.
+ */
+export const isGpNode = (props = {}, nType = '') => {
+  const typeCandidates = [
+    nType,
+    props?.nodeType,
+    props?.topologyType,
+    props?.type,
+    props?.category,
+    props?.role,
+    props?.facilityType,
+    props?.nodeCategory,
+    props?.node_type,
+    props?.topology_type,
+  ];
+
+  for (const c of typeCandidates) {
+    if (!c || typeof c !== 'string') continue;
+    const clean = c.trim().toUpperCase();
+    if (
+      clean === 'GP' ||
+      clean === 'GP_NODE' ||
+      clean === 'GP-NODE' ||
+      clean === 'GRAM PANCHAYAT' ||
+      clean === 'GRAM_PANCHAYAT' ||
+      clean === 'GRAMPANCHAYAT'
+    ) {
+      return true;
+    }
+    if (/(^|[\s_\-:(])GP($|[\s_\-:)])/i.test(clean)) {
+      return true;
+    }
+  }
+
+  const nameCandidates = [props?.nodeName, props?.label, props?.name, props?.title];
+  for (const name of nameCandidates) {
+    if (!name || typeof name !== 'string') continue;
+    const cleanName = name.trim().toUpperCase();
+    if (
+      cleanName === 'GP' ||
+      /(^|[\s_\-:(])GP($|[\s_\-:)])/i.test(cleanName) ||
+      cleanName.includes('GRAM PANCHAYAT') ||
+      cleanName.includes('GRAM_PANCHAYAT')
+    ) {
+      const cleanType = String(nType || props?.nodeType || '').trim().toUpperCase();
+      const nonGp = ['MH', 'MANHOLE', 'HH', 'HANDHOLE', 'CHAMBER', 'JOINT'];
+      if (!nonGp.includes(cleanType)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
+
+/**
+ * Exact vector SVG of the 3D Network Router icon matching the reference design.
+ */
+export const GP_ROUTER_SVG_CONTENT = (width = 20, height = 17) => `
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 425" width="${width}" height="${height}" fill="none" style="display:block;overflow:visible;">
+    <!-- Side 3D Cylinder -->
+    <path d="M 12 165 C 12 260, 488 260, 488 165 L 488 260 C 488 355, 12 355, 12 260 Z" fill="#4267b0" />
+    
+    <!-- Top Ellipse Face -->
+    <ellipse cx="250" cy="165" rx="238" ry="142" fill="#6d8bcb" />
+
+    <!-- 4 White Directional Arrows in X pattern -->
+    <!-- Top-Left (NW) Arrow -->
+    <g transform="translate(195, 130) rotate(-135)">
+      <polygon points="0,-48 18,-20 7,-20 7,22 -7,22 -7,-20 -18,-20" fill="#ffffff" />
+    </g>
+    <!-- Top-Right (NE) Arrow -->
+    <g transform="translate(305, 130) rotate(135) scale(-1, 1)">
+      <polygon points="0,-48 18,-20 7,-20 7,22 -7,22 -7,-20 -18,-20" fill="#ffffff" />
+    </g>
+    <!-- Bottom-Left (SW) Arrow -->
+    <g transform="translate(195, 200) rotate(-45)">
+      <polygon points="0,-48 18,-20 7,-20 7,22 -7,22 -7,-20 -18,-20" fill="#ffffff" />
+    </g>
+    <!-- Bottom-Right (SE) Arrow -->
+    <g transform="translate(305, 200) rotate(45)">
+      <polygon points="0,-48 18,-20 7,-20 7,22 -7,22 -7,-20 -18,-20" fill="#ffffff" />
+    </g>
+  </svg>
+`;
+
+export const GP_RACK_SVG_CONTENT = GP_ROUTER_SVG_CONTENT;
+
+/**
+ * Creates a Leaflet DivIcon for a GP node using the 3D isometric router cylinder design.
+ */
+export const createGpNodeIcon = (options = {}) => {
+  const width = options.width || 20;
+  const height = options.height || 17;
+  return L.divIcon({
+    className: 'gis-gp-node-marker',
+    html: `
+      <div style="
+        width: ${width}px;
+        height: ${height}px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        filter: drop-shadow(0 0 1.5px #ffffff) drop-shadow(0 1.5px 3px rgba(0,0,0,0.55));
+        cursor: pointer;
+        transition: transform 0.15s ease-out;
+      "
+      onmouseover="this.style.transform='scale(1.35)'"
+      onmouseout="this.style.transform='scale(1)'"
+      >
+        ${GP_ROUTER_SVG_CONTENT(width, height)}
+      </div>
+    `,
+    iconSize: [width, height],
+    iconAnchor: [width / 2, height / 2],
+    popupAnchor: [0, -height / 2 - 2],
+  });
+};
+
+/**
  * Renders GeoJSON paths and nodes onto a Leaflet feature group.
  */
 export const renderPlannerLayersOnLeaflet = (
@@ -257,21 +377,38 @@ export const renderPlannerLayersOnLeaflet = (
     const nName = props.nodeName || props.label || props.name || `Node #${idx + 1}`;
     const nType = props.nodeType || props.topologyType || 'NODE';
     const nCode = props.nodeCode || props.code || '';
+    const isGp = isGpNode(props, nType);
 
-    const marker = L.circleMarker(latLng, {
-      radius: 6,
-      fillColor: nodeColor,
-      color: '#ffffff',
-      weight: 2,
-      opacity: 1,
-      fillOpacity: 0.9,
-    });
+    let marker;
+    if (isGp) {
+      marker = L.marker(latLng, {
+        icon: createGpNodeIcon(),
+        zIndexOffset: 1200,
+      });
+    } else {
+      marker = L.circleMarker(latLng, {
+        radius: 6,
+        fillColor: nodeColor,
+        color: '#ffffff',
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.9,
+      });
+    }
 
     const popupContent = `
-      <div style="font-family: sans-serif; font-size: 13px; padding: 4px; min-width: 160px;">
-        ${planName ? `<div style="color: #64748b; font-size: 10px; font-weight: 600;">${planName}</div>` : ''}
-        <div style="font-weight: 700; color: #7e22ce; font-size: 14px;">${nName}</div>
-        <div style="color: #64748b; font-size: 11px;">Type: <b>${nType}</b></div>
+      <div style="font-family: sans-serif; font-size: 13px; padding: 4px; min-width: 175px;">
+        ${planName ? `<div style="color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase;">${planName}</div>` : ''}
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px;">
+          <div style="font-weight: 700; color: #7e22ce; font-size: 14px;">${nName}</div>
+          ${isGp ? `
+            <div style="display: flex; align-items: center; gap: 5px;">
+              ${GP_ROUTER_SVG_CONTENT(18, 15)}
+              <span style="background: #e0f2fe; color: #0284c7; border: 1px solid #bae6fd; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; text-transform: uppercase;">GP</span>
+            </div>
+          ` : ''}
+        </div>
+        <div style="color: #64748b; font-size: 11px; margin-top: 2px;">Type: <b>${nType}</b></div>
         ${nCode ? `<div style="color: #64748b; font-size: 11px;">Code: <b>${nCode}</b></div>` : ''}
         <div style="color: #94a3b8; font-size: 10px; margin-top: 4px;">
           ${latLng[0].toFixed(6)}, ${latLng[1].toFixed(6)}
@@ -280,7 +417,7 @@ export const renderPlannerLayersOnLeaflet = (
     `;
 
     marker.bindPopup(popupContent);
-    marker.bindTooltip(`${nType}: ${nName}`, { sticky: true });
+    marker.bindTooltip(isGp ? `GP: ${nName}` : `${nType}: ${nName}`, { sticky: true });
     leafletGroup.addLayer(marker);
   });
 };

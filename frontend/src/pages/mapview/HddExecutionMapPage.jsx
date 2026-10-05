@@ -206,7 +206,34 @@ export const HddExecutionMapPage = () => {
         );
       });
 
-      if (combinedBounds) {
+      // ALWAYS bring execution route and depth layers to front so they are never obscured
+      if (layerGroupRef.current) {
+        layerGroupRef.current.bringToFront();
+      }
+      if (depthLayerRef.current) {
+        depthLayerRef.current.bringToFront();
+      }
+
+      // Check if there is an active execution route on the map
+      const execGroups = [layerGroupRef.current, depthLayerRef.current].filter(Boolean);
+      const execBounds = execGroups.reduce((acc, group) => {
+        try {
+          const next = group.getBounds();
+          if (!next || !next.isValid()) return acc;
+          return acc ? acc.extend(next) : next;
+        } catch (e) {
+          return acc;
+        }
+      }, null);
+
+      if (execBounds && execBounds.isValid()) {
+        // Keep the map focused on the execution route so it remains clearly visible!
+        mapInstanceRef.current.fitBounds(execBounds, {
+          padding: [60, 60],
+          maxZoom: 17,
+          animate: true
+        });
+      } else if (combinedBounds) {
         mapInstanceRef.current.fitBounds(combinedBounds, {
           padding: [40, 40],
           maxZoom: 18,
@@ -225,6 +252,8 @@ export const HddExecutionMapPage = () => {
           if (fg && mapInstanceRef.current) {
             if (newVis) {
               mapInstanceRef.current.addLayer(fg);
+              if (layerGroupRef.current) layerGroupRef.current.bringToFront();
+              if (depthLayerRef.current) depthLayerRef.current.bringToFront();
             } else {
               mapInstanceRef.current.removeLayer(fg);
             }
@@ -234,10 +263,17 @@ export const HddExecutionMapPage = () => {
         return p;
       });
 
-      const visiblePlans = next.filter((p) => p.visible);
-      const newBounds = calculateMultiPlanBounds(visiblePlans);
-      if (newBounds && mapInstanceRef.current) {
-        mapInstanceRef.current.fitBounds(newBounds, { padding: [40, 40], maxZoom: 18, animate: true });
+      const execGroups = [layerGroupRef.current, depthLayerRef.current].filter(Boolean);
+      const hasExecBounds = execGroups.some(g => {
+        try { return g.getBounds()?.isValid(); } catch (e) { return false; }
+      });
+
+      if (!hasExecBounds) {
+        const visiblePlans = next.filter((p) => p.visible);
+        const newBounds = calculateMultiPlanBounds(visiblePlans);
+        if (newBounds && mapInstanceRef.current) {
+          mapInstanceRef.current.fitBounds(newBounds, { padding: [40, 40], maxZoom: 18, animate: true });
+        }
       }
 
       return next;
@@ -253,10 +289,17 @@ export const HddExecutionMapPage = () => {
         plannerLayerGroupsRef.current.delete(planId);
       }
 
-      const visiblePlans = next.filter((p) => p.visible);
-      const newBounds = calculateMultiPlanBounds(visiblePlans);
-      if (newBounds && mapInstanceRef.current) {
-        mapInstanceRef.current.fitBounds(newBounds, { padding: [40, 40], maxZoom: 18, animate: true });
+      const execGroups = [layerGroupRef.current, depthLayerRef.current].filter(Boolean);
+      const hasExecBounds = execGroups.some(g => {
+        try { return g.getBounds()?.isValid(); } catch (e) { return false; }
+      });
+
+      if (!hasExecBounds) {
+        const visiblePlans = next.filter((p) => p.visible);
+        const newBounds = calculateMultiPlanBounds(visiblePlans);
+        if (newBounds && mapInstanceRef.current) {
+          mapInstanceRef.current.fitBounds(newBounds, { padding: [40, 40], maxZoom: 18, animate: true });
+        }
       }
 
       return next;
@@ -894,6 +937,8 @@ export const HddExecutionMapPage = () => {
           );
         }
       });
+      if (layerGroupRef.current) layerGroupRef.current.bringToFront();
+      if (depthLayerRef.current) depthLayerRef.current.bringToFront();
     }
 
     const map = mapInstanceRef.current;
@@ -1339,6 +1384,8 @@ export const HddExecutionMapPage = () => {
     map.__gisPaintDepths = paintDepths;
     map.on('zoomend', paintDepths);
     paintDepths();
+    if (layerGroupRef.current) layerGroupRef.current.bringToFront();
+    if (depthLayerRef.current) depthLayerRef.current.bringToFront();
 
     // Frame the trench on first load — overview, then zoom in for depths
     if (!isInitialFitDoneRef.current) {

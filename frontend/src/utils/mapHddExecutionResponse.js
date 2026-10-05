@@ -808,7 +808,7 @@ export const mergeMultipleTasksExecution = (tasksList, activeDate = null, option
   const maxDepth = depths.length > 0 ? Math.max(...depths) : 0;
   const depthRangeStr = depths.length > 0 ? `${minDepth.toFixed(2)}m – ${maxDepth.toFixed(2)}m` : 'N/A';
 
-  const userDisplayName = isBlockMode 
+  const userDisplayName = isBlockMode
     ? `Block ${options.block || primary.block} (${usersSet.size} ${usersSet.size === 1 ? 'user' : 'users'})`
     : (options.userName || primary.user);
 

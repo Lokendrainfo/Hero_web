@@ -30,7 +30,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
       const next = { ...prev, [title]: !prev[title] };
       try {
         localStorage.setItem('hero_collapsed_nav_sections', JSON.stringify(next));
-      } catch {}
+      } catch { }
       return next;
     });
   };
@@ -122,7 +122,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
           const next = { ...prev, [section.title]: false };
           try {
             localStorage.setItem('hero_collapsed_nav_sections', JSON.stringify(next));
-          } catch {}
+          } catch { }
           return next;
         });
       }

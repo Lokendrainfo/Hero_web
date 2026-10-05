@@ -10,7 +10,7 @@ const CACHE_TTL_MS = 60000; // 1 minute cache for child tasks
 export const taskService = {
   getAll: (params) => api.get('/tasks/', { params }),
   complete: (id) => api.post(`/tasks/${id}/complete/`),
-  
+
   getMyTasks: (params) => {
     const key = `getMyTasks_${JSON.stringify(params || {})}`;
     if (inflightRequests.has(key)) {
@@ -39,7 +39,7 @@ export const taskService = {
   getTaskExecution: (id) => api.get(`/integrations/tasks/${id}/execution/`),
   getTaskHddExecution: (id) => api.get(`/integrations/tasks/${id}/execution/`),
   getTasks: (params) => taskService.getMyTasks(params),
-  
+
   getTaskChildren: (id) => {
     const cached = childrenCache.get(id);
     const now = Date.now();

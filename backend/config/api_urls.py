@@ -7,10 +7,35 @@ from apps.authentication.views import MeView
 from apps.integrations.bharatnet_views import BharatNetTDMonitoringView, BharatNetLiveViewAPIView
 
 
+from rest_framework.renderers import JSONRenderer
+
+
 class ApiRootView(APIView):
     permission_classes = [AllowAny]
+    renderer_classes = [JSONRenderer]
 
     def get(self, request):
+        user = getattr(request, 'user', None)
+        is_bharatnet = (
+            getattr(user, 'role', '') == 'BHARATNET_SERVICE'
+            or getattr(user, 'username', '') == 'bharatnet_service'
+        )
+        is_internal_staff = user and user.is_authenticated and (getattr(user, 'is_staff', False) or getattr(user, 'is_superuser', False))
+
+        # If accessed by BharatNet or external API clients, only expose T&D monitoring endpoints
+        if is_bharatnet or not is_internal_staff:
+            return success_response(
+                data={
+                    "version": "v1",
+                    "name": "Hero Web T&D Monitoring API",
+                    "endpoints": {
+                        "td-monitoring": "/api/v1/td-monitoring/",
+                        "bharatnet": "/api/v1/bharatnet/td-monitoring/",
+                    }
+                },
+                message="Hero Web T&D Monitoring API v1 Root"
+            )
+
         return success_response(
             data={
                 "version": "v1",

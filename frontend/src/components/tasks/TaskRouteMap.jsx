@@ -91,7 +91,14 @@ export const TaskRouteMap = ({
         );
       });
 
-      if (combinedBounds) {
+      if (layerGroupRef.current) {
+        layerGroupRef.current.bringToFront();
+      }
+
+      const execBounds = layerGroupRef.current?.getBounds();
+      if (execBounds && execBounds.isValid()) {
+        mapInstanceRef.current.fitBounds(execBounds, { padding: [48, 48], maxZoom: 17 });
+      } else if (combinedBounds) {
         mapInstanceRef.current.fitBounds(combinedBounds, {
           padding: [40, 40],
           maxZoom: 18,

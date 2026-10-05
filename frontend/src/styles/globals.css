@@ -517,12 +517,14 @@ code {
 
 .gis-flag-marker,
 .gis-pole-marker,
+.gis-gp-node-marker,
+.planner-gp-custom-marker,
 .maplibregl-marker.gis-flag-marker,
 .maplibregl-marker.gis-pole-marker {
-  background: none;
-  border: none;
-  box-shadow: none;
-  overflow: visible;
+  background: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  overflow: visible !important;
 }
 
 .gis-pole {
