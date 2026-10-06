@@ -386,7 +386,7 @@ export const BharatNetLiveViewPage = () => {
                 gap: '6px'
               }}
             >
-              Full GIS View
+              Live View
             </a>
           )}
         </div>
