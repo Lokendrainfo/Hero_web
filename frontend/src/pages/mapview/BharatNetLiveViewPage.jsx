@@ -15,15 +15,38 @@ import {
   LucideMinimize2,
 } from 'lucide-react';
 
+// Safely extract payload from signed token for fallback routing
+const parseTokenPayload = (t) => {
+  if (!t || typeof t !== 'string') return null;
+  try {
+    const rawEncoded = t.split(':')[0];
+    let b64 = rawEncoded.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const jsonStr = decodeURIComponent(
+      atob(b64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    return null;
+  }
+};
+
 export const BharatNetLiveViewPage = () => {
   const { token } = useParams();
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
+  const tileLayerRef = useRef(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [mapType, setMapType] = useState('satellite'); // Default to satellite for execution view
+
+  const parsedToken = React.useMemo(() => parseTokenPayload(token), [token]);
 
   useEffect(() => {
     if (!token) {
@@ -37,18 +60,39 @@ export const BharatNetLiveViewPage = () => {
       .get(`/api/v1/live-view/${token}/`)
       .catch(() => axios.get(`/api/v1/bharatnet/live-view/${token}/`))
       .then((res) => {
-        if (res.data && res.data.data) {
-          setData(d);
+        const payload = res?.data?.data || res?.data;
+        if (payload && (payload.shots || payload.pits || payload.taskId)) {
+          setData(payload);
         } else {
           setError('No telemetry data available for this live view session.');
         }
       })
       .catch((err) => {
-        const msg = err.response?.data?.message || 'Invalid or expired live view session.';
+        const msg = err.response?.data?.message || (err.message && !err.message.includes('ReferenceError') ? err.message : null) || 'Invalid or expired live view session.';
         setError(msg);
       })
       .finally(() => setLoading(false));
   }, [token]);
+
+  // Handle Tile Layers (Street vs Satellite)
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    if (tileLayerRef.current) {
+      try {
+        mapInstanceRef.current.removeLayer(tileLayerRef.current);
+      } catch (e) {}
+    }
+    const tileUrl =
+      mapType === 'satellite'
+        ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+
+    const tileLayer = L.tileLayer(tileUrl, {
+      maxZoom: 19,
+      attribution: mapType === 'satellite' ? 'Tiles &copy; Esri' : '&copy; CartoDB',
+    }).addTo(mapInstanceRef.current);
+    tileLayerRef.current = tileLayer;
+  }, [mapType]);
 
   // Leaflet Map Initialization
   useEffect(() => {
@@ -65,10 +109,16 @@ export const BharatNetLiveViewPage = () => {
     });
     mapInstanceRef.current = map;
 
-    // CartoDB Voyager or OpenStreetMap
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    const tileUrl =
+      mapType === 'satellite'
+        ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+
+    const tileLayer = L.tileLayer(tileUrl, {
       maxZoom: 19,
+      attribution: mapType === 'satellite' ? 'Tiles &copy; Esri' : '&copy; CartoDB',
     }).addTo(map);
+    tileLayerRef.current = tileLayer;
 
     const latLngs = [];
 
@@ -210,6 +260,26 @@ export const BharatNetLiveViewPage = () => {
           <p style={{ fontSize: '0.85rem', color: '#64748b', marginTop: '8px', lineHeight: '1.5' }}>
             {error}
           </p>
+          {parsedToken?.tid && (
+            <div style={{ marginTop: '20px' }}>
+              <a
+                href={`/map-view/${parsedToken.tid}?userId=${encodeURIComponent(parsedToken.u || '')}&date=${encodeURIComponent(parsedToken.d || '')}&mode=user&isBharatNetMap=true&source=bharatnet`}
+                style={{
+                  display: 'inline-block',
+                  background: '#0d6efd',
+                  color: '#ffffff',
+                  padding: '9px 18px',
+                  borderRadius: '8px',
+                  textDecoration: 'none',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  boxShadow: '0 2px 4px rgba(13, 110, 253, 0.2)'
+                }}
+              >
+                Open Full Execution Map
+              </a>
+            </div>
+          )}
           <div style={{ marginTop: '20px', padding: '12px', background: '#f8fafc', borderRadius: '8px', fontSize: '0.75rem', color: '#94a3b8' }}>
             BharatNet Phase-3 T&D Monitoring Security Gateway
           </div>
@@ -298,6 +368,27 @@ export const BharatNetLiveViewPage = () => {
           >
             {isFullscreen ? <LucideMinimize2 size={16} /> : <LucideMaximize2 size={16} />}
           </button>
+
+          {data.taskId && (
+            <a
+              href={`/map-view/${data.taskId}?userId=${encodeURIComponent(data.userId || '')}&date=${encodeURIComponent(data.date || '')}&mode=user&isBharatNetMap=true&source=bharatnet`}
+              style={{
+                background: '#0f766e',
+                color: '#ffffff',
+                border: '1px solid #14b8a6',
+                borderRadius: '8px',
+                padding: '6px 12px',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                textDecoration: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              Full GIS View
+            </a>
+          )}
         </div>
       </div>
 
@@ -341,6 +432,44 @@ export const BharatNetLiveViewPage = () => {
       {/* Map Container */}
       <div style={{ flex: 1, position: 'relative' }}>
         <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
+
+        {/* Map Type Controls (Map / Satellite) */}
+        <div style={{ position: 'absolute', top: 16, left: 16, zIndex: 1000 }}>
+          <div style={{ display: 'inline-flex', background: '#1e293b', border: '1px solid #334155', borderRadius: '8px', padding: '3px', gap: '3px', boxShadow: '0 2px 8px rgba(0,0,0,0.3)' }}>
+            <button
+              type="button"
+              onClick={() => setMapType('street')}
+              style={{
+                background: mapType === 'street' ? '#0d6efd' : 'transparent',
+                color: mapType === 'street' ? '#ffffff' : '#94a3b8',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '5px 12px',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Map
+            </button>
+            <button
+              type="button"
+              onClick={() => setMapType('satellite')}
+              style={{
+                background: mapType === 'satellite' ? '#0d6efd' : 'transparent',
+                color: mapType === 'satellite' ? '#ffffff' : '#94a3b8',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '5px 12px',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Satellite
+            </button>
+          </div>
+        </div>
 
         {/* Legend Overlay */}
         <div
