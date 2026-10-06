@@ -1174,7 +1174,6 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
       const depthStr = pit.depth != null ? formatDepthM(pit.depth) : '';
 
       const tooltipText = [
-        pit.user ? `User: ${pit.user}` : '',
         depthStr,
         pitName
       ].filter(Boolean).join(' · ');
@@ -1195,10 +1194,9 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
         m.on('click', () => openLightbox(pitPhotosList, 0));
       } else {
         m.bindPopup(gisPopupHtml({
-          eyebrow: isLivePit ? (pit.user ? `Live Pit · ${pit.user}` : 'Live Pit') : 'Pit',
+          eyebrow: isLivePit ? 'Live Pit' : 'Pit',
           title: pitName,
           rows: [
-            ['User', pit.user || '—'],
             ['Depth', pit.depth != null ? formatDepthM(pit.depth) : '—'],
             ['Width', pit.width != null ? `${Number(pit.width).toFixed(2)}m` : '—'],
             ['Side', pit.side],
@@ -1376,7 +1374,6 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
         const isBelowThreshold = !isNaN(parsedDepth) && parsedDepth < 1.65;
 
         const tooltipText = [
-          dp.user ? `User: ${dp.user}` : '',
           formatDepthM(dp.depth) + (isBelowThreshold ? ' (Below 1.65m)' : ''),
           dateStr
         ].filter(Boolean).join(' · ');
