@@ -136,13 +136,26 @@ class Map3dBoundary extends React.Component {
   }
 }
 
-export const HddExecutionMapPage = () => {
+export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {}) => {
   const { executionId } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { roles, isAdmin, hasPermission } = useAuth();
 
   const isVendorAccount = !isAdmin && (roles || []).some(r => (r || '').toUpperCase() === 'VENDOR') && !hasPermission('mapview.view');
+
+  const isBharatNetMap = Boolean(
+    isBharatNetMapProp ||
+    searchParams.get('isBharatNetMap') === 'true' ||
+    searchParams.get('isBharatNetMap') === '1' ||
+    searchParams.get('bharatnet') === 'true' ||
+    searchParams.get('bharatnet') === '1' ||
+    searchParams.get('source') === 'bharatnet' ||
+    searchParams.get('source') === 'td-monitoring' ||
+    searchParams.get('source') === 'td_monitoring' ||
+    (typeof window !== 'undefined' && window.location.pathname.includes('/bharatnet')) ||
+    (searchParams.get('mode') === 'user' && searchParams.get('source') !== 'trenching')
+  );
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -161,6 +174,13 @@ export const HddExecutionMapPage = () => {
   const [viewMode, setViewMode] = useState('2d');
   const [fitNonce, setFitNonce] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // BharatNet map remains strictly 2D
+  useEffect(() => {
+    if (isBharatNetMap && viewMode !== '2d') {
+      setViewMode('2d');
+    }
+  }, [isBharatNetMap, viewMode]);
 
   // Lightbox State
   const [lightboxPhotos, setLightboxPhotos] = useState(null);
@@ -1460,7 +1480,9 @@ export const HddExecutionMapPage = () => {
           subtitle={error || (isBlockMode ? 'No execution data found for this block.' : 'No execution data found for this user.')}
         >
           <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-            <button type="button" className="btn-secondary" onClick={closeMap}>Close</button>
+            {!isBharatNetMap && (
+              <button type="button" className="btn-secondary" onClick={closeMap}>Close</button>
+            )}
             <button type="button" className="btn-primary" onClick={() => fetchExecutionDetail(true)}>Retry</button>
           </div>
         </EmptyState>
@@ -1497,9 +1519,11 @@ export const HddExecutionMapPage = () => {
 
       <div className="map-viewer-toolbar">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-          <button type="button" className="btn-secondary" onClick={closeMap} title="Close map">
-            <LucideArrowLeft size={16} /> Close
-          </button>
+          {!isBharatNetMap && (
+            <button type="button" className="btn-secondary" onClick={closeMap} title="Close map">
+              <LucideArrowLeft size={16} /> Close
+            </button>
+          )}
           <div style={{ minWidth: 0 }}>
             <div className="page-title" style={{ fontSize: '0.9375rem' }}>
               {executionData.isBlockMap ? `Block Map: ${executionData.block || '—'}` : 'Execution map'}
@@ -1573,19 +1597,21 @@ export const HddExecutionMapPage = () => {
         </div>
 
         <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 400, display: 'flex', alignItems: 'flex-start', gap: 8, maxWidth: 'min(520px, calc(100% - 180px))' }}>
-          {viewMode === '3d' && (
+          {!isBharatNetMap && viewMode === '3d' && (
             <div className="gis-map-note">
               Some points overlap in 3D for a clearer view. Switch to 2D for full detail.
             </div>
           )}
-          <div className="gis-map-chip">
-            <button type="button" className={viewMode === '2d' ? 'is-active' : ''} onClick={() => setViewMode('2d')}>
-              2D
-            </button>
-            <button type="button" className={viewMode === '3d' ? 'is-active' : ''} onClick={() => setViewMode('3d')}>
-              3D
-            </button>
-          </div>
+          {!isBharatNetMap && (
+            <div className="gis-map-chip">
+              <button type="button" className={viewMode === '2d' ? 'is-active' : ''} onClick={() => setViewMode('2d')}>
+                2D
+              </button>
+              <button type="button" className={viewMode === '3d' ? 'is-active' : ''} onClick={() => setViewMode('3d')}>
+                3D
+              </button>
+            </div>
+          )}
           <AlignPlanMapButton
             currentPlanId={executionData?.planId || executionData?.plan_id || ''}
             onAlignMultiPlans={handleAlignMultiPlans}

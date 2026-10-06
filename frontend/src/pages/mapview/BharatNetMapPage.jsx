@@ -82,17 +82,20 @@ const getTargetUrl = (userObj) => {
   const target = userObj.map_url || userObj.url;
   if (!target) return '#';
   try {
-    if (target.startsWith('/')) {
-      return target;
-    }
-    const parsed = new URL(target);
+    const isRel = target.startsWith('/');
+    const urlObj = isRel ? new URL(target, window.location.origin) : new URL(target);
+    urlObj.searchParams.set('isBharatNetMap', 'true');
+    urlObj.searchParams.set('source', 'bharatnet');
     // In local development on localhost, keep relative path so it loads inside local dev port
     if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-      return `${parsed.pathname}${parsed.search}`;
+      return `${urlObj.pathname}${urlObj.search}`;
     }
-    return target;
+    return isRel ? `${urlObj.pathname}${urlObj.search}` : urlObj.toString();
   } catch (e) {
-    return target;
+    if (target.includes('?')) {
+      return `${target}&isBharatNetMap=true&source=bharatnet`;
+    }
+    return `${target}?isBharatNetMap=true&source=bharatnet`;
   }
 };
 

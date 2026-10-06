@@ -508,7 +508,7 @@ export const TrenchingMapViewPage = () => {
                                   <a
                                     className="btn-secondary"
                                     style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, padding: '4px 10px', textDecoration: 'none', height: 28 }}
-                                    href={`/map-view/block?block=${encodeURIComponent(bName)}&district=${encodeURIComponent(dName)}&state=${encodeURIComponent(selectedState || '')}${selectedDate ? `&date=${selectedDate}` : ''}&mode=block`}
+                                    href={`/map-view/block?block=${encodeURIComponent(bName)}&district=${encodeURIComponent(dName)}&state=${encodeURIComponent(selectedState || '')}${selectedDate ? `&date=${selectedDate}` : ''}&mode=block&source=trenching`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
@@ -542,7 +542,7 @@ export const TrenchingMapViewPage = () => {
                                         <td style={{ textAlign: 'right' }}>
                                           <a
                                             className="exec-tree-map"
-                                            href={`/map-view/${ex.id}?userId=${encodeURIComponent(ex.userId || ex.user)}&userName=${encodeURIComponent(ex.user)}&block=${encodeURIComponent(ex.block || bName)}&district=${encodeURIComponent(ex.district || dName)}&state=${encodeURIComponent(ex.state || selectedState || '')}${selectedDate ? `&date=${selectedDate}` : ''}&mode=user`}
+                                            href={`/map-view/${ex.id}?userId=${encodeURIComponent(ex.userId || ex.user)}&userName=${encodeURIComponent(ex.user)}&block=${encodeURIComponent(ex.block || bName)}&district=${encodeURIComponent(ex.district || dName)}&state=${encodeURIComponent(ex.state || selectedState || '')}${selectedDate ? `&date=${selectedDate}` : ''}&mode=user&source=trenching`}
                                             target="_blank"
                                             rel="noopener noreferrer"
                                             onClick={(e) => e.stopPropagation()}

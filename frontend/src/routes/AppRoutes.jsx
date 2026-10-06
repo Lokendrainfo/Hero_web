@@ -82,6 +82,7 @@ export const AppRoutes = () => {
         {/* Public standalone map view for BharatNet Pragati Patal & external links */}
         <Route element={<MapViewerLayout />}>
           <Route path="/map-view/:executionId" element={<HddExecutionMapPage />} />
+          <Route path="/map-view/bharatnet/:executionId" element={<HddExecutionMapPage isBharatNetMap={true} />} />
           <Route path="/live-view/:token" element={<BharatNetLiveViewPage />} />
         </Route>
 
