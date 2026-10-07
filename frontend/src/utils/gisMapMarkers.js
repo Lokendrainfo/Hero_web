@@ -34,7 +34,9 @@ export function depthSampleStep(zoom, count) {
   if (zoom < 14) return Math.max(24, Math.ceil(n / 28));
   if (zoom < 15) return Math.max(14, Math.ceil(n / 55));
   if (zoom < 16) return Math.max(8, Math.ceil(n / 100));
-  if (zoom < 17) return Math.max(3, Math.ceil(n / 220));
+  if (zoom < 17) return Math.max(4, Math.ceil(n / 220));
+  if (zoom < 18) return Math.max(2, Math.ceil(n / 450));
+  if (n > 3000) return Math.max(2, Math.ceil(n / 800));
   return 1;
 }
 
@@ -116,7 +118,7 @@ export function resolvePitRole(pit, index, total, startIds, endIds) {
 
 const PURPLE_DEPTH_PIN = `
   <svg class="gis-pin-svg" width="22" height="28" viewBox="0 0 24 32" fill="none">
-    <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="#7c3aed" stroke="#ffffff" stroke-width="1.8"/>
+    <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="#0284c7" stroke="#ffffff" stroke-width="1.8"/>
     <circle cx="12" cy="11" r="4.8" fill="none" stroke="#ffffff" stroke-width="2"/>
     <circle cx="12" cy="11" r="1.8" fill="#ffffff"/>
   </svg>
@@ -174,6 +176,7 @@ export function depthPointIcon({
   isLive = false,
   isStale = false,
   side = 'right',
+  badgePosition = 'top',
 }) {
   const parsedDepth = parseFloat(String(depth ?? ''));
   const isBelowThreshold = !isNaN(parsedDepth) && parsedDepth < 1.65;
@@ -185,6 +188,12 @@ export function depthPointIcon({
     pinSvg = isStale ? RED_STALE_PIN : GREEN_LIVE_PIN;
   }
 
+  const badgePosClass = badgePosition === 'bottom'
+    ? 'gis-dp--badge-bottom'
+    : (badgePosition === 'right'
+      ? 'gis-dp--badge-right'
+      : (badgePosition === 'left' ? 'gis-dp--badge-left' : ''));
+
   const classes = [
     'gis-dp-container',
     isBelowThreshold
@@ -192,9 +201,10 @@ export function depthPointIcon({
       : (isLive ? (isStale ? 'gis-dp--stale' : 'gis-dp--live') : 'gis-dp--purple'),
     showLabel ? 'gis-dp--labeled' : 'gis-dp--unlabeled',
     side === 'left' ? 'gis-dp--left' : 'gis-dp--right',
+    badgePosClass,
   ].filter(Boolean).join(' ');
 
-  const labelHtml = (showLabel || isLive) ? `<span class="gis-dp-label">${escapeHtml(formatDepthM(depth))}</span>` : '';
+  const labelHtml = `<span class="gis-dp-label">${escapeHtml(formatDepthM(depth))}</span>`;
 
   return L.divIcon({
     className: 'gis-marker gis-dp-marker',

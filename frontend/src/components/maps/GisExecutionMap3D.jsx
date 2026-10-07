@@ -177,7 +177,7 @@ const addSceneLayers = (map, scene) => {
       id: 'trench-line',
       type: 'line',
       source: 'trench-routes',
-      paint: { 'line-color': '#5b21b6', 'line-width': 1.75, 'line-opacity': 0.95 },
+      paint: { 'line-color': '#0284c7', 'line-width': 2.5, 'line-opacity': 0.95 },
     });
   }
 
@@ -399,7 +399,7 @@ export default function GisExecutionMap3D({
         wrap.classList.toggle('gis-poles-labeled', z >= 16.4);
         requestAnimationFrame(declutterPoleLabels);
       };
-      map.on('zoom', syncPoleZoom);
+      map.on('zoomend', syncPoleZoom);
       map.on('moveend', syncPoleZoom);
       syncPoleZoom();
       map.on('error', (e) => console.warn('[Gis3D]', e?.error?.message || e));
@@ -592,7 +592,12 @@ export default function GisExecutionMap3D({
       segmentPopup.remove();
     };
 
+    let hoverThrottle = false;
     const onMapMouseMove = (e) => {
+      if (hoverThrottle) return;
+      hoverThrottle = true;
+      requestAnimationFrame(() => { hoverThrottle = false; });
+
       const scene = sceneRef.current;
       const features = scene?.depthSegments?.features;
       if (!features || !features.length) {
@@ -600,36 +605,22 @@ export default function GisExecutionMap3D({
         return;
       }
 
-      const { x, y } = e.point;
-      let closestFeature = null;
-      let minDistance = 45; // screen pixel detection threshold
-
-      for (let i = 0; i < features.length; i++) {
-        const f = features[i];
-        const coords = f.geometry.coordinates;
-        if (!coords || coords.length < 2) continue;
-        const p1 = map.project(coords[0]);
-        const p2 = map.project(coords[1]);
-
-        // Fast bounding box check
-        const minX = Math.min(p1.x, p2.x) - 45;
-        const maxX = Math.max(p1.x, p2.x) + 45;
-        const minY = Math.min(p1.y, p2.y) - 45;
-        const maxY = Math.max(p1.y, p2.y) + 45;
-        if (x < minX || x > maxX || y < minY || y > maxY) continue;
-
-        const res = pointToSegmentDistancePx(x, y, p1.x, p1.y, p2.x, p2.y);
-        if (res.dist < minDistance) {
-          minDistance = res.dist;
-          closestFeature = f;
+      // Fast query using MapLibre spatial indexing
+      try {
+        const bbox = [
+          [e.point.x - 22, e.point.y - 22],
+          [e.point.x + 22, e.point.y + 22]
+        ];
+        const hitFeatures = map.queryRenderedFeatures(bbox, { layers: ['depth-segments-hit'] });
+        if (hitFeatures && hitFeatures.length > 0) {
+          activateSegment(hitFeatures[0], e.lngLat);
+          return;
         }
+      } catch (err) {
+        // fallback
       }
 
-      if (closestFeature) {
-        activateSegment(closestFeature, e.lngLat);
-      } else {
-        hideSegmentHover();
-      }
+      hideSegmentHover();
     };
 
     map.on('mousemove', onMapMouseMove);

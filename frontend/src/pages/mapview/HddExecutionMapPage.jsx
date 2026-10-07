@@ -189,6 +189,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const layerGroupRef = useRef(null);
+  const pitLayerRef = useRef(null);
   const depthLayerRef = useRef(null);
   const plannerLayerRef = useRef(null);
   const tileLayerRef = useRef(null);
@@ -230,12 +231,15 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
       if (layerGroupRef.current) {
         layerGroupRef.current.bringToFront();
       }
+      if (pitLayerRef.current) {
+        pitLayerRef.current.bringToFront();
+      }
       if (depthLayerRef.current) {
         depthLayerRef.current.bringToFront();
       }
 
       // Check if there is an active execution route on the map
-      const execGroups = [layerGroupRef.current, depthLayerRef.current].filter(Boolean);
+      const execGroups = [layerGroupRef.current, pitLayerRef.current, depthLayerRef.current].filter(Boolean);
       const execBounds = execGroups.reduce((acc, group) => {
         try {
           const next = group.getBounds();
@@ -273,6 +277,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
             if (newVis) {
               mapInstanceRef.current.addLayer(fg);
               if (layerGroupRef.current) layerGroupRef.current.bringToFront();
+              if (pitLayerRef.current) pitLayerRef.current.bringToFront();
               if (depthLayerRef.current) depthLayerRef.current.bringToFront();
             } else {
               mapInstanceRef.current.removeLayer(fg);
@@ -283,7 +288,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
         return p;
       });
 
-      const execGroups = [layerGroupRef.current, depthLayerRef.current].filter(Boolean);
+      const execGroups = [layerGroupRef.current, pitLayerRef.current, depthLayerRef.current].filter(Boolean);
       const hasExecBounds = execGroups.some(g => {
         try { return g.getBounds()?.isValid(); } catch (e) { return false; }
       });
@@ -309,7 +314,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
         plannerLayerGroupsRef.current.delete(planId);
       }
 
-      const execGroups = [layerGroupRef.current, depthLayerRef.current].filter(Boolean);
+      const execGroups = [layerGroupRef.current, pitLayerRef.current, depthLayerRef.current].filter(Boolean);
       const hasExecBounds = execGroups.some(g => {
         try { return g.getBounds()?.isValid(); } catch (e) { return false; }
       });
@@ -899,6 +904,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
         try { mapInstanceRef.current.remove(); } catch (e) { /* ignore */ }
         mapInstanceRef.current = null;
         layerGroupRef.current = null;
+        pitLayerRef.current = null;
         depthLayerRef.current = null;
         tileLayerRef.current = null;
         isInitialFitDoneRef.current = false;
@@ -933,6 +939,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
 
       mapInstanceRef.current = map;
       layerGroupRef.current = L.featureGroup().addTo(map);
+      pitLayerRef.current = L.featureGroup().addTo(map);
       depthLayerRef.current = L.featureGroup().addTo(map);
       plannerLayerRef.current = L.featureGroup().addTo(map);
     }
@@ -958,6 +965,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
         }
       });
       if (layerGroupRef.current) layerGroupRef.current.bringToFront();
+      if (pitLayerRef.current) pitLayerRef.current.bringToFront();
       if (depthLayerRef.current) depthLayerRef.current.bringToFront();
     }
 
@@ -984,6 +992,9 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
     // Clear previous markers & polylines
     layerGroup.clearLayers();
 
+    if (!pitLayerRef.current) {
+      pitLayerRef.current = L.featureGroup().addTo(map);
+    }
     if (!depthLayerRef.current) {
       depthLayerRef.current = L.featureGroup().addTo(map);
     }
@@ -1089,8 +1100,8 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
         }).addTo(layerGroup);
 
         const line = L.polyline(shot.route, {
-          color: '#5b21b6',
-          weight: 3,
+          color: '#0284c7',
+          weight: 3.5,
           opacity: 0.95,
           lineCap: 'round',
           lineJoin: 'round'
@@ -1125,9 +1136,21 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
       }
     });
 
-    // 2. Pits — only show if HDD shot / trenching has started
+    // 2. Identify users and live pits/depths
     const pits = getVisiblePitsForMap(executionData);
     const depthPoints = executionData.depthPoints || [];
+
+    pits.forEach((pit) => {
+      if (pit.lat != null && pit.lng != null) {
+        const pt = [pit.lat, pit.lng];
+        allBounds.push(pt);
+        frameBounds.push(pt);
+      }
+    });
+
+    depthPoints.forEach((dp) => {
+      if (dp.lat != null && dp.lng != null) allBounds.push([dp.lat, dp.lng]);
+    });
 
     // Identify users who have depth points vs users who only have pits
     const usersWithDepths = new Set(depthPoints.map(dp => String(dp.userId || dp.user || '').trim().toLowerCase()).filter(Boolean));
@@ -1145,263 +1168,356 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
     });
     const livePitIds = new Set(Array.from(userLatestPitMap.values()).map(v => v.pitId));
 
-    pits.forEach((pit) => {
-      const pt = [pit.lat, pit.lng];
-      allBounds.push(pt);
-      frameBounds.push(pt);
+    // Determine latest capture index FOR EACH USER!
+    const liveIndicesSet = new Set();
+    const userLatestMap = new Map();
 
-      const isLivePit = livePitIds.has(String(pit.id)) || livePitIds.has(String(pit.serialNo)) || livePitIds.has(String(pit.name));
+    depthPoints.forEach((dp, idx) => {
+      const uKey = String(dp.userId || dp.user || 'default').trim().toLowerCase();
+      const capTime = parseAnyDate(dp.capturedAt || dp.createdAt);
+      const t = capTime ? capTime.getTime() : idx;
 
-      const pitPhotosList = (pit.photos && pit.photos.length > 0) ? pit.photos.map(ph => {
-        const photoCode = (ph.taskCode && !isMongoHexId(ph.taskCode)) ? ph.taskCode : taskCodeForMedia;
-        const photoName = (ph.taskName && !isMongoHexId(ph.taskName)) ? ph.taskName : taskNameForMedia;
-        return {
-          ...ph,
-          label: ph.label || `Pit ${pit.name || pit.id}`,
-          title: ph.title || `Pit ${pit.name || pit.id}`,
-          taskId: photoCode,
-          taskCode: photoCode,
-          taskName: photoName,
-          depth: pit.depth,
-          latitude: pit.lat,
-          longitude: pit.lng,
-          isPitPhoto: true,
-          side: pit.side || ph.side || 'Left (LHS)',
-          pitSide: pit.side || ph.pitSide || ph.side || 'Left (LHS)'
-        };
-      }) : [];
-      const pitName = pit.name || pit.id || 'Pit';
-      const depthStr = pit.depth != null ? formatDepthM(pit.depth) : '';
+      if (!userLatestMap.has(uKey)) {
+        userLatestMap.set(uKey, { idx, time: t });
+      } else {
+        const current = userLatestMap.get(uKey);
+        if (t >= current.time) {
+          userLatestMap.set(uKey, { idx, time: t });
+        }
+      }
+    });
+
+    userLatestMap.forEach(({ idx }) => {
+      liveIndicesSet.add(idx);
+    });
+    const lastDepthIdx = depthPoints.length - 1;
+    if (lastDepthIdx >= 0) {
+      liveIndicesSet.add(lastDepthIdx);
+    }
+
+    const bindDepthMarkerEvents = (m, dp, idx) => {
+      let dateStr = '';
+      if (dp.capturedAt) {
+        try {
+          const d = parseAnyDate(dp.capturedAt) || new Date(dp.capturedAt);
+          if (d && !isNaN(d.getTime())) {
+            const parts = new Intl.DateTimeFormat('en-IN', {
+              timeZone: 'Asia/Kolkata',
+              day: 'numeric',
+              month: 'short',
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true,
+            }).formatToParts(d);
+            const day = parts.find(p => p.type === 'day')?.value || '';
+            let month = parts.find(p => p.type === 'month')?.value || '';
+            if (month === 'Sep') month = 'Sept';
+            const hour = parts.find(p => p.type === 'hour')?.value || '';
+            const minute = parts.find(p => p.type === 'minute')?.value || '';
+            const dayPeriod = (parts.find(p => p.type === 'dayPeriod')?.value || '').toLowerCase();
+            dateStr = `${day} ${month}, ${hour}:${minute} ${dayPeriod}`;
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      const parsedDepth = parseFloat(String(dp.depth ?? ''));
+      const isBelowThreshold = !isNaN(parsedDepth) && parsedDepth < 1.65;
 
       const tooltipText = [
-        depthStr,
-        pitName
+        formatDepthM(dp.depth) + (isBelowThreshold ? ' (Below 1.65m)' : ''),
+        dateStr
       ].filter(Boolean).join(' · ');
-
-      const m = L.marker(pt, {
-        icon: pitIcon({ role: 'mid', name: pitName, depth: pit.depth, showLabel: isLivePit, isLive: isLivePit }),
-        zIndexOffset: isLivePit ? 550 : 450
-      });
 
       m.bindTooltip(tooltipText, {
         direction: 'top',
-        offset: [0, -28],
-        className: 'gis-tip',
-        opacity: 1
+        offset: [0, -26],
+        className: isBelowThreshold ? 'gis-tip gis-tip--below-threshold' : 'gis-tip',
+        opacity: 1,
       });
 
-      if (pitPhotosList.length > 0) {
-        m.on('click', () => openLightbox(pitPhotosList, 0));
-      } else {
-        m.bindPopup(gisPopupHtml({
-          eyebrow: isLivePit ? 'Live Pit' : 'Pit',
-          title: pitName,
-          rows: [
-            ['Depth', pit.depth != null ? formatDepthM(pit.depth) : '—'],
-            ['Width', pit.width != null ? `${Number(pit.width).toFixed(2)}m` : '—'],
-            ['Side', pit.side],
-            ['Type', pit.type],
-            ['Time', pit.diggingTime],
-          ],
-        }), { maxWidth: 260, className: 'gis-popup' });
+      if (allDepthPhotos.length > 0) {
+        m.on('click', () => openLightbox(allDepthPhotos, idx));
       }
+    };
 
-      layerGroup.addLayer(m);
-    });
-
-    // 3. Depth captures — sample + scale with zoom so pins do not stack
-    depthPoints.forEach((dp) => {
-      if (dp.lat != null && dp.lng != null) allBounds.push([dp.lat, dp.lng]);
-    });
-
-    const paintDepths = () => {
-      const depthLayer = depthLayerRef.current;
-      if (!depthLayer || !mapInstanceRef.current) return;
-      depthLayer.clearLayers();
+    const paintAllMarkers = () => {
       const map = mapInstanceRef.current;
+      const depthLayer = depthLayerRef.current;
+      const pitLayer = pitLayerRef.current;
+      if (!map || !depthLayer || !pitLayer) return;
+
+      depthLayer.clearLayers();
+      pitLayer.clearLayers();
+
       const z = map.getZoom();
-      const lastIdx = depthPoints.length - 1;
-      const step = depthSampleStep(z, depthPoints.length);
+      const bounds = map.getBounds().pad(0.3); // 30% viewport buffer for smooth panning
 
-      // Determine latest capture index FOR EACH USER!
-      // In Full Block Map (or multi-user map), each active user working in the block gets their own live green bulb.
-      const liveIndicesSet = new Set();
-      const userLatestMap = new Map(); // userKey -> { idx, time }
+      // Screen positions of all placed pins and badges
+      const placedPinPixels = [];
+      const placedBadgeBoxes = [];
 
-      depthPoints.forEach((dp, idx) => {
-        const uKey = String(dp.userId || dp.user || 'default').trim().toLowerCase();
-        const capTime = parseAnyDate(dp.capturedAt || dp.createdAt);
-        const t = capTime ? capTime.getTime() : idx;
-
-        if (!userLatestMap.has(uKey)) {
-          userLatestMap.set(uKey, { idx, time: t });
-        } else {
-          const current = userLatestMap.get(uKey);
-          if (t >= current.time) {
-            userLatestMap.set(uKey, { idx, time: t });
-          }
-        }
-      });
-
-      userLatestMap.forEach(({ idx }) => {
-        liveIndicesSet.add(idx);
-      });
-
-      // Always include lastIdx as fallback
-      if (lastIdx >= 0) {
-        liveIndicesSet.add(lastIdx);
-      }
-
-      // Pixel-based collision detection to ensure depth badges never overlap on screen
-      const MIN_BADGE_DIST_PX = 75;
-      const labeledIndices = new Set();
-      const placedPositions = [];
-
-      const canPlaceBadge = (pt) => {
-        for (const pos of placedPositions) {
-          const dx = pt.x - pos.x;
-          const dy = pt.y - pos.y;
-          if (Math.hypot(dx, dy) < MIN_BADGE_DIST_PX) {
+      const canPlaceBadgeBox = (box) => {
+        for (let i = 0; i < placedBadgeBoxes.length; i++) {
+          const b = placedBadgeBoxes[i];
+          if (box.x1 < b.x2 && box.x2 > b.x1 && box.y1 < b.y2 && box.y2 > b.y1) {
             return false;
           }
         }
         return true;
       };
 
-      // 1. Always prioritize live/last point depth badges for all users
-      liveIndicesSet.forEach((liveIdx) => {
-        const dpLive = depthPoints[liveIdx];
-        if (dpLive && dpLive.lat != null && dpLive.lng != null) {
-          try {
-            const pt = map.latLngToContainerPoint([dpLive.lat, dpLive.lng]);
-            labeledIndices.add(liveIdx);
-            placedPositions.push(pt);
-          } catch (e) { }
+      const getBadgeBox = (pt, pos = 'top') => {
+        const w = 76;
+        const h = 28;
+        if (pos === 'bottom') {
+          return { x1: pt.x - w / 2, x2: pt.x + w / 2, y1: pt.y + 4, y2: pt.y + 4 + h };
         }
+        if (pos === 'right') {
+          return { x1: pt.x + 8, x2: pt.x + 8 + w, y1: pt.y - h / 2, y2: pt.y + h / 2 };
+        }
+        if (pos === 'left') {
+          return { x1: pt.x - 8 - w, x2: pt.x - 8, y1: pt.y - h / 2, y2: pt.y + h / 2 };
+        }
+        return { x1: pt.x - w / 2, x2: pt.x + w / 2, y1: pt.y - 4 - h, y2: pt.y - 4 };
+      };
+
+      // 1. Pits Rendering with Decluttering & Viewport Culling
+      pits.forEach((pit) => {
+        if (pit.lat == null || pit.lng == null) return;
+        const ptCoords = [pit.lat, pit.lng];
+        if (!bounds.contains(ptCoords)) return;
+
+        const isLivePit = livePitIds.has(String(pit.id)) || livePitIds.has(String(pit.serialNo)) || livePitIds.has(String(pit.name));
+        const isStartPit = startPitIds.has(String(pit.id)) || startPitIds.has(String(pit.name));
+        const isEndPit = endPitIds.has(String(pit.id)) || endPitIds.has(String(pit.name));
+        const isKeyPit = isLivePit || isStartPit || isEndPit;
+
+        // In overview zooms (z < 14.2), only show key pits to prevent orange clutter
+        if (!isKeyPit && z < 14.2) return;
+
+        let ptPx;
+        try {
+          ptPx = map.latLngToContainerPoint(ptCoords);
+        } catch (e) {
+          return;
+        }
+
+        // Distance check for intermediate pits (must be at least 26px from any placed pin)
+        if (!isKeyPit) {
+          const tooClose = placedPinPixels.some((p) => Math.hypot(ptPx.x - p.x, ptPx.y - p.y) < 26);
+          if (tooClose) return;
+        }
+
+        placedPinPixels.push(ptPx);
+
+        const pitPhotosList = (pit.photos && pit.photos.length > 0) ? pit.photos.map(ph => {
+          const photoCode = (ph.taskCode && !isMongoHexId(ph.taskCode)) ? ph.taskCode : taskCodeForMedia;
+          const photoName = (ph.taskName && !isMongoHexId(ph.taskName)) ? ph.taskName : taskNameForMedia;
+          return {
+            ...ph,
+            label: ph.label || `Pit ${pit.name || pit.id}`,
+            title: ph.title || `Pit ${pit.name || pit.id}`,
+            taskId: photoCode,
+            taskCode: photoCode,
+            taskName: photoName,
+            depth: pit.depth,
+            latitude: pit.lat,
+            longitude: pit.lng,
+            isPitPhoto: true,
+            side: pit.side || ph.side || 'Left (LHS)',
+            pitSide: pit.side || ph.pitSide || ph.side || 'Left (LHS)'
+          };
+        }) : [];
+        const pitName = pit.name || pit.id || 'Pit';
+        const depthStr = pit.depth != null ? formatDepthM(pit.depth) : '';
+        const role = 'mid';
+
+        const tooltipText = [depthStr, pitName].filter(Boolean).join(' · ');
+
+        const m = L.marker(ptCoords, {
+          icon: pitIcon({ role: 'mid', name: pitName, depth: pit.depth, showLabel: false, isLive: false }),
+          zIndexOffset: isLivePit ? 550 : (isKeyPit ? 480 : 420)
+        });
+
+        m.bindTooltip(tooltipText, {
+          direction: 'top',
+          offset: [0, -28],
+          className: 'gis-tip',
+          opacity: 1
+        });
+
+        if (pitPhotosList.length > 0) {
+          m.on('click', () => openLightbox(pitPhotosList, 0));
+        } else {
+          m.bindPopup(gisPopupHtml({
+            eyebrow: isLivePit ? 'Live Pit' : 'Pit',
+            title: pitName,
+            rows: [
+              ['Depth', pit.depth != null ? formatDepthM(pit.depth) : '—'],
+              ['Width', pit.width != null ? `${Number(pit.width).toFixed(2)}m` : '—'],
+              ['Side', pit.side],
+              ['Type', pit.type],
+              ['Time', pit.diggingTime],
+            ],
+          }), { maxWidth: 260, className: 'gis-popup' });
+        }
+
+        pitLayer.addLayer(m);
       });
 
-      // 2. Prioritize start point depth badge
-      if (depthPoints.length > 1) {
-        const dpFirst = depthPoints[0];
-        if (dpFirst && dpFirst.lat != null && dpFirst.lng != null) {
-          try {
-            const pt = map.latLngToContainerPoint([dpFirst.lat, dpFirst.lng]);
-            if (canPlaceBadge(pt)) {
-              labeledIndices.add(0);
-              placedPositions.push(pt);
-            }
-          } catch (e) { }
+      // 2. Depth Points with Viewport Culling & Adaptive Stride
+      const visibleDps = [];
+      for (let i = 0; i < depthPoints.length; i++) {
+        const dp = depthPoints[i];
+        if (dp.lat == null || dp.lng == null) continue;
+        if (bounds.contains([dp.lat, dp.lng])) {
+          visibleDps.push({ dp, idx: i });
         }
       }
 
-      // 3. Sample intermediate depth points with screen pixel collision check
-      depthPoints.forEach((dp, idx) => {
-        if (idx === 0 || liveIndicesSet.has(idx)) return;
-        if (dp.lat == null || dp.lng == null) return;
-        if (idx % step !== 0) return;
+      // Adaptive Stride: Cap maximum DOM markers in the viewport to ~130 to guarantee 60fps
+      const MAX_VIEWPORT_MARKERS = 130;
+      let step = 1;
+      if (visibleDps.length > MAX_VIEWPORT_MARKERS) {
+        step = Math.ceil(visibleDps.length / MAX_VIEWPORT_MARKERS);
+      }
 
-        try {
-          const pt = map.latLngToContainerPoint([dp.lat, dp.lng]);
-          if (canPlaceBadge(pt)) {
-            labeledIndices.add(idx);
-            placedPositions.push(pt);
-          }
-        } catch (e) { }
+      const size = depthDotSize(z);
+      const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+
+      const livePoints = [];
+      const candidatePoints = [];
+
+      visibleDps.forEach((item) => {
+        if (liveIndicesSet.has(item.idx)) {
+          livePoints.push(item);
+        } else {
+          candidatePoints.push(item);
+        }
       });
 
-      // Render markers
-      depthPoints.forEach((dp, idx) => {
-        const isLast = liveIndicesSet.has(idx);
-        const isKey = idx === 0 || isLast;
-        if (!isKey && idx % step !== 0) return;
-
-        // Last depth capture for EACH user always shows static green depth badge
-        const showLabel = isLast || labeledIndices.has(idx);
-
-        let dateStr = '';
-        if (dp.capturedAt) {
-          try {
-            const d = parseAnyDate(dp.capturedAt) || new Date(dp.capturedAt);
-            if (d && !isNaN(d.getTime())) {
-              const parts = new Intl.DateTimeFormat('en-IN', {
-                timeZone: 'Asia/Kolkata',
-                day: 'numeric',
-                month: 'short',
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true,
-              }).formatToParts(d);
-              const day = parts.find(p => p.type === 'day')?.value || '';
-              let month = parts.find(p => p.type === 'month')?.value || '';
-              if (month === 'Sep') month = 'Sept';
-              const hour = parts.find(p => p.type === 'hour')?.value || '';
-              const minute = parts.find(p => p.type === 'minute')?.value || '';
-              const dayPeriod = (parts.find(p => p.type === 'dayPeriod')?.value || '').toLowerCase();
-              dateStr = `${day} ${month}, ${hour}:${minute} ${dayPeriod}`;
-            }
-          } catch (e) { /* ignore */ }
+      // Priority 1: Render All Active Live Points in Viewport
+      livePoints.forEach(({ dp, idx }) => {
+        let ptPx;
+        try {
+          ptPx = map.latLngToContainerPoint([dp.lat, dp.lng]);
+        } catch (e) {
+          return;
         }
 
-        const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
-        let isStale = false;
-        if (isLast) {
-          const capTime = parseAnyDate(dp.capturedAt || dp.createdAt);
-          if (capTime && !isNaN(capTime.getTime())) {
-            isStale = (Date.now() - capTime.getTime()) > SIX_HOURS_MS;
+        placedPinPixels.push(ptPx);
+
+        // Find non-overlapping badge position: top -> bottom -> right -> left
+        let badgePos = 'top';
+        const boxTop = getBadgeBox(ptPx, 'top');
+        if (canPlaceBadgeBox(boxTop)) {
+          badgePos = 'top';
+          placedBadgeBoxes.push(boxTop);
+        } else {
+          const boxBottom = getBadgeBox(ptPx, 'bottom');
+          if (canPlaceBadgeBox(boxBottom)) {
+            badgePos = 'bottom';
+            placedBadgeBoxes.push(boxBottom);
           } else {
-            const execTime = parseAnyDate(executionData?.lastModified || executionData?.updatedAt);
-            if (execTime && !isNaN(execTime.getTime())) {
-              isStale = (Date.now() - execTime.getTime()) > SIX_HOURS_MS;
+            const boxRight = getBadgeBox(ptPx, 'right');
+            if (canPlaceBadgeBox(boxRight)) {
+              badgePos = 'right';
+              placedBadgeBoxes.push(boxRight);
+            } else {
+              placedBadgeBoxes.push(boxTop);
             }
           }
         }
 
-        const size = depthDotSize(z);
+        let isStale = false;
+        const capTime = parseAnyDate(dp.capturedAt || dp.createdAt);
+        if (capTime && !isNaN(capTime.getTime())) {
+          isStale = (Date.now() - capTime.getTime()) > SIX_HOURS_MS;
+        } else {
+          const execTime = parseAnyDate(executionData?.lastModified || executionData?.updatedAt);
+          if (execTime && !isNaN(execTime.getTime())) {
+            isStale = (Date.now() - execTime.getTime()) > SIX_HOURS_MS;
+          }
+        }
+
         const m = L.marker([dp.lat, dp.lng], {
           icon: depthPointIcon({
             depth: dp.depth,
             size,
-            showLabel,
-            isKey,
-            isLive: isLast,
+            showLabel: true,
+            isKey: true,
+            isLive: true,
             isStale,
             side: idx % 2 === 0 ? 'right' : 'left',
+            badgePosition: badgePos,
           }),
-          zIndexOffset: isLast ? 600 : 200,
+          zIndexOffset: 700,
         });
 
-        const parsedDepth = parseFloat(String(dp.depth ?? ''));
-        const isBelowThreshold = !isNaN(parsedDepth) && parsedDepth < 1.65;
-
-        const tooltipText = [
-          formatDepthM(dp.depth) + (isBelowThreshold ? ' (Below 1.65m)' : ''),
-          dateStr
-        ].filter(Boolean).join(' · ');
-
-        m.bindTooltip(tooltipText, {
-          direction: 'top',
-          offset: [0, -26],
-          className: isBelowThreshold ? 'gis-tip gis-tip--below-threshold' : 'gis-tip',
-          opacity: 1,
-        });
-
-        if (allDepthPhotos.length > 0) {
-          m.on('click', () => openLightbox(allDepthPhotos, idx));
-        }
-
+        bindDepthMarkerEvents(m, dp, idx);
         depthLayer.addLayer(m);
       });
 
-      applyGisZoomLabels(mapInstanceRef.current);
+      // Priority 2: Intermediate Sampled Points
+      candidatePoints.forEach(({ dp, idx }) => {
+        const isFirst = idx === 0;
+        if (!isFirst && idx % step !== 0) return;
+
+        let ptPx;
+        try {
+          ptPx = map.latLngToContainerPoint([dp.lat, dp.lng]);
+        } catch (e) {
+          return;
+        }
+
+        // Screen distance check: must be at least 22px away from any placed pin
+        const tooClose = placedPinPixels.some((p) => Math.hypot(ptPx.x - p.x, ptPx.y - p.y) < 22);
+        if (tooClose && !isFirst) return;
+
+        placedPinPixels.push(ptPx);
+
+        // Do not show static depth badge by default on depth points.
+        // It becomes visible when cursor goes there (hover), as requested by user.
+        const m = L.marker([dp.lat, dp.lng], {
+          icon: depthPointIcon({
+            depth: dp.depth,
+            size,
+            showLabel: false,
+            isKey: isFirst,
+            isLive: false,
+            side: idx % 2 === 0 ? 'right' : 'left',
+            badgePosition: 'top',
+          }),
+          zIndexOffset: isFirst ? 500 : 250,
+        });
+
+        bindDepthMarkerEvents(m, dp, idx);
+        depthLayer.addLayer(m);
+      });
+
+      applyGisZoomLabels(map);
     };
 
-    if (map.__gisPaintDepths) {
-      map.off('zoomend', map.__gisPaintDepths);
+    let paintTimer = null;
+    const schedulePaint = (delay = 45) => {
+      if (paintTimer) clearTimeout(paintTimer);
+      paintTimer = setTimeout(() => {
+        if (!mapInstanceRef.current) return;
+        requestAnimationFrame(paintAllMarkers);
+      }, delay);
+    };
+
+    if (map.__gisSchedulePaint) {
+      map.off('zoomend', map.__gisSchedulePaint);
+      map.off('moveend', map.__gisSchedulePaint);
     }
-    map.__gisPaintDepths = paintDepths;
-    map.on('zoomend', paintDepths);
-    paintDepths();
-    if (layerGroupRef.current) layerGroupRef.current.bringToFront();
+    map.__gisSchedulePaint = () => schedulePaint(45);
+    map.on('zoomend', map.__gisSchedulePaint);
+    map.on('moveend', map.__gisSchedulePaint);
+    paintAllMarkers();
+
+    if (layerGroupRef.current) layerGroupRef.current.bringToBack();
+    if (pitLayerRef.current) pitLayerRef.current.bringToFront();
     if (depthLayerRef.current) depthLayerRef.current.bringToFront();
 
     // Frame the trench on first load — overview, then zoom in for depths
@@ -1413,7 +1529,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
         map.setView(fit[0], 16);
       }
       isInitialFitDoneRef.current = true;
-      paintDepths();
+      schedulePaint(30);
     }
 
     setTimeout(() => {
@@ -1452,7 +1568,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
       return;
     }
     if (!mapInstanceRef.current || !layerGroupRef.current) return;
-    const groups = [layerGroupRef.current, depthLayerRef.current].filter(Boolean);
+    const groups = [layerGroupRef.current, pitLayerRef.current, depthLayerRef.current].filter(Boolean);
     const bounds = groups.reduce((acc, group) => {
       const next = group.getBounds();
       if (!next.isValid()) return acc;

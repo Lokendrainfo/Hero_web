@@ -256,8 +256,8 @@ export const GP_RACK_SVG_CONTENT = GP_ROUTER_SVG_CONTENT;
  * Creates a Leaflet DivIcon for a GP node using the 3D isometric router cylinder design.
  */
 export const createGpNodeIcon = (options = {}) => {
-  const width = options.width || 20;
-  const height = options.height || 17;
+  const width = options.width || 28;
+  const height = options.height || 24;
   return L.divIcon({
     className: 'gis-gp-node-marker',
     html: `
@@ -267,11 +267,11 @@ export const createGpNodeIcon = (options = {}) => {
         display: flex;
         align-items: center;
         justify-content: center;
-        filter: drop-shadow(0 0 1.5px #ffffff) drop-shadow(0 1.5px 3px rgba(0,0,0,0.55));
+        filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 2px 4px rgba(0,0,0,0.6));
         cursor: pointer;
         transition: transform 0.15s ease-out;
       "
-      onmouseover="this.style.transform='scale(1.35)'"
+      onmouseover="this.style.transform='scale(1.3)'"
       onmouseout="this.style.transform='scale(1)'"
       >
         ${GP_ROUTER_SVG_CONTENT(width, height)}

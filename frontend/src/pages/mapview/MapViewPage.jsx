@@ -18,7 +18,8 @@ import {
   LucideClock,
   LucideFileCheck,
   LucideHardHat,
-  LucideExternalLink
+  LucideExternalLink,
+  LucideRadio
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { taskService } from '../../services/taskService';
@@ -272,6 +273,66 @@ export const MapViewPage = () => {
             Open Trenching Map
           </button>
         </div>
+      </div>
+
+      {/* BharatNet T&D Monitoring Navigation Card */}
+      <div style={{
+        background: '#ffffff',
+        borderRadius: '12px',
+        padding: '16px 20px',
+        border: '1px solid #e2e8f0',
+        borderLeft: '4px solid #10b981',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+        marginBottom: '20px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: '16px'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <div style={{
+            width: 44,
+            height: 44,
+            borderRadius: '10px',
+            background: 'rgba(16, 185, 129, 0.1)',
+            color: '#059669',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}>
+            <LucideRadio size={22} />
+          </div>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#0f172a' }}>
+              BharatNet T&amp;D Monitoring
+            </h3>
+            <p style={{ margin: '2px 0 0', fontSize: '0.84rem', color: '#64748b' }}>
+              Live Trenching &amp; Ducting Monitoring
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => navigate('/map-view/bharatnet')}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '8px 18px',
+            borderRadius: '8px',
+            background: '#0f172a',
+            border: '1px solid #0f172a',
+            color: '#ffffff',
+            fontSize: '0.875rem',
+            fontWeight: '600',
+            cursor: 'pointer',
+            boxShadow: '0 2px 4px rgba(15,23,42,0.15)',
+            transition: 'all 0.15s ease'
+          }}
+        >
+          <LucideMapPin size={16} /> Open Monitoring Map
+        </button>
       </div>
 
       {/* Date Filter Bar */}
