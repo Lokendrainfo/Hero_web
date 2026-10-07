@@ -12,6 +12,101 @@ export const geoJsonToLeafletLatLng = (coord) => {
 };
 
 /**
+ * Calculates Haversine distance in meters between two lat/lng coordinates.
+ */
+export const haversineDistanceM = (lat1, lon1, lat2, lon2) => {
+  const R = 6371000;
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLon = (lon2 - lon1) * rad;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
+/**
+ * Calculates total route length in kilometers for a single GeoJSON Feature.
+ */
+export const calculateGeoJsonFeatureLengthKm = (feature) => {
+  if (!feature) return 0;
+  const props = feature.properties || {};
+
+  // Check explicit property lengths first
+  const propLen = props.lengthKm ?? props.length_km ?? props.lengthKM ?? props.segmentLengthKm;
+  if (propLen != null && !isNaN(Number(propLen)) && Number(propLen) > 0) {
+    return Number(propLen);
+  }
+
+  const rawLen = props.length ?? props.distance ?? props.segmentLength;
+  if (rawLen != null && !isNaN(Number(rawLen)) && Number(rawLen) > 0) {
+    const val = Number(rawLen);
+    return val > 100 ? val / 1000.0 : val;
+  }
+
+  // Fallback: Compute length from LineString / MultiLineString coordinates
+  const geometry = feature.geometry || feature;
+  if (!geometry || !geometry.coordinates) return 0;
+
+  const { type, coordinates } = geometry;
+  let totalMeters = 0;
+
+  const addLineLength = (coordsList) => {
+    if (!Array.isArray(coordsList) || coordsList.length < 2) return;
+    for (let i = 0; i < coordsList.length - 1; i++) {
+      const pt1 = geoJsonToLeafletLatLng(coordsList[i]);
+      const pt2 = geoJsonToLeafletLatLng(coordsList[i + 1]);
+      if (pt1 && pt2) {
+        totalMeters += haversineDistanceM(pt1[0], pt1[1], pt2[0], pt2[1]);
+      }
+    }
+  };
+
+  if (type === 'LineString') {
+    addLineLength(coordinates);
+  } else if (type === 'MultiLineString') {
+    (coordinates || []).forEach(line => addLineLength(line));
+  }
+
+  return totalMeters / 1000.0;
+};
+
+/**
+ * Calculates total route length in kilometers for a GeoJSON FeatureCollection (paths).
+ */
+export const calculateGeoJsonCollectionLengthKm = (geoJsonData) => {
+  if (!geoJsonData) return 0;
+  const features = Array.isArray(geoJsonData.features)
+    ? geoJsonData.features
+    : Array.isArray(geoJsonData)
+    ? geoJsonData
+    : geoJsonData.type === 'Feature'
+    ? [geoJsonData]
+    : [];
+
+  let totalKm = 0;
+  features.forEach(feat => {
+    totalKm += calculateGeoJsonFeatureLengthKm(feat);
+  });
+  return totalKm;
+};
+
+/**
+ * Calculates accurate plan length in kilometers from plan summary, direct properties, or GeoJSON paths features.
+ */
+export const calculatePlanLengthKm = (plan) => {
+  if (!plan) return 0;
+  if (plan.summary?.totalLengthKm && Number(plan.summary.totalLengthKm) > 0) {
+    return Number(plan.summary.totalLengthKm);
+  }
+  if (plan.lengthKm && Number(plan.lengthKm) > 0) {
+    return Number(plan.lengthKm);
+  }
+  return calculateGeoJsonCollectionLengthKm(plan.paths);
+};
+
+/**
  * Extracts all valid [lat, lng] points from GeoJSON FeatureCollection or Geometry objects.
  */
 export const extractAllLatLngs = (geoJsonData) => {

@@ -13,7 +13,7 @@ import {
   LucideMapPin
 } from 'lucide-react';
 import { plannerService } from '../../services/plannerService';
-import { calculateMultiPlanBounds, getPlanColor } from '../../utils/plannerMapUtils';
+import { calculateMultiPlanBounds, getPlanColor, calculateGeoJsonCollectionLengthKm } from '../../utils/plannerMapUtils';
 import { useToast } from '../../context/ToastContext';
 
 export const AlignPlanMapButton = ({
@@ -127,6 +127,10 @@ export const AlignPlanMapButton = ({
 
       const colorObj = getPlanColor(0);
       const planName = detailsRes?.planName || layersRes?.summary?.planName || selectedPlanObj?.planName || `Plan ${selectedPlanId.slice(0, 8)}`;
+      
+      const computedLenKm = Number(layersRes?.lengthKm || detailsRes?.lengthKm || selectedPlanObj?.lengthKm || 0) || calculateGeoJsonCollectionLengthKm(paths);
+      const routeCount = layersRes?.routeCount || pathFeatures.length;
+      const nodeCount = layersRes?.nodeCount || nodeFeatures.length;
 
       const loadedPlan = {
         planId: selectedPlanId,
@@ -134,19 +138,19 @@ export const AlignPlanMapButton = ({
         circle: detailsRes?.circle || selectedPlanObj?.circle || '',
         district: detailsRes?.district || selectedPlanObj?.district || '',
         blockName: detailsRes?.blockName || selectedPlanObj?.blockName || '',
-        lengthKm: layersRes?.lengthKm || detailsRes?.lengthKm || selectedPlanObj?.lengthKm || 0,
-        routeCount: layersRes?.routeCount || pathFeatures.length,
-        nodeCount: layersRes?.nodeCount || nodeFeatures.length,
+        lengthKm: computedLenKm,
+        routeCount,
+        nodeCount,
         paths,
         nodes,
         color: colorObj,
         visible: true,
-        summary: layersRes?.summary || {
+        summary: {
           planName,
-          totalRoutes: layersRes?.routeCount || pathFeatures.length,
-          totalNodes: layersRes?.nodeCount || nodeFeatures.length,
-          totalLengthKm: layersRes?.lengthKm || 0,
-          formattedLength: `${round2(layersRes?.lengthKm || 0)} km`
+          totalRoutes: layersRes?.summary?.totalRoutes || routeCount,
+          totalNodes: layersRes?.summary?.totalNodes || nodeCount,
+          totalLengthKm: computedLenKm,
+          formattedLength: `${computedLenKm.toFixed(2)} km`
         }
       };
 

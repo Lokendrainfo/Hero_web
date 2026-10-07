@@ -10,7 +10,7 @@ import {
   LucidePlus,
   LucideInfo
 } from 'lucide-react';
-import { isGpNode } from '../../utils/plannerMapUtils';
+import { isGpNode, calculatePlanLengthKm } from '../../utils/plannerMapUtils';
 
 export const PlanLayerManagementPanel = ({
   activePlansList = [],
@@ -40,28 +40,28 @@ export const PlanLayerManagementPanel = ({
     
     // Paths deduplication
     const features = plan.paths?.features || [];
-    features.forEach((feat) => {
-      const code = feat.properties?.routeCode || feat.properties?.code || feat.properties?.routeId || feat.id;
+    features.forEach((feat, idx) => {
+      const code = feat.properties?.routeCode || feat.properties?.code || feat.properties?.routeId || feat.id || `route_${idx}`;
       if (code) uniqueRouteIds.add(code);
     });
 
     // Nodes deduplication
     const nodeFeats = plan.nodes?.features || [];
-    nodeFeats.forEach((feat) => {
-      const nodeId = feat.properties?.nodeId || feat.properties?.id || feat.id;
+    nodeFeats.forEach((feat, idx) => {
+      const nodeId = feat.properties?.nodeId || feat.properties?.id || feat.id || `node_${idx}`;
       if (nodeId) uniqueNodeIds.add(nodeId);
       if (isGpNode(feat.properties, feat.properties?.nodeType)) {
         totalGpCount++;
       }
     });
 
-    // Length summation
-    const planLen = plan.summary?.totalLengthKm || 0;
+    // Length summation from summary or GeoJSON coordinates
+    const planLen = calculatePlanLengthKm(plan);
     totalCombinedLengthKm += planLen;
   });
 
-  const totalRoutesCount = uniqueRouteIds.size || activePlansList.reduce((acc, p) => p.visible ? acc + (p.summary?.totalRoutes || 0) : acc, 0);
-  const totalNodesCount = uniqueNodeIds.size || activePlansList.reduce((acc, p) => p.visible ? acc + (p.summary?.totalNodes || 0) : acc, 0);
+  const totalRoutesCount = uniqueRouteIds.size || activePlansList.reduce((acc, p) => p.visible ? acc + (p.summary?.totalRoutes || p.routeCount || (p.paths?.features || []).length) : acc, 0);
+  const totalNodesCount = uniqueNodeIds.size || activePlansList.reduce((acc, p) => p.visible ? acc + (p.summary?.totalNodes || p.nodeCount || (p.nodes?.features || []).length) : acc, 0);
 
   return (
     <div
@@ -255,6 +255,11 @@ export const PlanLayerManagementPanel = ({
                 {/* Per-Plan Sub-Details */}
                 {(() => {
                   const planGpCount = (plan.nodes?.features || []).filter(f => isGpNode(f.properties, f.properties?.nodeType)).length;
+                  const routesCount = plan.summary?.totalRoutes || plan.routeCount || (plan.paths?.features || []).length;
+                  const nodesCount = plan.summary?.totalNodes || plan.nodeCount || (plan.nodes?.features || []).length;
+                  const planLengthKm = calculatePlanLengthKm(plan);
+                  const formattedLen = planLengthKm > 0 ? `${planLengthKm.toFixed(2)} km` : (plan.summary?.formattedLength || '0 km');
+
                   return (
                     <div
                       style={{
@@ -268,9 +273,9 @@ export const PlanLayerManagementPanel = ({
                         flexWrap: 'wrap'
                       }}
                     >
-                      <span><strong>{plan.summary?.totalRoutes || 0}</strong> routes</span>
+                      <span><strong>{routesCount}</strong> routes</span>
                       <span>·</span>
-                      <span><strong>{plan.summary?.totalNodes || 0}</strong> nodes</span>
+                      <span><strong>{nodesCount}</strong> nodes</span>
                       {planGpCount > 0 && (
                         <>
                           <span>·</span>
@@ -280,7 +285,7 @@ export const PlanLayerManagementPanel = ({
                         </>
                       )}
                       <span>·</span>
-                      <span><strong>{plan.summary?.formattedLength || '0 km'}</strong></span>
+                      <span><strong>{formattedLen}</strong></span>
                     </div>
                   );
                 })()}

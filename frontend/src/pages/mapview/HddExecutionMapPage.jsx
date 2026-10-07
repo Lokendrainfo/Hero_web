@@ -1772,12 +1772,12 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
           <div className="gis-empty-overlay">
             <EmptyState
               title={!hddStarted ? "HDD Shot / Trenching Not Started" : "No execution on this date"}
-              subtitle={!hddStarted 
-                ? "HDD shot / trenching has not started yet. Pits will be displayed on the map once execution begins." 
-                : (isBlockMode 
-                    ? `No pits, trenches, or depth points found for block ${executionData?.block || ''} on ${selectedDate || 'the selected day'}.`
-                    : `No pits, trenches, or depth points found for ${executionData?.user || 'this user'} on ${selectedDate || 'the selected day'}.`
-                  )
+              subtitle={!hddStarted
+                ? "HDD shot / trenching has not started yet. Pits will be displayed on the map once execution begins."
+                : (isBlockMode
+                  ? `No pits, trenches, or depth points found for block ${executionData?.block || ''} on ${selectedDate || 'the selected day'}.`
+                  : `No pits, trenches, or depth points found for ${executionData?.user || 'this user'} on ${selectedDate || 'the selected day'}.`
+                )
               }
             />
           </div>
