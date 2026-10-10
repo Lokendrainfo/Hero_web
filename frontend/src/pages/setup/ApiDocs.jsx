@@ -97,6 +97,103 @@ const ENDPOINTS_CATALOG = [
     category: 'TASKS & HDD',
     items: [
       {
+        id: 'hdd_shots_chassis',
+        method: 'GET',
+        title: 'HDD Shot Count & Meters (by Chassis)',
+        path: '/api/v1/machines/chassis-hdd-shots/',
+        description: 'Machine Chassis Number-Wise HDD Shot Count and Shot Meters API. Returns HDD Shot Count, HDD Shot Meters, Machine ID, and Last Updated Date & Time. Supports single chassis number, comma-separated list of chassis numbers, or retrieving all active fleet machines.',
+        params: [
+          { name: 'chassis_number', in: 'query', type: 'string', required: false, default: '600202608401', desc: 'Machine chassis number (e.g. 600202608401) or comma-separated list. Leave blank to retrieve all machines.' },
+          { name: 'refresh', in: 'query', type: 'boolean', required: false, default: '', desc: 'Set to "true" to force fresh recalculation from live tasks' },
+        ],
+        sampleResponse: {
+          success: true,
+          data: [
+            {
+              chassis_number: "600202608401",
+              hdd_shot_count: 201,
+              hdd_shot_meters: 30044.64,
+              machine_id: 6,
+              last_updated: "2026-10-10T11:18:40"
+            }
+          ],
+          total_records: 1
+        },
+        emptyResponse: {
+          success: true,
+          data: [],
+          total_records: 0
+        },
+        errorResponse: {
+          success: false,
+          message: "No machine records found matching chassis number(s): INVALID123",
+          data: []
+        }
+      },
+      {
+        id: 'hdd_shots_chassis_path',
+        method: 'GET',
+        title: 'Get HDD Shots by Chassis Path',
+        path: '/api/v1/machines/chassis-hdd-shots/{chassis_number}/',
+        description: 'Retrieve HDD shot count and drilled meters for a specific machine using its chassis number directly in the URL path.',
+        params: [
+          { name: 'chassis_number', in: 'path', type: 'string', required: true, default: '600202608401', desc: 'Target machine chassis number' },
+        ],
+        sampleResponse: {
+          success: true,
+          data: [
+            {
+              chassis_number: "600202608401",
+              hdd_shot_count: 201,
+              hdd_shot_meters: 30044.64,
+              machine_id: 6,
+              last_updated: "2026-10-10T11:18:40"
+            }
+          ],
+          total_records: 1
+        },
+        emptyResponse: {
+          success: true,
+          data: [],
+          total_records: 0
+        },
+        errorResponse: {
+          success: false,
+          message: "No machine records found matching chassis number(s): INVALID123",
+          data: []
+        }
+      },
+      {
+        id: 'hdd_shots_batch',
+        method: 'POST',
+        title: 'HDD Shots Batch Query (POST)',
+        path: '/api/v1/machines/chassis-hdd-shots/',
+        description: 'Batch query machine HDD shot count and meters by sending an array or comma-separated string of chassis numbers in JSON payload.',
+        params: [
+          { name: 'chassis_number', in: 'body', type: 'string', required: true, default: '600202608401, 600202608397', desc: 'Comma-separated chassis numbers to query' },
+        ],
+        sampleResponse: {
+          success: true,
+          data: [
+            {
+              chassis_number: "600202608401",
+              hdd_shot_count: 201,
+              hdd_shot_meters: 30044.64,
+              machine_id: 6,
+              last_updated: "2026-10-10T11:18:40"
+            },
+            {
+              chassis_number: "600202608397",
+              hdd_shot_count: 157,
+              hdd_shot_meters: 25040.93,
+              machine_id: 2,
+              last_updated: "2026-10-10T18:38:44"
+            }
+          ],
+          total_records: 2
+        }
+      },
+      {
         id: 'my_tasks',
         method: 'GET',
         title: 'My assigned tasks',
