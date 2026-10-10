@@ -7,8 +7,7 @@ import {
   LucideMapPin,
   LucideChevronsUpDown,
   LucideChevronUp,
-  LucideChevronDown,
-  LucideGlobe,
+  Globe,
   LucideCalendar,
   LucideDatabase,
   LucideBuilding2,
@@ -93,6 +92,9 @@ const getTargetUrl = (userObj) => {
     const urlObj = isRel ? new URL(target, window.location.origin) : new URL(target);
     urlObj.searchParams.set('isBharatNetMap', 'true');
     urlObj.searchParams.set('source', 'bharatnet');
+    if (userObj.machineId) {
+      urlObj.searchParams.set('machineId', userObj.machineId);
+    }
     // In local development on localhost, keep relative path so it loads inside local dev port
     if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
       return `${urlObj.pathname}${urlObj.search}`;
@@ -412,7 +414,7 @@ export const BharatNetMapPage = () => {
       {/* BSNL Pragati Patal Pills Bar */}
       <div className="pragati-pills-bar">
         <div className="pragati-pill">
-          <LucideGlobe size={15} color="#5b3cc4" />
+          <Globe size={15} color="#5b3cc4" />
           <span className="pragati-pill-label">State:</span>
           <span className="pragati-pill-val">{summaryMetrics.state}</span>
         </div>

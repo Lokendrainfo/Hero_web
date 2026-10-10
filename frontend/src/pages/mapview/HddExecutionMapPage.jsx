@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -7,7 +7,7 @@ import {
   LucideRefreshCw,
   LucideMaximize2,
   LucideMinimize2,
-  LucideGlobe,
+  Globe,
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 import { useAuth } from '../../hooks/useAuth';
@@ -21,6 +21,7 @@ import {
   getVisiblePitsForMap,
   mergeMultipleTasksExecution
 } from '../../utils/mapHddExecutionResponse';
+import { trackingService } from '../../services/trackingService';
 import { PhotoLightbox, formatImageUrl } from '../../components/common/PhotoLightbox';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -42,6 +43,133 @@ import {
 } from '../../utils/gisMapMarkers';
 
 const GisExecutionMap3D = lazy(() => import('../../components/maps/GisExecutionMap3D'));
+
+const machineStatusColors = {
+  RUNNING: { fill: '#059669', ring: '#a7f3d0' },
+  WORKING: { fill: '#059669', ring: '#a7f3d0' },
+  IDLE: { fill: '#d97706', ring: '#fde68a' },
+  STOPPED: { fill: '#dc2626', ring: '#fecaca' },
+  OFFLINE: { fill: '#64748b', ring: '#cbd5e1' },
+};
+
+const buildMachineMarkerHtml = (course, status, name, isAssigned) => {
+  const st = (status || 'RUNNING').toUpperCase();
+  const colors = machineStatusColors[st] || machineStatusColors.RUNNING;
+  const deg = Number(course) || 0;
+  const ringColor = isAssigned ? '#38bdf8' : colors.ring;
+  const borderWidth = isAssigned ? '3.5px' : '2.5px';
+
+  return `
+    <div style="
+      position: relative;
+      width: 44px;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    ">
+      <div style="
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: ${colors.fill};
+        border: ${borderWidth} solid #ffffff;
+        box-shadow: 0 0 0 2.5px ${ringColor}, 0 4px 12px rgba(0, 0, 0, 0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      ">
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          style="
+            transform: rotate(${deg}deg);
+            transform-origin: center center;
+            display: block;
+            transition: transform 0.3s ease;
+          "
+        >
+          <path
+            d="M12 2.5 L19.5 20.5 L12 16.2 L4.5 20.5 Z"
+            fill="#ffffff"
+            stroke="rgba(15,23,42,0.22)"
+            stroke-width="0.8"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </div>
+      ${name ? `
+        <div style="
+          position: absolute;
+          top: 38px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: ${isAssigned ? '#0284c7' : 'rgba(15, 23, 42, 0.92)'};
+          color: #ffffff;
+          font-size: 10px;
+          font-weight: 700;
+          padding: 2px 6px;
+          border-radius: 4px;
+          white-space: nowrap;
+          border: 1px solid rgba(255,255,255,0.3);
+          box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+          pointer-events: none;
+        ">
+          ${isAssigned ? '★ ' : ''}${name}
+        </div>
+      ` : ''}
+    </div>
+  `;
+};
+
+export const isMachineMatchingUser = (liveMachine, userMachineKeys) => {
+  if (!liveMachine || !userMachineKeys || userMachineKeys.length === 0) return false;
+
+  const mChassis = String(liveMachine.machine_chassis_no || liveMachine.chassis_no || liveMachine.serial_number || '').trim().toLowerCase();
+  const mName = String(liveMachine.name || liveMachine.model_name || '').trim().toLowerCase();
+  const mId = String(liveMachine.id ?? '').trim().toLowerCase();
+
+  const liveChassisDigits = mChassis.match(/\d{4,}/);
+  const liveNameDigits = mName.match(/\d{4,}/);
+  const liveLast4 = (liveChassisDigits ? liveChassisDigits[0] : (liveNameDigits ? liveNameDigits[0] : '')).slice(-4);
+
+  for (const rawKey of userMachineKeys) {
+    if (!rawKey) continue;
+    const key = String(rawKey).trim().toLowerCase();
+    if (!key) continue;
+
+    // 1. Direct equality with chassis, name, or id
+    if (mChassis === key || mName === key || mId === key) {
+      return true;
+    }
+
+    // 2. Substring match
+    if (key.length >= 4) {
+      if (mChassis.includes(key) || mName.includes(key)) {
+        return true;
+      }
+      if (key.includes(mChassis) && mChassis.length >= 4) {
+        return true;
+      }
+    }
+
+    // 3. Last 4 digits match (e.g. chassis 600202608409 ends with 8409 or name 'A600 HDD (8409)' contains 8409)
+    const keyDigits = key.match(/\d{4,}/);
+    if (keyDigits) {
+      const keyLast4 = keyDigits[0].slice(-4);
+      if (liveLast4 && liveLast4 === keyLast4) {
+        return true;
+      }
+      if (mChassis.endsWith(keyLast4) || mName.includes(keyLast4)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
 
 const segmentMetaCache = new Map();
 
@@ -191,9 +319,120 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
   const layerGroupRef = useRef(null);
   const pitLayerRef = useRef(null);
   const depthLayerRef = useRef(null);
+  const machineLayerRef = useRef(null);
   const plannerLayerRef = useRef(null);
   const tileLayerRef = useRef(null);
   const wrapperRef = useRef(null);
+
+  // Live Machines State from FiberForce / Fiber HDD Portal API
+  const [liveMachines, setLiveMachines] = useState([]);
+  const [showLiveMachines, setShowLiveMachines] = useState(true);
+  const [selectedLiveMachine, setSelectedLiveMachine] = useState(null);
+
+  const fetchLiveMachines = React.useCallback(async () => {
+    if (isBharatNetMap) return;
+    try {
+      const res = await trackingService.getLiveLocations();
+      const raw = res?.data?.data !== undefined ? res.data.data : (res?.data !== undefined ? res.data : res);
+      let list = [];
+      if (Array.isArray(raw)) list = raw;
+      else if (raw && Array.isArray(raw.results)) list = raw.results;
+      else if (raw && Array.isArray(raw.data)) list = raw.data;
+      setLiveMachines(list.filter((m) => m && m.latitude != null && m.longitude != null));
+    } catch (err) {
+      console.warn('[HddExecutionMapPage] Could not load live machines:', err);
+    }
+  }, [isBharatNetMap]);
+
+  useEffect(() => {
+    if (isBharatNetMap) return;
+    fetchLiveMachines();
+    const interval = setInterval(fetchLiveMachines, 10000);
+    return () => clearInterval(interval);
+  }, [isBharatNetMap, fetchLiveMachines]);
+
+  // Target Machine Keys for the active execution/block user(s)
+  const userMachineKeys = useMemo(() => {
+    const keys = new Set();
+    const addKey = (val) => {
+      if (val != null) {
+        const s = String(val).trim();
+        if (s && s !== '—' && s !== 'N/A' && s !== 'null' && s !== 'undefined') {
+          if (s.includes(',')) {
+            s.split(',').forEach((sub) => {
+              const cleanSub = sub.trim();
+              if (cleanSub) keys.add(cleanSub);
+            });
+          } else {
+            keys.add(s);
+          }
+        }
+      }
+    };
+
+    // 1. From searchParams machineId (e.g. from user row or block button)
+    addKey(searchParams.get('machineId'));
+
+    // 2. From current executionData
+    if (executionData) {
+      addKey(executionData.machineId);
+      addKey(executionData.machineName);
+      addKey(executionData.machineModel);
+      if (Array.isArray(executionData.machineIds)) {
+        executionData.machineIds.forEach(addKey);
+      }
+      if (Array.isArray(executionData.machineNames)) {
+        executionData.machineNames.forEach(addKey);
+      }
+      if (Array.isArray(executionData.machinesList)) {
+        executionData.machinesList.forEach((m) => {
+          if (m) {
+            addKey(m.machineId);
+            addKey(m.machineName);
+            addKey(m.machineModel);
+          }
+        });
+      }
+      if (executionData.machineDetails && typeof executionData.machineDetails === 'object') {
+        addKey(executionData.machineDetails.machineId);
+        addKey(executionData.machineDetails.chassisNo);
+        addKey(executionData.machineDetails.registrationNo);
+        addKey(executionData.machineDetails.serialNumber);
+        addKey(executionData.machineDetails.name);
+      }
+    }
+
+    // 3. From rawExecutionData
+    if (rawExecutionData) {
+      addKey(rawExecutionData.machineId);
+      addKey(rawExecutionData.machineName);
+      if (Array.isArray(rawExecutionData.machineIds)) {
+        rawExecutionData.machineIds.forEach(addKey);
+      }
+      if (Array.isArray(rawExecutionData.machineNames)) {
+        rawExecutionData.machineNames.forEach(addKey);
+      }
+      if (Array.isArray(rawExecutionData.machinesList)) {
+        rawExecutionData.machinesList.forEach((m) => {
+          if (m) {
+            addKey(m.machineId);
+            addKey(m.machineName);
+          }
+        });
+      }
+    }
+
+    return Array.from(keys);
+  }, [executionData, rawExecutionData, searchParams]);
+
+  // STRICTLY filter live machines to ONLY what this user / block has (NEVER on BharatNet map):
+  const userFilteredMachines = useMemo(() => {
+    if (isBharatNetMap) return [];
+    if (!liveMachines || liveMachines.length === 0 || userMachineKeys.length === 0) {
+      return [];
+    }
+    return liveMachines.filter((m) => isMachineMatchingUser(m, userMachineKeys));
+  }, [isBharatNetMap, liveMachines, userMachineKeys]);
 
   const plannerLayerGroupsRef = useRef(new Map());
   const [activePlansList, setActivePlansList] = useState([]);
@@ -236,6 +475,9 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
       }
       if (depthLayerRef.current) {
         depthLayerRef.current.bringToFront();
+      }
+      if (machineLayerRef.current) {
+        machineLayerRef.current.bringToFront();
       }
 
       // Check if there is an active execution route on the map
@@ -458,6 +700,21 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
               });
               normalized.shots = mergedShots;
             }
+            if (childNorm.machineId || childNorm.machineName) {
+              if (!normalized.machineIds) normalized.machineIds = [];
+              if (childNorm.machineId && !normalized.machineIds.includes(childNorm.machineId)) {
+                normalized.machineIds.push(childNorm.machineId);
+              }
+              if (!normalized.machinesList) normalized.machinesList = [];
+              if (!normalized.machinesList.some(m => m.machineId === childNorm.machineId)) {
+                normalized.machinesList.push({
+                  machineId: childNorm.machineId,
+                  machineName: childNorm.machineName,
+                  machineModel: childNorm.machineModel,
+                  machineVendor: childNorm.machineVendor
+                });
+              }
+            }
             if (childNorm.pits && childNorm.pits.length > 0) {
               const mergedPits = [...(normalized.pits || [])];
               const seenPitKeys = new Set(mergedPits.map(p => `${p.serialNo || p.name || ''}_${p.diggingTime || ''}`));
@@ -575,6 +832,21 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
                   }
                 });
                 normalized.shots = mergedShots;
+              }
+              if (sibNorm.machineId || sibNorm.machineName) {
+                if (!normalized.machineIds) normalized.machineIds = [];
+                if (sibNorm.machineId && !normalized.machineIds.includes(sibNorm.machineId)) {
+                  normalized.machineIds.push(sibNorm.machineId);
+                }
+                if (!normalized.machinesList) normalized.machinesList = [];
+                if (!normalized.machinesList.some(m => m.machineId === sibNorm.machineId)) {
+                  normalized.machinesList.push({
+                    machineId: sibNorm.machineId,
+                    machineName: sibNorm.machineName,
+                    machineModel: sibNorm.machineModel,
+                    machineVendor: sibNorm.machineVendor
+                  });
+                }
               }
               if (sibNorm.pits && sibNorm.pits.length > 0) {
                 const mergedPits = [...(normalized.pits || [])];
@@ -1519,6 +1791,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
     if (layerGroupRef.current) layerGroupRef.current.bringToBack();
     if (pitLayerRef.current) pitLayerRef.current.bringToFront();
     if (depthLayerRef.current) depthLayerRef.current.bringToFront();
+    if (machineLayerRef.current) machineLayerRef.current.bringToFront();
 
     // Frame the trench on first load — overview, then zoom in for depths
     if (!isInitialFitDoneRef.current) {
@@ -1540,6 +1813,101 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
       }
     }, 150);
   }, [executionData, mapType, selectedDate, viewMode]);
+
+  // Paint Live Machines on Leaflet Map (ONLY machines belonging to this user / block)
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    if (!machineLayerRef.current) {
+      machineLayerRef.current = L.featureGroup().addTo(mapInstanceRef.current);
+    }
+    const layer = machineLayerRef.current;
+    layer.clearLayers();
+
+    if (isBharatNetMap || !showLiveMachines || !userFilteredMachines || userFilteredMachines.length === 0) return;
+
+    userFilteredMachines.forEach((m) => {
+      const lat = parseFloat(m.latitude);
+      const lng = parseFloat(m.longitude);
+      if (isNaN(lat) || isNaN(lng)) return;
+
+      const course = m.course_deg ?? m.heading ?? m.tilt ?? 0;
+      const status = (m.status || 'RUNNING').toUpperCase();
+      const name = m.name || m.model_name || `HDD ${m.id}`;
+
+      const icon = L.divIcon({
+        className: 'live-machine-leaflet-marker',
+        html: buildMachineMarkerHtml(course, status, name, true),
+        iconSize: [44, 44],
+        iconAnchor: [22, 22],
+        popupAnchor: [0, -22],
+      });
+
+      const marker = L.marker([lat, lng], {
+        icon,
+        zIndexOffset: 1500,
+      });
+
+      const popupHtml = `
+        <div style="font-family: inherit; min-width: 250px; max-width: 300px; padding: 2px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <div style="font-size: 0.95rem; font-weight: 700; color: #0f172a;">
+              ${name}
+            </div>
+            <span style="background: ${status === 'RUNNING' ? '#059669' : '#d97706'}; color: #fff; padding: 2px 7px; border-radius: 999px; font-size: 0.7rem; font-weight: 700;">
+              ${status}
+            </span>
+          </div>
+          <div style="font-size: 0.75rem; color: #64748b; margin: 2px 0 8px;">
+            Chassis <strong style="color: #334155">${m.chassis_no || m.machine_chassis_no || m.serial_number || '—'}</strong>
+            <span style="margin-left: 6px; color: #0284c7; font-weight: 700;">● Assigned machine</span>
+          </div>
+          <div style="display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px;">
+            <span style="background: #f1f5f9; color: #334155; padding: 2px 7px; border-radius: 999px; font-size: 0.7rem; font-weight: 600;">
+              Speed: ${Number(m.speed || 0).toFixed(1)} km/h
+            </span>
+            <span style="background: #eff6ff; color: #1d4ed8; padding: 2px 7px; border-radius: 999px; font-size: 0.7rem; font-weight: 600;">
+              Heading: ${Number(course).toFixed(0)}° ${m.heading_label || ''}
+            </span>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px 8px; font-size: 0.75rem; color: #475569; line-height: 1.35;">
+            <div>Lat: <strong style="color: #0f172a">${lat.toFixed(6)}</strong></div>
+            <div>Lng: <strong style="color: #0f172a">${lng.toFixed(6)}</strong></div>
+            <div>Fuel: <strong style="color: #0f172a">${m.fuel_level != null ? `${Number(m.fuel_level).toFixed(1)} L` : '—'}</strong></div>
+            <div>Fuel %: <strong style="color: #0f172a">${m.fuel_percentage != null ? `${m.fuel_percentage}%` : '—'}</strong></div>
+            <div>RPM: <strong style="color: #0f172a">${m.rpm || 0}</strong></div>
+            <div>Coolant: <strong style="color: #0f172a">${m.coolant_temp ? `${Number(m.coolant_temp).toFixed(1)}°C` : '—'}</strong></div>
+          </div>
+          ${m.operator_name ? `<div style="margin-top: 6px; font-size: 0.72rem; color: #64748b;">Operator: <strong style="color: #334155">${m.operator_name}</strong></div>` : ''}
+          <button id="btn-inspect-live-m-${m.id}" style="
+            margin-top: 10px;
+            width: 100%;
+            background: #0f172a;
+            color: #ffffff;
+            border: none;
+            padding: 7px 12px;
+            border-radius: 6px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            cursor: pointer;
+          ">
+            Inspect Machine Dashboard →
+          </button>
+        </div>
+      `;
+
+      marker.bindPopup(popupHtml, { maxWidth: 300, className: 'gis-popup' });
+      marker.on('popupopen', () => {
+        const btn = document.getElementById(`btn-inspect-live-m-${m.id}`);
+        if (btn) {
+          btn.onclick = () => window.open(`/machines/${m.id}`, '_blank');
+        }
+      });
+
+      layer.addLayer(marker);
+    });
+
+    layer.bringToFront();
+  }, [isBharatNetMap, userFilteredMachines, showLiveMachines]);
 
   const closeMap = () => {
     if (window.opener && !window.opener.closed) {
@@ -1649,7 +2017,19 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
                 </span>
               ) : (
                 <span>
-                  <strong>User: {executionData.user || 'Supervisor'}</strong> · Block: {executionData.block || '—'} · {executionData.district || executionData.state || '—'}
+                  <strong>User: {executionData.user || 'Supervisor'}</strong>
+                  {Boolean(executionData.machineId || executionData.machineName || searchParams.get('machineId')) && (
+                    <> · Machine: <strong style={{ color: 'var(--text-main, #0f172a)' }}>
+                      {String(
+                        typeof executionData.machineId === 'string'
+                          ? executionData.machineId
+                          : (typeof executionData.machineName === 'string'
+                              ? executionData.machineName
+                              : (searchParams.get('machineId') || ''))
+                      )}
+                    </strong></>
+                  )}
+                  {' '}· Block: {executionData.block || '—'} · {executionData.district || executionData.state || '—'}
                 </span>
               )}
               {(executionData.lastModified || executionData.updatedAt) && (
@@ -1730,8 +2110,41 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
             onAlignMultiPlans={handleAlignMultiPlans}
             onAlignPlan={handleAlignPlan}
           />
+          {!isBharatNetMap && userFilteredMachines.length > 0 && (
+            <button
+              type="button"
+              className="gis-map-chip"
+              onClick={() => setShowLiveMachines(prev => !prev)}
+              title="Toggle live machine location"
+              style={{
+                padding: '0 10px',
+                height: 32,
+                background: showLiveMachines ? 'rgba(5, 150, 105, 0.9)' : 'rgba(15, 23, 42, 0.75)',
+                color: '#ffffff',
+                border: '1px solid rgba(255,255,255,0.2)',
+                borderRadius: 8,
+                fontSize: '0.78rem',
+                fontWeight: 650,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                cursor: 'pointer'
+              }}
+            >
+              <span style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: showLiveMachines ? '#10b981' : '#94a3b8',
+                boxShadow: showLiveMachines ? '0 0 6px #10b981' : 'none'
+              }} />
+              {userFilteredMachines.length === 1
+                ? `Live Machine (${userFilteredMachines[0].name || userFilteredMachines[0].model_name || '1'})`
+                : `Live Machines (${userFilteredMachines.length})`}
+            </button>
+          )}
           <button type="button" className="gis-map-icon-btn" onClick={fitRouteBounds} title="Fit to trench">
-            <LucideGlobe size={15} /> Fit route
+            <Globe size={15} /> Fit route
           </button>
           <button type="button" className="gis-map-icon-btn" onClick={toggleFullscreen} title="Toggle fullscreen" style={{ width: 36, padding: 0, justifyContent: 'center' }}>
             {isFullscreen ? <LucideMinimize2 size={16} /> : <LucideMaximize2 size={16} />}
@@ -1780,6 +2193,102 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
                 )
               }
             />
+          </div>
+        )}
+
+        {/* Live Machines Horizontal Bar (ONLY for assigned machines belonging to this user / block, NEVER on BharatNet map) */}
+        {!isBharatNetMap && showLiveMachines && userFilteredMachines.length > 0 && (
+          <div
+            className="gis-map-machines-bar"
+            style={{
+              position: 'absolute',
+              bottom: 12,
+              left: 12,
+              right: 12,
+              zIndex: 400,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              overflowX: 'auto',
+              padding: '8px 12px',
+              background: 'rgba(15, 23, 42, 0.9)',
+              backdropFilter: 'blur(10px)',
+              borderRadius: 10,
+              border: '1px solid rgba(255, 255, 255, 0.18)',
+              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
+            }}
+          >
+            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#94a3b8', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6, paddingRight: 6, borderRight: '1px solid rgba(255,255,255,0.15)' }}>
+              <span>
+                {userFilteredMachines.length === 1 ? 'ASSIGNED MACHINE' : `LIVE MACHINES (${userFilteredMachines.length})`}
+              </span>
+            </div>
+            {userFilteredMachines.map((m) => {
+              const course = m.course_deg ?? m.heading ?? 0;
+              const isRunning = (m.status || '').toUpperCase() === 'RUNNING';
+
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedLiveMachine(m);
+                    if (mapInstanceRef.current && m.latitude != null && m.longitude != null) {
+                      mapInstanceRef.current.flyTo([m.latitude, m.longitude], 16, { animate: true, duration: 1 });
+                    }
+                  }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '4px 10px',
+                    borderRadius: 999,
+                    border: selectedLiveMachine?.id === m.id ? '1.5px solid #38bdf8' : '1px solid rgba(255, 255, 255, 0.15)',
+                    background: selectedLiveMachine?.id === m.id
+                      ? 'rgba(2, 132, 199, 0.45)'
+                      : 'rgba(56, 189, 248, 0.25)',
+                    color: '#ffffff',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                    transition: 'all 0.15s ease',
+                  }}
+                  title={`${m.name || 'Machine'} · ${isRunning ? 'RUNNING' : 'IDLE'} · ${Number(course).toFixed(0)}°`}
+                >
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      width: 18,
+                      height: 18,
+                      borderRadius: '50%',
+                      background: isRunning ? '#059669' : '#d97706',
+                      border: '1.5px solid #fff',
+                      boxShadow: '0 0 0 1px rgba(15,23,42,0.12)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 24 24"
+                      style={{ transform: `rotate(${Number(course) || 0}deg)` }}
+                    >
+                      <path d="M12 2L19 21L12 17L5 21L12 2Z" fill="#fff" />
+                    </svg>
+                  </span>
+                  <span>{m.name || m.model_name || `HDD ${m.id}`}</span>
+                  <span style={{ opacity: 0.75, fontWeight: 600, fontSize: '0.7rem' }}>
+                    {Number(course).toFixed(0)}°
+                  </span>
+                  <span style={{ fontSize: '0.625rem', background: '#0284c7', color: '#fff', padding: '1px 5px', borderRadius: 4, fontWeight: 700 }}>
+                    ASSIGNED
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>

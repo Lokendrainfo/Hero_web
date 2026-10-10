@@ -275,6 +275,60 @@ export const mapHddExecutionResponse = (task, execution = null) => {
   const fieldData = execData?.fieldData || execData?.trenching || execData || {};
   const trenching = fieldData?.trenching || execData?.trenching || fieldData || {};
 
+  const rawMach =
+    trenching?.trenchingMachineDetails ||
+    fieldData?.trenchingMachineDetails ||
+    execData?.trenchingMachineDetails ||
+    task?.trenchingMachineDetails ||
+    task?.machineDetails ||
+    task?.taskExecution?.fieldData?.trenching?.trenchingMachineDetails ||
+    task?.taskExecution?.trenching?.trenchingMachineDetails ||
+    task?.machineSnapshot ||
+    task?.assetSnapshot ||
+    (typeof task?.machine === 'object' ? task.machine : null) ||
+    (typeof task?.machineDetails === 'object' ? task.machineDetails : null) ||
+    {};
+
+  const rawMachineId =
+    rawMach.machineId ||
+    rawMach.id ||
+    rawMach.registrationNo ||
+    rawMach.regNo ||
+    rawMach.serialNumber ||
+    rawMach.machineNo ||
+    rawMach.code ||
+    task.machineId ||
+    task.machine_id ||
+    task.machineNumber ||
+    (typeof task.machine === 'string' ? task.machine : null) ||
+    '';
+
+  const machineId = isMongoHexId(rawMachineId) ? null : (rawMachineId || null);
+
+  const machineName =
+    rawMach.machineName ||
+    rawMach.name ||
+    rawMach.displayName ||
+    rawMach.title ||
+    rawMach.model ||
+    rawMach.machineModel ||
+    task.machineName ||
+    task.machine_name ||
+    null;
+
+  const machineModel =
+    rawMach.model ||
+    rawMach.machineModel ||
+    rawMach.modelNumber ||
+    task.machineModel ||
+    null;
+
+  const machineVendor =
+    rawMach.vendorName ||
+    rawMach.vendor ||
+    task.vendorName ||
+    null;
+
   // Find human-readable task code (e.g. TASK-2026-54398, TASK-2026-55844), NEVER a 24-character Mongo hex ID
   const rawCodes = [
     task.taskCode,
@@ -679,6 +733,22 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     userRole: task.assigneeSnapshot?.designation || task.assignee?.designation || 'Project Manager',
     vendorId: task.vendorId,
     vendorName: task.vendorName,
+    machineId,
+    machineName,
+    machineModel,
+    machineVendor,
+    machineDetails: rawMach,
+    machineIds: machineId ? [machineId] : [],
+    machineNames: machineName ? [machineName] : [],
+    machinesList: (machineId || machineName) ? [{
+      machineId,
+      machineName,
+      machineModel,
+      machineVendor,
+      machineDetails: rawMach,
+      userId: String(task.userId || task.assigneeId || (task.assigneeSnapshot || {}).userId || (task.assigneeSnapshot || {}).id || task.assignedTo || ''),
+      userName: task.userName || task.assigneeName || (task.assigneeSnapshot || {}).name || task.assignedTo?.name || 'Field Supervisor',
+    }] : [],
     date: finalDate,
     updatedAt: finalUpdatedAt,
     lastModified: finalLastModified,
@@ -719,6 +789,36 @@ export const mergeMultipleTasksExecution = (tasksList, activeDate = null, option
   const seenDepthPoints = new Set();
   const availableDatesSet = new Set();
   const usersSet = new Set();
+  const firstWithMachine = normalizedList.find(t => t.machineId || t.machineName) || primary;
+
+  const machineIds = Array.from(new Set(normalizedList.flatMap(t => t.machineIds || (t.machineId ? [t.machineId] : [])).filter(Boolean)));
+  const machineNames = Array.from(new Set(normalizedList.flatMap(t => t.machineNames || (t.machineName ? [t.machineName] : [])).filter(Boolean)));
+  const machinesList = [];
+  normalizedList.forEach(t => {
+    const list = Array.isArray(t.machinesList) && t.machinesList.length > 0
+      ? t.machinesList
+      : ((t.machineId || t.machineName) ? [{
+          machineId: t.machineId,
+          machineName: t.machineName,
+          machineModel: t.machineModel,
+          machineVendor: t.machineVendor,
+          machineDetails: t.machineDetails,
+          userId: t.userId,
+          userName: t.user,
+        }] : []);
+
+    list.forEach(m => {
+      if (m && (m.machineId || m.machineName)) {
+        const exists = machinesList.some(item =>
+          (m.machineId && item.machineId === m.machineId) ||
+          (m.machineName && item.machineName === m.machineName)
+        );
+        if (!exists) {
+          machinesList.push(m);
+        }
+      }
+    });
+  });
 
   normalizedList.forEach(t => {
     if (t.user && t.user !== 'Field Supervisor') usersSet.add(t.user);
@@ -831,6 +931,14 @@ export const mergeMultipleTasksExecution = (tasksList, activeDate = null, option
     isBlockMap: isBlockMode,
     vendorId: primary.vendorId,
     vendorName: primary.vendorName,
+    machineId: firstWithMachine?.machineId || null,
+    machineName: firstWithMachine?.machineName || null,
+    machineModel: firstWithMachine?.machineModel || null,
+    machineVendor: firstWithMachine?.machineVendor || null,
+    machineDetails: firstWithMachine?.machineDetails || null,
+    machineIds,
+    machineNames,
+    machinesList,
     date: greenBulbTime ? greenBulbTime.split('T')[0] : (primary.date || new Date().toISOString().split('T')[0]),
     updatedAt: greenBulbTime || primary.updatedAt,
     lastModified: greenBulbTime || primary.lastModified,

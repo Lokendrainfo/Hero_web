@@ -859,6 +859,9 @@ def prune_execution_telemetry(exec_data):
     tr = fd.get('trenching') if isinstance(fd.get('trenching'), dict) else fd
     raw_shots = tr.get('hddShot') or tr.get('shots') or exec_data.get('shots') or []
     raw_pits = tr.get('pitDetails') or tr.get('pits') or exec_data.get('pits') or []
+    raw_mach = tr.get('trenchingMachineDetails') or fd.get('trenchingMachineDetails') or exec_data.get('trenchingMachineDetails') or {}
+    raw_op = tr.get('operatorDetails') or fd.get('operatorDetails') or exec_data.get('operatorDetails') or {}
+    work_mode = fd.get('workExecutionMode') or tr.get('workExecutionMode') or exec_data.get('workExecutionMode')
 
     pruned_shots = []
     if isinstance(raw_shots, list):
@@ -948,12 +951,35 @@ def prune_execution_telemetry(exec_data):
                 'pitVideo': p.get('pitVideo'),
             })
 
-    pruned_field_data = {
-        'trenching': {
-            'hddShot': pruned_shots,
-            'pitDetails': pruned_pits,
-        }
+    pruned_trenching = {
+        'hddShot': pruned_shots,
+        'pitDetails': pruned_pits,
     }
+    if isinstance(raw_mach, dict) and raw_mach:
+        pruned_trenching['trenchingMachineDetails'] = {
+            'machineId': raw_mach.get('machineId') or raw_mach.get('id') or raw_mach.get('registrationNo'),
+            'machineName': raw_mach.get('machineName') or raw_mach.get('name'),
+            'vendorName': raw_mach.get('vendorName'),
+            'vendorMobile': raw_mach.get('vendorMobile'),
+            'model': raw_mach.get('model') or raw_mach.get('machineModel'),
+            'strataType': raw_mach.get('strataType'),
+            'rowArea': raw_mach.get('rowArea'),
+            'cableType': raw_mach.get('cableType'),
+            'machineImage': raw_mach.get('machineImage'),
+        }
+    if isinstance(raw_op, dict) and raw_op:
+        pruned_trenching['operatorDetails'] = {
+            'name': raw_op.get('name'),
+            'mobileNumber': raw_op.get('mobileNumber'),
+            'operatorPhoto': raw_op.get('operatorPhoto'),
+        }
+
+    pruned_field_data = {
+        'trenching': pruned_trenching,
+    }
+    if work_mode:
+        pruned_field_data['workExecutionMode'] = work_mode
+
     return {
         'id': exec_data.get('id'),
         'taskId': exec_data.get('taskId'),
@@ -1024,6 +1050,23 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
             if uname:
                 t['userName'] = uname
                 t['assigneeName'] = uname
+
+            t_mach = (
+                t.get('trenchingMachineDetails') or
+                t.get('machineDetails') or
+                t.get('machineSnapshot') or
+                t.get('assetSnapshot') or
+                ((t.get('taskExecution') or {}).get('fieldData') or {}).get('trenching', {}).get('trenchingMachineDetails') or
+                {}
+            )
+            mid = t.get('machineId') or t_mach.get('machineId') or t_mach.get('id') or t_mach.get('registrationNo')
+            mname = t.get('machineName') or t_mach.get('machineName') or t_mach.get('name')
+            if mid and not t.get('machineId'):
+                t['machineId'] = mid
+            if mname and not t.get('machineName'):
+                t['machineName'] = mname
+            if t_mach and not t.get('trenchingMachineDetails'):
+                t['trenchingMachineDetails'] = t_mach
 
             enriched_tasks.append(t)
 
@@ -1110,6 +1153,14 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
                     if latest_iso:
                         task_obj['updatedAt'] = latest_iso
                         task_obj['lastModified'] = latest_iso
+                    tr = ((cached_exec.get('fieldData') or {}).get('trenching') or {})
+                    mach = tr.get('trenchingMachineDetails') or {}
+                    if mach:
+                        if mach.get('machineId') and not task_obj.get('machineId'):
+                            task_obj['machineId'] = mach.get('machineId')
+                        if mach.get('machineName') and not task_obj.get('machineName'):
+                            task_obj['machineName'] = mach.get('machineName')
+                        task_obj['trenchingMachineDetails'] = mach
                 return
 
             telemetry_calls_count += 1
@@ -1126,8 +1177,17 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
                         task_obj['updatedAt'] = latest_iso
                         task_obj['lastModified'] = latest_iso
 
-                    # Calculate covered length if shots are present
+                    # Machine details from pruned / raw
                     tr = ((pruned.get('fieldData') or {}).get('trenching') or {})
+                    mach = tr.get('trenchingMachineDetails') or {}
+                    if mach:
+                        if mach.get('machineId') and not task_obj.get('machineId'):
+                            task_obj['machineId'] = mach.get('machineId')
+                        if mach.get('machineName') and not task_obj.get('machineName'):
+                            task_obj['machineName'] = mach.get('machineName')
+                        task_obj['trenchingMachineDetails'] = mach
+
+                    # Calculate covered length if shots are present
                     shots = tr.get('hddShot') or []
                     if isinstance(shots, list) and len(shots) > 0:
                         tot_m = sum(float(s.get('tentativeShotLength') or 0) for s in shots if isinstance(s, dict))

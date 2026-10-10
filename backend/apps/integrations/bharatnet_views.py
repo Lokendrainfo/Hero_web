@@ -290,6 +290,7 @@ class BharatNetTDMonitoringView(APIView):
                             f"state={quote_plus(str(task_circle or ''))}&"
                             f"date={quote_plus(str(date_param or ''))}&"
                             f"mode=user"
+                            f"{f'&machineId={quote_plus(str(machine_id))}' if machine_id else ''}"
                         )
 
                         dp_lat = (

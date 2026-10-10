@@ -5,9 +5,10 @@ import {
   LucideChevronDown,
   LucideChevronRight,
   LucideArrowLeft,
-  LucideGlobe
+  Globe
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
+import { trackingService } from '../../services/trackingService';
 import { useAuth } from '../../hooks/useAuth';
 import { mapHddExecutionResponse, parseAnyDate, parseDateToYMD } from '../../utils/mapHddExecutionResponse';
 import { getAvailableStates, getAvailableDistricts } from '../../utils/geographyMaster';
@@ -93,6 +94,47 @@ export const TrenchingMapViewPage = () => {
   const [expandedBlocks, setExpandedBlocks] = useState({});
 
   const [isBackgroundLoading, setIsBackgroundLoading] = useState(false);
+
+  // Live Machines State from Fiber HDD Portal API (FiberForce)
+  const [liveMachines, setLiveMachines] = useState([]);
+
+  useEffect(() => {
+    trackingService.getLiveLocations()
+      .then((res) => {
+        const raw = res?.data?.data !== undefined ? res.data.data : (res?.data !== undefined ? res.data : res);
+        let list = [];
+        if (Array.isArray(raw)) list = raw;
+        else if (raw && Array.isArray(raw.results)) list = raw.results;
+        else if (raw && Array.isArray(raw.data)) list = raw.data;
+        setLiveMachines(list);
+      })
+      .catch(console.warn);
+  }, []);
+
+  const matchLiveMachine = useCallback((rawKey) => {
+    if (!rawKey || !liveMachines.length) return null;
+    const str = String(rawKey).trim().toLowerCase();
+    let found = liveMachines.find((m) =>
+      String(m.machine_chassis_no || '').toLowerCase() === str ||
+      String(m.chassis_no || '').toLowerCase() === str ||
+      String(m.serial_number || '').toLowerCase() === str ||
+      String(m.name || '').toLowerCase() === str ||
+      String(m.id || '') === str
+    );
+    if (found) return found;
+
+    const digits = str.match(/\d{4,}/);
+    if (digits) {
+      const last4 = digits[0].slice(-4);
+      found = liveMachines.find((m) => {
+        const ch = String(m.machine_chassis_no || m.chassis_no || m.serial_number || '');
+        const nm = String(m.name || '');
+        return ch.endsWith(last4) || nm.includes(last4);
+      });
+      if (found) return found;
+    }
+    return null;
+  }, [liveMachines]);
 
   const processAndSetExecutions = useCallback((tasksList) => {
     const normalized = tasksList.map(t => mapHddExecutionResponse(t)).filter(Boolean);
@@ -200,6 +242,12 @@ export const TrenchingMapViewPage = () => {
           id: targetId,
           userId: primary.userId || ex.userId || existing.userId,
           user: existing.user || ex.user,
+          machineId: primary.machineId || existing.machineId || ex.machineId || null,
+          machineName: primary.machineName || existing.machineName || ex.machineName || null,
+          machineModel: primary.machineModel || existing.machineModel || ex.machineModel || null,
+          machineVendor: primary.machineVendor || existing.machineVendor || ex.machineVendor || null,
+          machineDetails: primary.machineDetails || existing.machineDetails || ex.machineDetails || null,
+          workExecutionMode: primary.workExecutionMode || existing.workExecutionMode || ex.workExecutionMode || 'HDD',
           state: primary.state || ex.state || existing.state,
           district: primary.district || ex.district || existing.district,
           block: primary.block || ex.block || existing.block,
@@ -290,16 +338,19 @@ export const TrenchingMapViewPage = () => {
   }, [normalizedExecutions, selectedState, selectedDistrict]);
 
   // Memoized summary counts and grouping by District -> Block
-  const { districtsSet, blocksSet, usersSet, groupedByDistrict, executionCount } = useMemo(() => {
+  const { districtsSet, blocksSet, usersSet, machinesSet, groupedByDistrict, executionCount } = useMemo(() => {
     const dSet = new Set();
     const bSet = new Set();
     const uSet = new Set();
+    const mSet = new Set();
     const grouped = {};
 
     filteredExecutions.forEach(ex => {
       if (ex.district && ex.district !== 'OTHER') dSet.add(ex.district);
       if (ex.district && ex.block && ex.district !== 'OTHER') bSet.add(`${ex.district}_${ex.block}`);
       if (ex.user) uSet.add(ex.user);
+      const mKey = ex.machineId || ex.machineName;
+      if (mKey) mSet.add(mKey);
 
       const dName = ex.district || 'OTHER';
       const bName = ex.block || 'OTHER';
@@ -316,6 +367,7 @@ export const TrenchingMapViewPage = () => {
       districtsSet: dSet,
       blocksSet: bSet,
       usersSet: uSet,
+      machinesSet: mSet,
       groupedByDistrict: grouped,
       executionCount: filteredExecutions.length,
     };
@@ -427,6 +479,12 @@ export const TrenchingMapViewPage = () => {
           <div className="kpi-label">Users</div>
           <div className="kpi-value">{usersSet.size}</div>
         </div>
+        {machinesSet.size > 0 && (
+          <div className="kpi-cell kpi-cell-static">
+            <div className="kpi-label">Machines</div>
+            <div className="kpi-value">{machinesSet.size}</div>
+          </div>
+        )}
       </div>
 
       <div className="panel" style={{ padding: 0 }}>
@@ -457,6 +515,9 @@ export const TrenchingMapViewPage = () => {
               const districtUsersCount = new Set(
                 blockNames.flatMap((b) => blocksDict[b].map((ex) => ex.user))
               ).size;
+              const districtMachinesCount = new Set(
+                blockNames.flatMap((b) => blocksDict[b].map((ex) => ex.machineId || ex.machineName).filter(Boolean))
+              ).size;
 
               return (
                 <div key={dName} className="exec-tree-district">
@@ -472,6 +533,7 @@ export const TrenchingMapViewPage = () => {
                       {blockNames.length} {blockNames.length === 1 ? 'block' : 'blocks'}
                       {' · '}
                       {districtUsersCount} {districtUsersCount === 1 ? 'user' : 'users'}
+                      {districtMachinesCount > 0 ? ` · ${districtMachinesCount} ${districtMachinesCount === 1 ? 'machine' : 'machines'}` : ''}
                     </span>
                   </button>
 
@@ -481,6 +543,9 @@ export const TrenchingMapViewPage = () => {
                         const bKey = `${dName}_${bName}`;
                         const execList = blocksDict[bName];
                         const isBlockExpanded = blockNames.length === 1 || Boolean(expandedBlocks[bKey]);
+                        const blockMachinesCount = new Set(
+                          execList.map((ex) => ex.machineId || ex.machineName).filter(Boolean)
+                        ).size;
 
                         return (
                           <div key={bName} className="exec-tree-block">
@@ -495,6 +560,7 @@ export const TrenchingMapViewPage = () => {
                                 <span className="exec-tree-name">{bName}</span>
                                 <span className="exec-tree-meta">
                                   {execList.length} {execList.length === 1 ? 'user' : 'users'}
+                                  {blockMachinesCount > 0 ? ` · ${blockMachinesCount} ${blockMachinesCount === 1 ? 'machine' : 'machines'}` : ''}
                                 </span>
                               </button>
                             )}
@@ -505,21 +571,28 @@ export const TrenchingMapViewPage = () => {
                                   <div style={{ fontWeight: 600, fontSize: '0.8125rem', color: 'var(--text-secondary, #475569)', letterSpacing: '0.02em', textTransform: 'uppercase' }}>
                                     {bName && bName !== 'OTHER' ? bName : 'Block'}
                                   </div>
-                                  <a
-                                    className="btn-secondary"
-                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, padding: '4px 10px', textDecoration: 'none', height: 28 }}
-                                    href={`/map-view/block?block=${encodeURIComponent(bName)}&district=${encodeURIComponent(dName)}&state=${encodeURIComponent(selectedState || '')}${selectedDate ? `&date=${selectedDate}` : ''}&mode=block&source=trenching`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <LucideGlobe size={13} /> Open Full Block Map
-                                  </a>
+                                  {(() => {
+                                    const blockMachineKeys = Array.from(new Set(execList.map(ex => ex.machineId || ex.machineName).filter(Boolean)));
+                                    const mParam = blockMachineKeys.length > 0 ? `&machineId=${encodeURIComponent(blockMachineKeys.join(','))}` : '';
+                                    return (
+                                      <a
+                                        className="btn-secondary"
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', fontWeight: 600, padding: '4px 10px', textDecoration: 'none', height: 28 }}
+                                        href={`/map-view/block?block=${encodeURIComponent(bName)}&district=${encodeURIComponent(dName)}&state=${encodeURIComponent(selectedState || '')}${selectedDate ? `&date=${selectedDate}` : ''}&mode=block&source=trenching${mParam}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <Globe size={13} /> Open Full Block Map
+                                      </a>
+                                    );
+                                  })()}
                                 </div>
                                 <table className="data-table">
                                   <thead>
                                     <tr>
                                       <th>User</th>
+                                      <th>Machine</th>
                                       <th>Mode</th>
                                       <th>Last modified</th>
                                       <th />
@@ -528,7 +601,70 @@ export const TrenchingMapViewPage = () => {
                                   <tbody>
                                     {execList.map((ex) => (
                                       <tr key={ex.id}>
-                                        <td><strong>{ex.user || '—'}</strong></td>
+                                        <td>
+                                          <div style={{ fontWeight: 600, color: 'var(--text-main, #0f172a)' }}>
+                                            {ex.user || '—'}
+                                          </div>
+                                        </td>
+                                        <td>
+                                          {(() => {
+                                            const rawKey = ex.machineId || ex.machineName;
+                                            const liveM = matchLiveMachine(rawKey);
+
+                                            if (liveM) {
+                                              const isRunning = (liveM.status || '').toUpperCase() === 'RUNNING';
+                                              return (
+                                                <div style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+                                                  <span
+                                                    className="badge-pill"
+                                                    style={{
+                                                      fontWeight: 650,
+                                                      letterSpacing: '0.01em',
+                                                      background: isRunning ? '#ecfdf5' : '#fffbeb',
+                                                      color: isRunning ? '#047857' : '#b45309',
+                                                      border: `1px solid ${isRunning ? '#a7f3d0' : '#fde68a'}`,
+                                                      display: 'inline-flex',
+                                                      alignItems: 'center',
+                                                      gap: 5
+                                                    }}
+                                                    title={`Speed: ${Number(liveM.speed || 0).toFixed(1)} km/h · Heading: ${Number(liveM.course_deg || 0).toFixed(0)}°`}
+                                                  >
+                                                    <span
+                                                      style={{
+                                                        width: 7,
+                                                        height: 7,
+                                                        borderRadius: '50%',
+                                                        background: isRunning ? '#10b981' : '#f59e0b',
+                                                        boxShadow: isRunning ? '0 0 0 2px rgba(16, 185, 129, 0.25)' : 'none'
+                                                      }}
+                                                    />
+                                                    {liveM.name || liveM.model_name || rawKey}
+                                                  </span>
+                                                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                                    Chassis: {ex.machineId || liveM.chassis_no} · {liveM.status || 'ONLINE'}
+                                                  </span>
+                                                </div>
+                                              );
+                                            }
+
+                                            if (rawKey) {
+                                              return (
+                                                <div style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+                                                  <span className="badge-pill badge-neutral" style={{ fontWeight: 650, letterSpacing: '0.01em' }}>
+                                                    {rawKey}
+                                                  </span>
+                                                  {ex.machineName && ex.machineId && ex.machineName !== ex.machineId && (
+                                                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                                      {ex.machineName}
+                                                    </span>
+                                                  )}
+                                                </div>
+                                              );
+                                            }
+
+                                            return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+                                          })()}
+                                        </td>
                                         <td>
                                           {ex.workExecutionMode && ex.workExecutionMode !== 'N/A' ? (
                                             <span className="badge-pill badge-neutral">{ex.workExecutionMode}</span>
@@ -542,7 +678,7 @@ export const TrenchingMapViewPage = () => {
                                         <td style={{ textAlign: 'right' }}>
                                           <a
                                             className="exec-tree-map"
-                                            href={`/map-view/${ex.id}?userId=${encodeURIComponent(ex.userId || ex.user)}&userName=${encodeURIComponent(ex.user)}&block=${encodeURIComponent(ex.block || bName)}&district=${encodeURIComponent(ex.district || dName)}&state=${encodeURIComponent(ex.state || selectedState || '')}${selectedDate ? `&date=${selectedDate}` : ''}&mode=user&source=trenching`}
+                                            href={`/map-view/${ex.id}?userId=${encodeURIComponent(ex.userId || ex.user)}&userName=${encodeURIComponent(ex.user)}&block=${encodeURIComponent(ex.block || bName)}&district=${encodeURIComponent(ex.district || dName)}&state=${encodeURIComponent(ex.state || selectedState || '')}${selectedDate ? `&date=${selectedDate}` : ''}&mode=user&source=trenching${ex.machineId ? `&machineId=${encodeURIComponent(ex.machineId)}` : ''}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
                                             onClick={(e) => e.stopPropagation()}
