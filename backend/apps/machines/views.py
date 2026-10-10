@@ -92,3 +92,86 @@ class MachineViewSet(viewsets.ModelViewSet):
             "count": len(results)
         }, status=status.HTTP_200_OK)
 
+
+class MachineChassisHddShotSummaryView(viewsets.ViewSet, Response if False else object):
+    """
+    Machine Chassis Number-Wise HDD Shot Count and Shot Meters API
+
+    Exposes machine operational statistics mapped by chassis number:
+    - chassis_number: Machine Chassis Number
+    - hdd_shot_count: Total HDD Shot Count
+    - hdd_shot_meters: Total HDD Shot Meters
+    - machine_id: Machine ID in database (if available)
+    - last_updated: Latest Shot / Update ISO timestamp
+
+    Query Parameters / Body:
+    - chassis_number: Specific chassis number or comma-separated list
+    - chassis_no: Alias for chassis_number
+    - machine_id: Filter by integer Machine ID
+    - refresh: 'true' / '1' to bypass cache and recompute from live tasks
+    """
+    permission_classes = [permissions.AllowAny]
+
+    @classmethod
+    def as_view(cls, **initkwargs):
+        from rest_framework.views import APIView
+        from rest_framework.renderers import JSONRenderer
+        from .hdd_shots import get_chassis_hdd_shot_data
+
+        class _InternalView(APIView):
+            permission_classes = [permissions.AllowAny]
+            renderer_classes = [JSONRenderer]
+
+            def get(self, request, chassis_number=None):
+                query_chassis = (
+                    chassis_number
+                    or request.query_params.get('chassis_number')
+                    or request.query_params.get('chassis_no')
+                    or request.query_params.get('chassis')
+                )
+                machine_id = request.query_params.get('machine_id') or request.query_params.get('id')
+                refresh = (
+                    request.query_params.get('refresh', '').lower() in ('true', '1')
+                    or request.query_params.get('nocache', '').lower() in ('true', '1')
+                )
+
+                res = get_chassis_hdd_shot_data(
+                    chassis_query=query_chassis,
+                    machine_id=machine_id,
+                    force_refresh=refresh
+                )
+
+                if not res.get("success"):
+                    return Response(res, status=status.HTTP_404_NOT_FOUND)
+
+                return Response(res, status=status.HTTP_200_OK)
+
+            def post(self, request, chassis_number=None):
+                payload = request.data if isinstance(request.data, dict) else {}
+                query_chassis = (
+                    chassis_number
+                    or payload.get('chassis_numbers')
+                    or payload.get('chassis_number')
+                    or payload.get('chassis_no')
+                    or request.query_params.get('chassis_number')
+                )
+                machine_id = payload.get('machine_id') or request.query_params.get('machine_id')
+                refresh = (
+                    str(payload.get('refresh', '')).lower() in ('true', '1')
+                    or request.query_params.get('refresh', '').lower() in ('true', '1')
+                )
+
+                res = get_chassis_hdd_shot_data(
+                    chassis_query=query_chassis,
+                    machine_id=machine_id,
+                    force_refresh=refresh
+                )
+
+                if not res.get("success"):
+                    return Response(res, status=status.HTTP_404_NOT_FOUND)
+
+                return Response(res, status=status.HTTP_200_OK)
+
+        return _InternalView.as_view(**initkwargs)
+
+

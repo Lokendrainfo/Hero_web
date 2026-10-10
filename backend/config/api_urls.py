@@ -5,6 +5,7 @@ from apps.common.responses import success_response
 from apps.roles.views import PermissionViewSet
 from apps.authentication.views import MeView
 from apps.integrations.bharatnet_views import BharatNetTDMonitoringView, BharatNetLiveViewAPIView
+from apps.machines.views import MachineChassisHddShotSummaryView
 
 
 from rest_framework.renderers import JSONRenderer
@@ -66,7 +67,8 @@ class ApiRootView(APIView):
                     "machine-shift": "/api/v1/machine-shift/",
                     "planner": "/api/v1/planner/",
                     "td-monitoring": "/api/v1/td-monitoring/",
-                    "bharatnet": "/api/v1/bharatnet/td-monitoring/"
+                    "bharatnet": "/api/v1/bharatnet/td-monitoring/",
+                    "chassis-hdd-shots": "/api/v1/chassis-hdd-shots/"
                 }
             },
             message="Hero Web REST API v1 Root"
@@ -105,6 +107,11 @@ urlpatterns = [
     # Generic T&D Monitoring Endpoint & Live View
     path('td-monitoring/', BharatNetTDMonitoringView.as_view(), name='td_monitoring'),
     path('live-view/<str:token>/', BharatNetLiveViewAPIView.as_view(), name='live_view_api'),
+    # Machine Chassis Number-Wise HDD Shot Count and Shot Meters API
+    path('chassis-hdd-shots/', MachineChassisHddShotSummaryView.as_view(), name='api_chassis_hdd_shots'),
+    path('chassis-hdd-shots/<str:chassis_number>/', MachineChassisHddShotSummaryView.as_view(), name='api_chassis_hdd_shots_detail'),
+    path('hdd-machine-shots/', MachineChassisHddShotSummaryView.as_view(), name='api_hdd_machine_shots'),
+    path('hdd-machine-shots/<str:chassis_number>/', MachineChassisHddShotSummaryView.as_view(), name='api_hdd_machine_shots_detail'),
     # Backward compatibility alias
     path('bharatnet/', include('apps.integrations.bharatnet_urls')),
 ]

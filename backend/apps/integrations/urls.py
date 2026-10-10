@@ -21,6 +21,7 @@ from .views import (
     IlyncMapViewExecutionsView,
     IlyncTrenchingDashboardSummaryView
 )
+from apps.machines.views import MachineChassisHddShotSummaryView
 
 urlpatterns = [
     path('vendors/me/', IlyncMyVendorView.as_view(), name='ilync_my_vendor'),
@@ -49,4 +50,6 @@ urlpatterns = [
     path('fiberforce/live-params/', FiberForceLiveParamCatalogView.as_view(), name='fiberforce_live_params_catalog'),
     path('fiberforce/live/', FiberForceLiveTelemetryView.as_view(), name='fiberforce_live_telemetry'),
     path('fiberforce/machines/live/', FiberForceLiveTelemetryView.as_view(), name='fiberforce_machines_live'),
+    path('chassis-hdd-shots/', MachineChassisHddShotSummaryView.as_view(), name='ilync_chassis_hdd_shots'),
+    path('chassis-hdd-shots/<str:chassis_number>/', MachineChassisHddShotSummaryView.as_view(), name='ilync_chassis_hdd_shots_detail'),
 ]
