@@ -356,9 +356,21 @@ class BharatNetTDMonitoringView(APIView):
                         reverse=True
                     )
                     user_urls = []
+                    include_extra = (
+                        request.query_params.get('verbose') == 'true'
+                        or request.query_params.get('include_details') == 'true'
+                    )
                     for rec in sorted_records:
-                        clean_rec = dict(rec)
-                        clean_rec.pop('_dt', None)
+                        if include_extra:
+                            clean_rec = dict(rec)
+                            clean_rec.pop('_dt', None)
+                        else:
+                            clean_rec = {
+                                'userName': rec.get('userName'),
+                                'lastDepthCapturedAt': rec.get('lastDepthCapturedAt'),
+                                'url': rec.get('url'),
+                                'map_url': rec.get('map_url'),
+                            }
                         user_urls.append(clean_rec)
 
                     blocks_list.append({

@@ -261,11 +261,12 @@ class BharatNetTDMonitoringTestCase(TestCase):
 
         # For Ram Kumar, earlier depth was 1.50, latest depth was 1.65 at 14:32:07 IST
         ram = users['Ram Kumar']
-        self.assertEqual(ram['depthMeters'], 1.65)
         self.assertEqual(ram['lastDepthCapturedAt'], '2026-10-02T14:32:07+05:30')
-        self.assertEqual(ram['machineId'], 'HDD-221')
-        self.assertEqual(ram['userId'], 'OP-4471')
         self.assertTrue(ram['url'].startswith('https://hero.pramaanu.co.in/live-view/'))
+        # Ensure extra fields (machineId, depthMeters, userId) are not sent so Pragati Patal displays clean operator links
+        self.assertNotIn('machineId', ram)
+        self.assertNotIn('depthMeters', ram)
+        self.assertNotIn('userId', ram)
 
     @patch('apps.integrations.bharatnet_views.get_user_authorized_tasks')
     def test_09_ist_date_boundaries(self, mock_tasks_fn):
