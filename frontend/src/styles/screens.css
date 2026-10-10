@@ -7,14 +7,14 @@
   overflow: hidden;
 }
 
-.grid-responsive-cards > * {
+.grid-responsive-cards>* {
   border-radius: 0 !important;
   border: none !important;
   border-bottom: 1px solid var(--border) !important;
   box-shadow: none !important;
 }
 
-.grid-responsive-cards > *:last-child {
+.grid-responsive-cards>*:last-child {
   border-bottom: none !important;
 }
 
@@ -34,7 +34,7 @@
   overflow: hidden;
 }
 
-.exec-tree-district + .exec-tree-district {
+.exec-tree-district+.exec-tree-district {
   border-top: 1px solid var(--border);
 }
 
@@ -81,7 +81,7 @@
   border-top: 1px solid var(--border);
 }
 
-.exec-tree-block + .exec-tree-block {
+.exec-tree-block+.exec-tree-block {
   border-top: 1px solid var(--border);
 }
 
@@ -147,10 +147,12 @@
     transform: scale(0.95);
     box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.7);
   }
+
   70% {
     transform: scale(1);
     box-shadow: 0 0 0 6px rgba(22, 163, 74, 0);
   }
+
   100% {
     transform: scale(0.95);
     box-shadow: 0 0 0 0 rgba(22, 163, 74, 0);
@@ -162,7 +164,67 @@
 }
 
 @keyframes spin-anim {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
+/* BSNL BharatNet Pragati Patal Pills Bar & Chips */
+.pragati-pills-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #ffffff;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.pragati-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 13px;
+  background: #ffffff;
+  border: 1px solid #d0d7de;
+  border-radius: 20px;
+  font-size: 0.81rem;
+  color: #212529;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+.pragati-pill-label {
+  font-weight: 600;
+  color: #212529;
+}
+
+.pragati-pill-val {
+  color: #212529;
+}
+
+.pragati-view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  border: 1px solid #0d6efd;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #0d6efd;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.pragati-view-btn:hover {
+  background: #0d6efd;
+  color: #ffffff;
+}

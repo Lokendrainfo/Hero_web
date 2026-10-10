@@ -8,6 +8,13 @@ import {
   LucideChevronsUpDown,
   LucideChevronUp,
   LucideChevronDown,
+  LucideGlobe,
+  LucideCalendar,
+  LucideDatabase,
+  LucideBuilding2,
+  LucideLayoutGrid,
+  LucideUsers,
+  LucideClock,
 } from 'lucide-react';
 import api, { extractErrorMessage } from '../../services/api';
 import { PageHeader } from '../../components/common/PageHeader';
@@ -338,30 +345,46 @@ export const BharatNetMapPage = () => {
         }
       />
 
-      {/* TOP FILTER SECTION */}
-      <section
-        className="panel"
-        style={{
-          padding: '16px 20px',
-          marginBottom: '16px',
-          background: '#ffffff',
-          borderRadius: 8,
-          border: '1px solid #e2e8f0',
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '20px' }}>
-          <div>
-            <label
+      {/* Filter and Action Controls */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => navigate('/map-view')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.84rem' }}
+          >
+            <LucideArrowLeft size={15} /> Map Modules
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <label style={{ fontSize: '0.82rem', fontWeight: 600, color: '#475569' }}>State:</label>
+            <select
+              className="form-control"
+              value={selectedState}
+              onChange={(e) => {
+                setSelectedState(e.target.value);
+                setSearchParams({ date: selectedDate, circle: e.target.value });
+              }}
               style={{
-                display: 'block',
-                fontSize: '0.8rem',
-                fontWeight: 600,
-                color: '#475569',
-                marginBottom: 6,
+                height: 32,
+                padding: '0 10px',
+                borderRadius: 6,
+                border: '1px solid #cbd5e1',
+                background: '#ffffff',
+                color: '#0f172a',
+                fontSize: '0.84rem',
+                fontWeight: 500,
               }}
             >
-              Select Date
-            </label>
+              {availableStates.map((s) => (
+                <option key={s} value={s}>
+                  {s === 'ALL' ? 'All States / Circles' : s}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <label style={{ fontSize: '0.82rem', fontWeight: 600, color: '#475569' }}>Date:</label>
             <DateField
               value={selectedDate}
               onChange={(e) => {
@@ -373,91 +396,55 @@ export const BharatNetMapPage = () => {
               aria-label="Select Date"
             />
           </div>
+        </div>
 
-          <div style={{ minWidth: 180 }}>
-            <label
-              style={{
-                display: 'block',
-                fontSize: '0.8rem',
-                fontWeight: 600,
-                color: '#475569',
-                marginBottom: 6,
-              }}
-            >
-              Select State
-            </label>
-            <select
-              className="form-control"
-              value={selectedState}
-              onChange={(e) => {
-                setSelectedState(e.target.value);
-                setSearchParams({ date: selectedDate, circle: e.target.value });
-              }}
-              style={{
-                height: 38,
-                padding: '0 12px',
-                borderRadius: 6,
-                border: '1px solid #cbd5e1',
-                background: '#ffffff',
-                color: '#0f172a',
-                fontSize: '0.88rem',
-                fontWeight: 500,
-                width: '100%',
-              }}
-            >
-              {availableStates.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </section>
+        <button
+          type="button"
+          className="btn-primary"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.84rem' }}
+          onClick={fetchMonitoringData}
+          disabled={loading}
+        >
+          <LucideRefreshCw size={14} className={loading ? 'spin' : ''} /> Refresh Data
+        </button>
+      </div>
 
-      {/* SUMMARY INFORMATION BAR */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '14px 24px',
-          padding: '12px 18px',
-          background: '#f8fafc',
-          border: '1px solid #e2e8f0',
-          borderRadius: 6,
-          marginBottom: '16px',
-          fontSize: '0.84rem',
-          color: '#334155',
-          fontWeight: 500,
-        }}
-      >
-        <div>
-          <strong style={{ color: '#0f172a' }}>State:</strong> {summaryMetrics.state}
+      {/* BSNL Pragati Patal Pills Bar */}
+      <div className="pragati-pills-bar">
+        <div className="pragati-pill">
+          <LucideGlobe size={15} color="#5b3cc4" />
+          <span className="pragati-pill-label">State:</span>
+          <span className="pragati-pill-val">{summaryMetrics.state}</span>
         </div>
-        <div style={{ color: '#cbd5e1' }}>|</div>
-        <div>
-          <strong style={{ color: '#0f172a' }}>Date:</strong> {summaryMetrics.date}
+        <div className="pragati-pill">
+          <LucideCalendar size={15} color="#5b3cc4" />
+          <span className="pragati-pill-label">Date:</span>
+          <span className="pragati-pill-val">{summaryMetrics.date}</span>
         </div>
-        <div style={{ color: '#cbd5e1' }}>|</div>
-        <div>
-          <strong style={{ color: '#0f172a' }}>Total Records:</strong> {summaryMetrics.totalRecords}
+        <div className="pragati-pill">
+          <LucideDatabase size={15} color="#5b3cc4" />
+          <span className="pragati-pill-label">Total Records:</span>
+          <span className="pragati-pill-val">{summaryMetrics.totalRecords}</span>
         </div>
-        <div style={{ color: '#cbd5e1' }}>|</div>
-        <div>
-          <strong style={{ color: '#0f172a' }}>Districts:</strong> {summaryMetrics.districts}
+        <div className="pragati-pill">
+          <LucideBuilding2 size={15} color="#5b3cc4" />
+          <span className="pragati-pill-label">Districts:</span>
+          <span className="pragati-pill-val">{summaryMetrics.districts}</span>
         </div>
-        <div style={{ color: '#cbd5e1' }}>|</div>
-        <div>
-          <strong style={{ color: '#0f172a' }}>Blocks:</strong> {summaryMetrics.blocks}
+        <div className="pragati-pill">
+          <LucideLayoutGrid size={15} color="#5b3cc4" />
+          <span className="pragati-pill-label">Blocks:</span>
+          <span className="pragati-pill-val">{summaryMetrics.blocks}</span>
         </div>
-        <div style={{ color: '#cbd5e1' }}>|</div>
-        <div>
-          <strong style={{ color: '#0f172a' }}>Active Users/URLs:</strong> {summaryMetrics.activeUsers}
+        <div className="pragati-pill">
+          <LucideUsers size={15} color="#5b3cc4" />
+          <span className="pragati-pill-label">Active Users/URLs:</span>
+          <span className="pragati-pill-val">{summaryMetrics.activeUsers}</span>
         </div>
-        <div style={{ color: '#cbd5e1' }}>|</div>
-        <div>
-          <strong style={{ color: '#0f172a' }}>Last Fetched:</strong> {summaryMetrics.lastFetched}
+        <div className="pragati-pill">
+          <LucideClock size={15} color="#5b3cc4" />
+          <span className="pragati-pill-label">Last Fetched:</span>
+          <span className="pragati-pill-val">{summaryMetrics.lastFetched}</span>
         </div>
       </div>
 
@@ -611,16 +598,16 @@ export const BharatNetMapPage = () => {
                     onClick={() => handleSort('state')}
                     style={{
                       padding: '10px 14px',
-                      textAlign: 'left',
+                      textAlign: 'center',
                       fontWeight: 700,
                       color: '#212529',
-                      width: '15%',
+                      width: '14%',
                       borderRight: '1px solid #dee2e6',
                       cursor: 'pointer',
                       userSelect: 'none',
                     }}
                   >
-                    <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                       <span>State/Circle</span>
                       {renderSortIndicator('state')}
                     </div>
@@ -631,16 +618,16 @@ export const BharatNetMapPage = () => {
                     onClick={() => handleSort('district')}
                     style={{
                       padding: '10px 14px',
-                      textAlign: 'left',
+                      textAlign: 'center',
                       fontWeight: 700,
                       color: '#212529',
-                      width: '15%',
+                      width: '14%',
                       borderRight: '1px solid #dee2e6',
                       cursor: 'pointer',
                       userSelect: 'none',
                     }}
                   >
-                    <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                       <span>District</span>
                       {renderSortIndicator('district')}
                     </div>
@@ -651,16 +638,16 @@ export const BharatNetMapPage = () => {
                     onClick={() => handleSort('block')}
                     style={{
                       padding: '10px 14px',
-                      textAlign: 'left',
+                      textAlign: 'center',
                       fontWeight: 700,
                       color: '#212529',
-                      width: '15%',
+                      width: '16%',
                       borderRight: '1px solid #dee2e6',
                       cursor: 'pointer',
                       userSelect: 'none',
                     }}
                   >
-                    <div style={{ display: 'inline-flex', alignItems: 'center' }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                       <span>Block</span>
                       {renderSortIndicator('block')}
                     </div>
@@ -690,7 +677,7 @@ export const BharatNetMapPage = () => {
                   <th
                     style={{
                       padding: '10px 16px',
-                      textAlign: 'left',
+                      textAlign: 'center',
                       fontWeight: 700,
                       color: '#212529',
                     }}
@@ -705,16 +692,18 @@ export const BharatNetMapPage = () => {
                     key={block.id}
                     style={{
                       borderBottom: '1px solid #dee2e6',
-                      verticalAlign: 'top',
+                      verticalAlign: 'middle',
                     }}
                   >
                     {/* State/Circle */}
                     <td
                       style={{
-                        padding: '14px',
+                        padding: '12px 14px',
                         fontWeight: 600,
                         color: '#212529',
+                        textAlign: 'center',
                         borderRight: '1px solid #dee2e6',
+                        textTransform: 'uppercase',
                       }}
                     >
                       {block.state}
@@ -723,10 +712,12 @@ export const BharatNetMapPage = () => {
                     {/* District */}
                     <td
                       style={{
-                        padding: '14px',
+                        padding: '12px 14px',
                         fontWeight: 600,
                         color: '#212529',
+                        textAlign: 'center',
                         borderRight: '1px solid #dee2e6',
+                        textTransform: 'uppercase',
                       }}
                     >
                       {block.district}
@@ -735,10 +726,12 @@ export const BharatNetMapPage = () => {
                     {/* Block */}
                     <td
                       style={{
-                        padding: '14px',
+                        padding: '12px 14px',
                         fontWeight: 600,
                         color: '#212529',
+                        textAlign: 'center',
                         borderRight: '1px solid #dee2e6',
+                        textTransform: 'uppercase',
                       }}
                     >
                       {block.block}
@@ -747,7 +740,7 @@ export const BharatNetMapPage = () => {
                     {/* Data Freshness */}
                     <td
                       style={{
-                        padding: '14px',
+                        padding: '12px 14px',
                         textAlign: 'center',
                         borderRight: '1px solid #dee2e6',
                       }}
@@ -768,8 +761,7 @@ export const BharatNetMapPage = () => {
                     </td>
 
                     {/* MONITORING LINKS CELL */}
-                    {/* User Name + Full Pragati Patal details + [Eye/View Button] */}
-                    <td style={{ padding: '8px 14px' }}>
+                    <td style={{ padding: '8px 16px' }}>
                       {block.user_urls.map((user, idx) => {
                         const isLast = idx === block.user_urls.length - 1;
 
@@ -785,39 +777,13 @@ export const BharatNetMapPage = () => {
                               gap: 16,
                             }}
                           >
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontWeight: 700, fontSize: '0.88rem', color: '#0f172a', marginBottom: 3 }}>
+                            <div style={{ fontSize: '0.88rem', color: '#212529' }}>
+                              <strong style={{ fontWeight: 700, color: '#000000', fontSize: '0.92rem' }}>
                                 {user.userName}
-                              </div>
-                              <div style={{ fontSize: '0.78rem', color: '#475569', lineHeight: 1.45 }}>
-                                {user.userId && (
-                                  <>
-                                    <span>ID: {user.userId}</span>
-                                    {' | '}
-                                  </>
-                                )}
-                                {user.machineId && (
-                                  <>
-                                    <span>Machine ID: {user.machineId}</span>
-                                    {' | '}
-                                  </>
-                                )}
-                                {user.depthMeters != null && (
-                                  <>
-                                    <span>Depth: {Number(user.depthMeters).toFixed(2)}m</span>
-                                    {' | '}
-                                  </>
-                                )}
-                                <span>State: {user.state || block.state}</span>
-                                {' | '}
-                                <span>District: {user.district || block.district}</span>
-                                {' | '}
-                                <span>Block: {user.block || block.block}</span>
-                                {' '}
-                                <span style={{ color: '#64748b' }}>
-                                  Last Depth Captured at: {formatCapturedTimestamp(user.lastDepthCapturedAt)}
-                                </span>
-                              </div>
+                              </strong>
+                              <span style={{ color: '#6c757d', marginLeft: 8 }}>
+                                Last Depth Captured at: {formatCapturedTimestamp(user.lastDepthCapturedAt)}
+                              </span>
                             </div>
 
                             {/* Eye/View Button */}
@@ -833,8 +799,8 @@ export const BharatNetMapPage = () => {
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   justifyContent: 'center',
-                                  width: 32,
-                                  height: 32,
+                                  width: 34,
+                                  height: 30,
                                   border: '1px solid #0d6efd',
                                   borderRadius: 4,
                                   background: '#ffffff',
