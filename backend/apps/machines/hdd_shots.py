@@ -265,3 +265,458 @@ def get_chassis_hdd_shot_data(chassis_query=None, machine_id=None, force_refresh
         }
 
     return {"success": True, "data": matches, "total_records": len(matches)}
+
+
+DAILY_METRICS_CACHE_KEY = "hdd_machine_chassis_daily_metrics_v2"
+DAILY_METRICS_CACHE_TTL = 120  # 2 minutes TTL
+
+
+def parse_date_to_ymd(dt_val):
+    """
+    Parses timestamps or date strings (DD-MM-YYYY, YYYY-MM-DD, epoch millis/sec, ISO)
+    into standard ISO date 'YYYY-MM-DD'.
+    """
+    if not dt_val:
+        return None
+    if isinstance(dt_val, (int, float)):
+        try:
+            ts = float(dt_val)
+            if ts > 1e11:
+                ts /= 1000.0
+            return datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+        except Exception:
+            return None
+    s = str(dt_val).strip()
+
+    # 1. Match DD-MM-YYYY or DD/MM/YYYY
+    m_dd = re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})', s)
+    if m_dd:
+        d, mo, y = m_dd.groups()
+        return f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
+
+    # 2. Match YYYY-MM-DD or YYYY/MM/DD
+    m_yy = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})', s)
+    if m_yy:
+        y, mo, d = m_yy.groups()
+        return f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
+
+    # 3. Epoch digits
+    if s.isdigit() and len(s) >= 10:
+        try:
+            ts = int(s)
+            if ts > 1e11:
+                ts /= 1000.0
+            return datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+        except Exception:
+            pass
+
+    # 4. Standard ISO string
+    try:
+        dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+        return dt.strftime('%Y-%m-%d')
+    except Exception:
+        pass
+
+    return None
+
+
+def normalize_date_input(val):
+    """
+    Validates and normalizes user input dates into 'YYYY-MM-DD' calendar dates.
+    """
+    if not val:
+        return None
+    ymd = parse_date_to_ymd(val)
+    if not ymd:
+        return None
+    try:
+        datetime.strptime(ymd, '%Y-%m-%d')
+        return ymd
+    except ValueError:
+        return None
+
+
+def extract_shot_date(shot, task):
+    """
+    Extracts the recorded execution date (YYYY-MM-DD) for an HDD shot.
+    """
+    if not isinstance(shot, dict):
+        return None
+
+    # Check primary shot timestamps
+    for field in ['hddEndTime', 'hddStartTime', 'date', 'savingTime', 'time', 'ductedTime', 'ductingStartTime']:
+        d = parse_date_to_ymd(shot.get(field))
+        if d:
+            return d
+
+    # Check shot images / videos
+    for img_key in ['startHddShotImage', 'pitToPitVideo']:
+        img = shot.get(img_key)
+        if isinstance(img, dict) and img.get('capturedAt'):
+            d = parse_date_to_ymd(img.get('capturedAt'))
+            if d:
+                return d
+
+    # Check pit images
+    pilot = shot.get('pilotHole') if isinstance(shot.get('pilotHole'), dict) else {}
+    for pit in [pilot.get('entryPitPic'), pilot.get('exitPitPic')]:
+        if isinstance(pit, dict) and pit.get('capturedAt'):
+            d = parse_date_to_ymd(pit.get('capturedAt'))
+            if d:
+                return d
+
+    # Check depth capture sensor/camera timestamps
+    for dp in (shot.get('depthCapture') or []):
+        if isinstance(dp, dict):
+            d = parse_date_to_ymd(dp.get('capturedAt')) or parse_date_to_ymd((dp.get('depthoMeterImage') or {}).get('capturedAt'))
+            if d:
+                return d
+
+    # Fallback to parent task timestamps
+    if isinstance(task, dict):
+        for t_field in ['updatedAt', 'lastModified', 'createdAt', 'taskDate']:
+            d = parse_date_to_ymd(task.get(t_field))
+            if d:
+                return d
+
+    return None
+
+
+def extract_shot_meters(shot, prev_cumulative=None):
+    """
+    Extracts drilled meters for a shot.
+    - If explicit delta / end-start meter readings are available, calculates difference.
+    - If cumulative meter reading is available and previous reading is known, calculates delta.
+    - Otherwise, uses incremental length (tentativeShotLength, lengthMeters, shotLength).
+    Returns (meters, current_cumulative).
+    """
+    if not isinstance(shot, dict):
+        return 0.0, prev_cumulative
+
+    # 1. Explicit end and start readings on the shot
+    end_reading = shot.get('endReading') or shot.get('endMeter') or shot.get('meterEnd')
+    start_reading = shot.get('startReading') or shot.get('startMeter') or shot.get('meterStart')
+    if end_reading is not None and start_reading is not None:
+        try:
+            delta = abs(float(end_reading) - float(start_reading))
+            return delta, float(end_reading)
+        except (ValueError, TypeError):
+            pass
+
+    # 2. Cumulative meter readings (calculate difference between consecutive readings)
+    cum_reading = shot.get('cumulativeReading') or shot.get('cumulative_meters') or shot.get('meterReading')
+    if cum_reading is not None:
+        try:
+            curr_cum = float(cum_reading)
+            if prev_cumulative is not None and curr_cum >= prev_cumulative:
+                return curr_cum - prev_cumulative, curr_cum
+            elif prev_cumulative is None:
+                tentative = float(shot.get('tentativeShotLength') or shot.get('lengthMeters') or shot.get('shotLength') or 0.0)
+                return (tentative if tentative > 0 else curr_cum), curr_cum
+        except (ValueError, TypeError):
+            pass
+
+    # 3. Standard incremental shot length
+    try:
+        length = float(
+            shot.get('tentativeShotLength')
+            or shot.get('lengthMeters')
+            or shot.get('shotLength')
+            or shot.get('boreLength')
+            or 0.0
+        )
+        return length, prev_cumulative
+    except (ValueError, TypeError):
+        return 0.0, prev_cumulative
+
+
+def build_all_chassis_daily_hdd_metrics(force_refresh=False):
+    """
+    Builds day-wise HDD performance metrics (shot count and shot meters)
+    mapped to machine chassis numbers from execution telemetry tasks.
+    """
+    if not force_refresh:
+        cached = ttl_get(DAILY_METRICS_CACHE_KEY)
+        if cached is not None and isinstance(cached, tuple) and len(cached) == 2:
+            return cached
+
+    from collections import defaultdict
+
+    known_fleet = {}
+    for m in Machine.objects.all():
+        chassis_key = str(m.machine_chassis_no or m.serial_number or '').strip()
+        if not chassis_key:
+            continue
+        info = {
+            "chassis_number": chassis_key,
+            "machine_id": m.id,
+            "machine_name": m.name,
+            "keys": {chassis_key.lower()}
+        }
+        if m.machine_chassis_no:
+            info["keys"].add(str(m.machine_chassis_no).strip().lower())
+        if m.serial_number:
+            info["keys"].add(str(m.serial_number).strip().lower())
+        for k in info["keys"]:
+            known_fleet[k] = info
+
+    # Fetch all authorized tasks with telemetry
+    try:
+        scoped = get_user_authorized_tasks(
+            user=None,
+            task_type='FIBER_TRENCHING_DUCTING_TASK',
+            page=0,
+            size=500,
+            expand_hierarchy=True,
+            include_telemetry=True
+        )
+        tasks = scoped.get('results', []) if isinstance(scoped, dict) else []
+    except Exception as exc:
+        logger.error("[build_all_chassis_daily_hdd_metrics] Error fetching tasks: %s", exc)
+        tasks = []
+
+    daily_map = defaultdict(lambda: defaultdict(lambda: {"count": 0, "meters": 0.0}))
+    canonical_chassis_info = {}
+
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+
+        ex = t.get('taskExecution') if isinstance(t.get('taskExecution'), dict) else {}
+        fd = ex.get('fieldData') if isinstance(ex.get('fieldData'), dict) else {}
+        tr = fd.get('trenching') if isinstance(fd.get('trenching'), dict) else {}
+
+        mach = tr.get('trenchingMachineDetails') if isinstance(tr.get('trenchingMachineDetails'), dict) else {}
+        if not mach and isinstance(t.get('machineDetails'), dict):
+            mach = t.get('machineDetails')
+
+        raw_chassis = str(
+            mach.get('machineId')
+            or mach.get('chassisNo')
+            or mach.get('machine_chassis_no')
+            or mach.get('registrationNo')
+            or t.get('machineId')
+            or ''
+        ).strip()
+
+        if not raw_chassis or raw_chassis.lower() in ('none', 'null', '—', 'n/a'):
+            continue
+
+        raw_lower = raw_chassis.lower()
+        matched_info = known_fleet.get(raw_lower)
+        if matched_info:
+            canonical_chassis = matched_info["chassis_number"]
+        else:
+            canonical_chassis = raw_chassis
+            matched_info = {
+                "chassis_number": raw_chassis,
+                "machine_id": None,
+                "machine_name": raw_chassis,
+                "keys": {raw_lower}
+            }
+            known_fleet[raw_lower] = matched_info
+
+        canonical_chassis_info[canonical_chassis] = matched_info
+
+        shots = tr.get('hddShot') if isinstance(tr.get('hddShot'), list) else []
+        prev_cum = None
+        for s in shots:
+            if not isinstance(s, dict):
+                continue
+            shot_date = extract_shot_date(s, t)
+            if not shot_date:
+                continue
+            meters, prev_cum = extract_shot_meters(s, prev_cum)
+            daily_map[canonical_chassis][shot_date]["count"] += 1
+            daily_map[canonical_chassis][shot_date]["meters"] += meters
+
+    # Build clean formatted day-wise records
+    formatted_chassis_records = {}
+    for canon_chassis, date_dict in daily_map.items():
+        info = canonical_chassis_info.get(canon_chassis, {})
+        m_id = info.get("machine_id")
+        rec_list = []
+        for d_str, data in sorted(date_dict.items()):
+            rec_list.append({
+                "chassis_number": canon_chassis,
+                "date": d_str,
+                "hdd_shot_count": int(data["count"]),
+                "hdd_shot_meters": round(float(data["meters"]), 2),
+                "machine_id": m_id
+            })
+        formatted_chassis_records[canon_chassis] = rec_list
+
+    cache_val = (formatted_chassis_records, known_fleet)
+    ttl_set(DAILY_METRICS_CACHE_KEY, cache_val, ttl_seconds=DAILY_METRICS_CACHE_TTL)
+    return cache_val
+
+
+def get_chassis_daily_hdd_metrics(
+    chassis_query=None,
+    start_date=None,
+    end_date=None,
+    machine_id=None,
+    force_refresh=False
+):
+    """
+    Main query function for Chassis Number-Wise Day-Wise HDD Shot Count and Shot Meters API.
+    
+    Filters:
+    - chassis_query: Target machine chassis number or comma-separated list
+    - start_date: Starting date (inclusive, YYYY-MM-DD or DD-MM-YYYY)
+    - end_date: Ending date (inclusive, YYYY-MM-DD or DD-MM-YYYY)
+    - machine_id: Target database machine ID
+    - force_refresh: Force refresh bypass cache
+    """
+    # 1. Normalize and validate date parameters
+    norm_start = None
+    if start_date:
+        norm_start = normalize_date_input(start_date)
+        if not norm_start:
+            return {
+                "success": False,
+                "message": f"Invalid start_date parameter: '{start_date}'. Expected format YYYY-MM-DD or DD-MM-YYYY.",
+                "data": []
+            }
+
+    norm_end = None
+    if end_date:
+        norm_end = normalize_date_input(end_date)
+        if not norm_end:
+            return {
+                "success": False,
+                "message": f"Invalid end_date parameter: '{end_date}'. Expected format YYYY-MM-DD or DD-MM-YYYY.",
+                "data": []
+            }
+
+    if norm_start and norm_end and norm_start > norm_end:
+        return {
+            "success": False,
+            "message": f"start_date ({norm_start}) cannot be after end_date ({norm_end}).",
+            "data": []
+        }
+
+    # 2. Retrieve day-wise records and fleet registry
+    daily_records, known_fleet = build_all_chassis_daily_hdd_metrics(force_refresh=force_refresh)
+
+    target_chassis_list = []
+
+    # 3. Handle filter by machine_id
+    if machine_id is not None:
+        try:
+            mid_int = int(machine_id)
+        except (ValueError, TypeError):
+            return {
+                "success": False,
+                "message": f"Invalid machine_id parameter: '{machine_id}'. Expected an integer ID.",
+                "data": []
+            }
+
+        matched_fleet = [v for v in known_fleet.values() if v.get('machine_id') == mid_int]
+        if not matched_fleet:
+            return {
+                "success": False,
+                "message": f"No machine found with machine_id: {machine_id}",
+                "data": []
+            }
+        target_chassis_list = [matched_fleet[0]['chassis_number']]
+
+    # 4. Handle filter by chassis_query
+    elif chassis_query:
+        if isinstance(chassis_query, str):
+            requested = [c.strip() for c in chassis_query.split(',') if c.strip()]
+        elif isinstance(chassis_query, (list, tuple, set)):
+            requested = [str(c).strip() for c in chassis_query if str(c).strip()]
+        else:
+            requested = []
+
+        if not requested:
+            return {
+                "success": False,
+                "message": "Invalid chassis_number parameter provided.",
+                "data": []
+            }
+
+        matched_set = set()
+        for req in requested:
+            req_lower = req.lower()
+            matched_canonical = None
+
+            # Check known fleet registry
+            if req_lower in known_fleet:
+                matched_canonical = known_fleet[req_lower]['chassis_number']
+            else:
+                for k, info in known_fleet.items():
+                    if k == req_lower or info['chassis_number'].lower() == req_lower:
+                        matched_canonical = info['chassis_number']
+                        break
+
+            # Flexible substring / last-digits matching if >= 4 characters
+            if not matched_canonical and len(req) >= 4:
+                for k, info in known_fleet.items():
+                    if req_lower in k or k.endswith(req_lower) or info['chassis_number'].lower().endswith(req_lower):
+                        matched_canonical = info['chassis_number']
+                        break
+
+            # Also check daily records map directly
+            if not matched_canonical:
+                for c_k in daily_records.keys():
+                    if c_k.lower() == req_lower or (len(req) >= 4 and (req_lower in c_k.lower() or c_k.lower().endswith(req_lower))):
+                        matched_canonical = c_k
+                        break
+
+            if matched_canonical:
+                matched_set.add(matched_canonical)
+
+        if not matched_set:
+            return {
+                "success": False,
+                "message": f"Invalid chassis number or machine not found: '{', '.join(requested)}'",
+                "data": []
+            }
+
+        target_chassis_list = sorted(list(matched_set))
+
+    # 5. If no filter, target all machines with records
+    else:
+        target_chassis_list = sorted(list(daily_records.keys()))
+
+    # 6. Collect and filter day-wise records
+    filtered_results = []
+    for c_num in target_chassis_list:
+        recs = daily_records.get(c_num, [])
+        for r in recs:
+            rec_date = r.get('date')
+            if norm_start and rec_date < norm_start:
+                continue
+            if norm_end and rec_date > norm_end:
+                continue
+            filtered_results.append(r)
+
+    # Sort results by date ascending, then by chassis_number
+    filtered_results.sort(key=lambda x: (x.get('date', ''), x.get('chassis_number', '')))
+
+    if not filtered_results:
+        # Machine(s) are valid, but no shot records exist in the selected period
+        date_desc = ""
+        if norm_start and norm_end:
+            date_desc = f" between {norm_start} and {norm_end}"
+        elif norm_start:
+            date_desc = f" from {norm_start} onwards"
+        elif norm_end:
+            date_desc = f" up to {norm_end}"
+
+        chassis_desc = f" for chassis '{', '.join(target_chassis_list)}'" if target_chassis_list else ""
+        return {
+            "success": True,
+            "data": [],
+            "message": f"No HDD shot records found{chassis_desc}{date_desc}.",
+            "total_records": 0
+        }
+
+    return {
+        "success": True,
+        "data": filtered_results,
+        "total_records": len(filtered_results)
+    }
+

@@ -1,11 +1,11 @@
-from django.urls import path, include
+from django.urls import path, include, re_path
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from apps.common.responses import success_response
 from apps.roles.views import PermissionViewSet
 from apps.authentication.views import MeView
 from apps.integrations.bharatnet_views import BharatNetTDMonitoringView, BharatNetLiveViewAPIView
-from apps.machines.views import MachineChassisHddShotSummaryView
+from apps.machines.views import MachineChassisHddShotSummaryView, MachineHddMetricsDayWiseView
 
 
 from rest_framework.renderers import JSONRenderer
@@ -68,7 +68,8 @@ class ApiRootView(APIView):
                     "planner": "/api/v1/planner/",
                     "td-monitoring": "/api/v1/td-monitoring/",
                     "bharatnet": "/api/v1/bharatnet/td-monitoring/",
-                    "chassis-hdd-shots": "/api/v1/chassis-hdd-shots/"
+                    "chassis-hdd-shots": "/api/v1/chassis-hdd-shots/",
+                    "hdd-metrics": "/api/v1/machines/hdd-metrics/"
                 }
             },
             message="Hero Web REST API v1 Root"
@@ -107,7 +108,10 @@ urlpatterns = [
     # Generic T&D Monitoring Endpoint & Live View
     path('td-monitoring/', BharatNetTDMonitoringView.as_view(), name='td_monitoring'),
     path('live-view/<str:token>/', BharatNetLiveViewAPIView.as_view(), name='live_view_api'),
-    # Machine Chassis Number-Wise HDD Shot Count and Shot Meters API
+    # Machine Chassis Number-Wise Day-Wise HDD Shot Count and Shot Meters API
+    re_path(r'^hdd-metrics/?$', MachineHddMetricsDayWiseView.as_view(), name='api_root_hdd_metrics'),
+    re_path(r'^hdd-metrics/(?P<chassis_number>[^/]+)/?$', MachineHddMetricsDayWiseView.as_view(), name='api_root_hdd_metrics_detail'),
+    # Machine Chassis Number-Wise HDD Shot Count and Shot Meters API (Cumulative Summary)
     path('chassis-hdd-shots/', MachineChassisHddShotSummaryView.as_view(), name='api_chassis_hdd_shots'),
     path('chassis-hdd-shots/<str:chassis_number>/', MachineChassisHddShotSummaryView.as_view(), name='api_chassis_hdd_shots_detail'),
     path('hdd-machine-shots/', MachineChassisHddShotSummaryView.as_view(), name='api_hdd_machine_shots'),
@@ -115,3 +119,4 @@ urlpatterns = [
     # Backward compatibility alias
     path('bharatnet/', include('apps.integrations.bharatnet_urls')),
 ]
+

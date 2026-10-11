@@ -97,15 +97,68 @@ const ENDPOINTS_CATALOG = [
     category: 'TASKS & HDD',
     items: [
       {
+        id: 'hdd_metrics_daywise',
+        method: 'GET',
+        title: 'HDD Day-Wise Shot Count & Meters (by Chassis)',
+        path: '/api/machines/hdd-metrics',
+        description: 'Chassis Number-Wise Day-Wise HDD Shot Count and Shot Meters API. Exposes machine operational performance data aggregated per individual calendar day. Supports date-wise filtering with start_date and end_date.',
+        params: [
+          { name: 'chassis_number', in: 'query', type: 'string', required: true, default: '600202608401', desc: 'Machine chassis number (e.g. 600202608401) or comma-separated list' },
+          { name: 'start_date', in: 'query', type: 'string', required: false, default: '2026-10-01', desc: 'Filter from start date inclusive (YYYY-MM-DD or DD-MM-YYYY)' },
+          { name: 'end_date', in: 'query', type: 'string', required: false, default: '2026-10-10', desc: 'Filter up to end date inclusive (YYYY-MM-DD or DD-MM-YYYY)' },
+          { name: 'machine_id', in: 'query', type: 'integer', required: false, default: '', desc: 'Filter by specific machine database ID (optional)' },
+          { name: 'refresh', in: 'query', type: 'boolean', required: false, default: '', desc: 'Set to "true" to force fresh recalculation from live tasks' },
+        ],
+        sampleResponse: {
+          success: true,
+          data: [
+            {
+              chassis_number: "600202608401",
+              date: "2026-10-01",
+              hdd_shot_count: 4,
+              hdd_shot_meters: 552.63,
+              machine_id: 6
+            },
+            {
+              chassis_number: "600202608401",
+              date: "2026-10-02",
+              hdd_shot_count: 2,
+              hdd_shot_meters: 254.57,
+              machine_id: 6
+            },
+            {
+              chassis_number: "600202608401",
+              date: "2026-10-03",
+              hdd_shot_count: 4,
+              hdd_shot_meters: 581.34,
+              machine_id: 6
+            }
+          ],
+          total_records: 3
+        },
+        emptyResponse: {
+          success: true,
+          data: [],
+          message: "No HDD shot records found for chassis '600202608401' between 2026-11-01 and 2026-11-10.",
+          total_records: 0
+        },
+        errorResponse: {
+          success: false,
+          message: "Invalid chassis number or machine not found: 'INVALID123'",
+          data: []
+        }
+      },
+      {
         id: 'hdd_shots_chassis',
         method: 'GET',
-        title: 'HDD Shot Count & Meters (by Chassis)',
+        title: 'HDD Shot Count & Meters (by Chassis - Lifetime Total)',
         path: '/api/v1/machines/chassis-hdd-shots/',
-        description: 'Machine Chassis Number-Wise HDD Shot Count and Shot Meters API. Returns HDD Shot Count, HDD Shot Meters, Machine ID, and Last Updated Date & Time. Supports single chassis number, comma-separated list of chassis numbers, or retrieving all active fleet machines.',
+        description: 'Machine Chassis Number-Wise HDD Shot Count and Shot Meters API. Returns lifetime cumulative HDD Shot Count, HDD Shot Meters, Machine ID, and Last Updated Date & Time.',
         params: [
           { name: 'chassis_number', in: 'query', type: 'string', required: false, default: '600202608401', desc: 'Machine chassis number (e.g. 600202608401) or comma-separated list. Leave blank to retrieve all machines.' },
           { name: 'refresh', in: 'query', type: 'boolean', required: false, default: '', desc: 'Set to "true" to force fresh recalculation from live tasks' },
         ],
+
         sampleResponse: {
           success: true,
           data: [

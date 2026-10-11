@@ -46,3 +46,9 @@ def ttl_get_soft(key, soft_ttl_seconds=20, hard_ttl_seconds=120):
 def ttl_set(key, value, ttl_seconds=20):
     with _lock:
         _store[key] = (value, time.time() + max(1, int(ttl_seconds)))
+
+
+def ttl_delete(key):
+    with _lock:
+        _store.pop(key, None)
+

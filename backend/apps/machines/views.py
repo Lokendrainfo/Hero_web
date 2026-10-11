@@ -175,3 +175,125 @@ class MachineChassisHddShotSummaryView(viewsets.ViewSet, Response if False else 
         return _InternalView.as_view(**initkwargs)
 
 
+class MachineHddMetricsDayWiseView(viewsets.ViewSet, Response if False else object):
+    """
+    Machine Chassis Number-Wise Day-Wise HDD Shot Count and Shot Meters API
+
+    Exposes day-wise machine performance data based on machine chassis number:
+    - chassis_number: Machine Chassis Number
+    - date: Date of shot record (YYYY-MM-DD)
+    - hdd_shot_count: HDD Shot Count for the respective day
+    - hdd_shot_meters: HDD Shot Meters for the respective day
+    - machine_id: Machine ID in database (if available)
+
+    Query Parameters / Body:
+    - chassis_number: Specific chassis number or comma-separated list
+    - start_date: Start date for day-wise filtering (YYYY-MM-DD or DD-MM-YYYY)
+    - end_date: End date for day-wise filtering (YYYY-MM-DD or DD-MM-YYYY)
+    - machine_id: Filter by integer Machine ID
+    - refresh: 'true' / '1' to bypass cache and recompute from live tasks
+    """
+    permission_classes = [permissions.AllowAny]
+
+    @classmethod
+    def as_view(cls, **initkwargs):
+        from rest_framework.views import APIView
+        from rest_framework.renderers import JSONRenderer
+        from .hdd_shots import get_chassis_daily_hdd_metrics
+
+        class _InternalView(APIView):
+            permission_classes = [permissions.AllowAny]
+            renderer_classes = [JSONRenderer]
+
+            def get(self, request, chassis_number=None):
+                query_chassis = (
+                    chassis_number
+                    or request.query_params.get('chassis_number')
+                    or request.query_params.get('chassis_no')
+                    or request.query_params.get('chassis')
+                )
+                start_date = (
+                    request.query_params.get('start_date')
+                    or request.query_params.get('startDate')
+                    or request.query_params.get('from_date')
+                    or request.query_params.get('from')
+                )
+                end_date = (
+                    request.query_params.get('end_date')
+                    or request.query_params.get('endDate')
+                    or request.query_params.get('to_date')
+                    or request.query_params.get('to')
+                )
+                machine_id = request.query_params.get('machine_id') or request.query_params.get('id')
+                refresh = (
+                    request.query_params.get('refresh', '').lower() in ('true', '1')
+                    or request.query_params.get('nocache', '').lower() in ('true', '1')
+                )
+
+                res = get_chassis_daily_hdd_metrics(
+                    chassis_query=query_chassis,
+                    start_date=start_date,
+                    end_date=end_date,
+                    machine_id=machine_id,
+                    force_refresh=refresh
+                )
+
+                if not res.get("success"):
+                    msg = res.get("message", "").lower()
+                    status_code = (
+                        status.HTTP_400_BAD_REQUEST
+                        if ("format" in msg or "cannot be after" in msg)
+                        else status.HTTP_404_NOT_FOUND
+                    )
+                    return Response(res, status=status_code)
+
+                return Response(res, status=status.HTTP_200_OK)
+
+            def post(self, request, chassis_number=None):
+                payload = request.data if isinstance(request.data, dict) else {}
+                query_chassis = (
+                    chassis_number
+                    or payload.get('chassis_numbers')
+                    or payload.get('chassis_number')
+                    or payload.get('chassis_no')
+                    or request.query_params.get('chassis_number')
+                )
+                start_date = (
+                    payload.get('start_date')
+                    or payload.get('startDate')
+                    or request.query_params.get('start_date')
+                )
+                end_date = (
+                    payload.get('end_date')
+                    or payload.get('endDate')
+                    or request.query_params.get('end_date')
+                )
+                machine_id = payload.get('machine_id') or request.query_params.get('machine_id')
+                refresh = (
+                    str(payload.get('refresh', '')).lower() in ('true', '1')
+                    or request.query_params.get('refresh', '').lower() in ('true', '1')
+                )
+
+                res = get_chassis_daily_hdd_metrics(
+                    chassis_query=query_chassis,
+                    start_date=start_date,
+                    end_date=end_date,
+                    machine_id=machine_id,
+                    force_refresh=refresh
+                )
+
+                if not res.get("success"):
+                    msg = res.get("message", "").lower()
+                    status_code = (
+                        status.HTTP_400_BAD_REQUEST
+                        if ("format" in msg or "cannot be after" in msg)
+                        else status.HTTP_404_NOT_FOUND
+                    )
+                    return Response(res, status=status_code)
+
+                return Response(res, status=status.HTTP_200_OK)
+
+        return _InternalView.as_view(**initkwargs)
+
+
+
