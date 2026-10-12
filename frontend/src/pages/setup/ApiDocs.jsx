@@ -340,6 +340,53 @@ const ENDPOINTS_CATALOG = [
     ],
   },
   {
+    category: 'REPORTS',
+    items: [
+      {
+        id: 'hdd_shots_report',
+        method: 'GET',
+        title: 'HDD Shot Report (Shot-wise & Daily Totals)',
+        path: '/api/v1/reports/hdd-shots/',
+        description: 'Machine-wise and individual shot-wise HDD output in metres mapped to chassis number. Each row represents one shot. Includes individual shot distance, start/end time, daily total metres, daily shot count, and multi-sheet Excel export.',
+        params: [
+          { name: 'start_date', in: 'query', type: 'string', required: false, default: '2026-10-01', desc: 'Start date in YYYY-MM-DD format (inclusive)' },
+          { name: 'end_date', in: 'query', type: 'string', required: false, default: '2026-10-11', desc: 'End date in YYYY-MM-DD format (inclusive)' },
+          { name: 'chassis_number', in: 'query', type: 'string', required: false, default: '600202608398', desc: 'Filter by specific machine chassis number' },
+          { name: 'machine_id', in: 'query', type: 'string', required: false, default: '', desc: 'Filter by machine ID or code (e.g. MAC-8398)' },
+          { name: 'page', in: 'query', type: 'integer', required: false, default: '1', desc: 'Page number for pagination' },
+          { name: 'page_size', in: 'query', type: 'integer', required: false, default: '25', desc: 'Items per page (0 for all records)' },
+          { name: 'export', in: 'query', type: 'string', required: false, default: '', desc: 'Set to "excel" or "xlsx" to download formatted .xlsx workbook' },
+        ],
+        sampleResponse: {
+          success: true,
+          message: 'HDD Shot report generated successfully',
+          data: {
+            results: [
+              {
+                date: '2026-10-10',
+                machine_id: 'MAC-8398',
+                machine_pk: 3,
+                machine_name: 'A600 HDD (8398)',
+                chassis_number: '600202608398',
+                shot_id: '676-PIT16-PIT17',
+                shot_number: 145,
+                shot_serial: 'HDD-016',
+                start_time: '23:08:59',
+                end_time: '',
+                shot_meters: 122.63,
+                daily_total_meters: 220.86,
+                daily_shot_count: 2,
+                vendor_name: 'HARPAL INFRA DEVELOPMENT'
+              }
+            ],
+            pagination: { page: 1, page_size: 25, total_records: 16, total_pages: 1 },
+            summary: { total_shots: 16, total_meters: 3087.87, total_machines: 1 }
+          }
+        }
+      },
+    ],
+  },
+  {
     category: 'T&D MONITORING INTEGRATION',
     items: [
       {

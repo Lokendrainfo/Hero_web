@@ -69,7 +69,8 @@ class ApiRootView(APIView):
                     "td-monitoring": "/api/v1/td-monitoring/",
                     "bharatnet": "/api/v1/bharatnet/td-monitoring/",
                     "chassis-hdd-shots": "/api/v1/chassis-hdd-shots/",
-                    "hdd-metrics": "/api/v1/machines/hdd-metrics/"
+                    "hdd-metrics": "/api/v1/machines/hdd-metrics/",
+                    "report-hdd-shots": "/api/v1/reports/hdd-shots/"
                 }
             },
             message="Hero Web REST API v1 Root"
