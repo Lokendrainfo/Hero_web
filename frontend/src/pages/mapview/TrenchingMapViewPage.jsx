@@ -263,19 +263,25 @@ export const TrenchingMapViewPage = () => {
     setNormalizedExecutions(Array.from(userExecMap.values()));
   }, [selectedDate]);
 
-  const fetchHddData = useCallback(async () => {
-    setLoading(true);
+  const fetchHddData = useCallback(async (isManualRefresh = false) => {
+    if (normalizedExecutions.length === 0) {
+      setLoading(true);
+    } else {
+      setIsBackgroundLoading(true);
+    }
     setError(null);
+    const params = {
+      task_type: 'FIBER_TRENCHING_DUCTING_TASK',
+      page: 0,
+      size: 50
+    };
+    if (isManualRefresh) {
+      params.refresh = true;
+    }
+    if (selectedVendorId && selectedVendorId !== 'all') {
+      params.vendor_id = selectedVendorId;
+    }
     try {
-      const params = {
-        task_type: 'FIBER_TRENCHING_DUCTING_TASK',
-        page: 0,
-        size: 50
-      };
-      if (selectedVendorId && selectedVendorId !== 'all') {
-        params.vendor_id = selectedVendorId;
-      }
-
       // Fetch 100% real-time live execution tasks directly from upstream iLync API in-memory
       const res = await taskService.getMapViewExecutions(params);
       const resData = res?.data?.data || res?.data || res;
@@ -296,12 +302,17 @@ export const TrenchingMapViewPage = () => {
         setRawTasksList(fbTasks);
         processAndSetExecutions(fbTasks);
       } catch (fbErr) {
-        setError(err?.message || 'Failed to load live HDD execution data from server.');
+        // If we already have execution data loaded, do not blank out screen
+        if (normalizedExecutions.length === 0) {
+          setError(fbErr?.message || err?.message || 'Failed to load live HDD execution data from server.');
+        } else {
+          console.warn('[TrenchingMapViewPage] Retaining cached executions after background sync error');
+        }
       }
       setLoading(false);
       setIsBackgroundLoading(false);
     }
-  }, [selectedVendorId, processAndSetExecutions]);
+  }, [selectedVendorId, processAndSetExecutions, normalizedExecutions.length]);
 
   useEffect(() => {
     fetchHddData();
@@ -457,7 +468,7 @@ export const TrenchingMapViewPage = () => {
           <button
             type="button"
             className="btn-secondary"
-            onClick={fetchHddData}
+            onClick={() => fetchHddData(true)}
             disabled={loading || isBackgroundLoading}
           >
             <LucideRefreshCw size={13} className={(loading || isBackgroundLoading) ? 'animate-spin' : ''} />
@@ -500,7 +511,16 @@ export const TrenchingMapViewPage = () => {
         {loading ? (
           <LoadingSpinner title="Loading…" subtitle="Fetching execution crews" />
         ) : error ? (
-          <EmptyState title="Could not load execution data" subtitle={error} />
+          <EmptyState title="Could not load execution data" subtitle={error}>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              onClick={() => fetchHddData(true)}
+            >
+              <LucideRefreshCw size={14} /> Try Again
+            </button>
+          </EmptyState>
         ) : Object.keys(groupedByDistrict).length === 0 ? (
           <EmptyState
             title="No execution data"

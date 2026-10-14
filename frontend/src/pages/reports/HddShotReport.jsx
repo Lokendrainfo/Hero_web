@@ -75,7 +75,7 @@ export const HddShotReport = ({ selectedVendorId }) => {
       if (circle) params.circle = circle;
       if (district) params.district = district;
       if (block) params.block = block;
-      if (activeTab === 'today') params.today_only = 'true';
+      if (activeTab === 'today' && !startDate && !endDate) params.today_only = 'true';
       if (refresh) params.refresh = 'true';
 
       const res = await reportService.getHddShotReport(params);
@@ -117,6 +117,40 @@ export const HddShotReport = ({ selectedVendorId }) => {
     setPage(1);
   };
 
+  // Quick Date Presets
+  const handleQuickPreset = (preset) => {
+    const today = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const toYMD = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+    if (preset === 'today') {
+      setActiveTab('today');
+      setStartDate('');
+      setEndDate('');
+      setPage(1);
+    } else if (preset === 'yesterday') {
+      const y = new Date();
+      y.setDate(today.getDate() - 1);
+      const yStr = toYMD(y);
+      setStartDate(yStr);
+      setEndDate(yStr);
+      setActiveTab('all');
+      setPage(1);
+    } else if (preset === 'last7') {
+      const d7 = new Date();
+      d7.setDate(today.getDate() - 6);
+      setStartDate(toYMD(d7));
+      setEndDate(toYMD(today));
+      setActiveTab('all');
+      setPage(1);
+    } else if (preset === 'all') {
+      setStartDate('');
+      setEndDate('');
+      setActiveTab('all');
+      setPage(1);
+    }
+  };
+
   // Export Excel
   const handleExportExcel = async (todayOnly = false) => {
     setExporting(true);
@@ -130,7 +164,9 @@ export const HddShotReport = ({ selectedVendorId }) => {
       if (circle) params.circle = circle;
       if (district) params.district = district;
       if (block) params.block = block;
-      if (todayOnly || activeTab === 'today') params.today_only = 'true';
+      if ((todayOnly && !startDate && !endDate) || (activeTab === 'today' && !startDate && !endDate)) {
+        params.today_only = 'true';
+      }
 
       const res = await reportService.exportHddShotReportExcel(params);
       const blob = res instanceof Blob ? res : new Blob([res], {
@@ -141,7 +177,7 @@ export const HddShotReport = ({ selectedVendorId }) => {
       const link = document.createElement('a');
       link.href = url;
       const dateTag = new Date().toISOString().slice(0, 10);
-      const typeTag = (todayOnly || activeTab === 'today') ? '_Today_Report' : '_All_Sheets';
+      const typeTag = (todayOnly || (activeTab === 'today' && !startDate && !endDate)) ? '_Today_Report' : '_All_Sheets';
       const chassisTag = chassisNumber.trim() ? `_${chassisNumber.trim()}` : '';
       link.setAttribute('download', `Hero_HDD_Report${typeTag}${chassisTag}_${dateTag}.xlsx`);
       document.body.appendChild(link);
@@ -274,6 +310,79 @@ export const HddShotReport = ({ selectedVendorId }) => {
         </div>
       </div>
 
+      {/* Quick Date Presets Bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Quick Presets:</span>
+        <button
+          type="button"
+          onClick={() => handleQuickPreset('today')}
+          style={{
+            fontSize: '0.75rem',
+            padding: '4px 10px',
+            borderRadius: '12px',
+            border: activeTab === 'today' && !startDate && !endDate ? '1px solid #b45309' : '1px solid var(--border)',
+            background: activeTab === 'today' && !startDate && !endDate ? 'rgba(180, 83, 9, 0.1)' : 'var(--bg-subtle)',
+            color: activeTab === 'today' && !startDate && !endDate ? '#b45309' : 'var(--text-primary)',
+            cursor: 'pointer',
+            fontWeight: 600,
+            transition: 'all 0.15s ease'
+          }}
+        >
+          Today
+        </button>
+        <button
+          type="button"
+          onClick={() => handleQuickPreset('yesterday')}
+          style={{
+            fontSize: '0.75rem',
+            padding: '4px 10px',
+            borderRadius: '12px',
+            border: '1px solid var(--border)',
+            background: 'var(--bg-subtle)',
+            color: 'var(--text-primary)',
+            cursor: 'pointer',
+            fontWeight: 500,
+            transition: 'all 0.15s ease'
+          }}
+        >
+          Yesterday
+        </button>
+        <button
+          type="button"
+          onClick={() => handleQuickPreset('last7')}
+          style={{
+            fontSize: '0.75rem',
+            padding: '4px 10px',
+            borderRadius: '12px',
+            border: '1px solid var(--border)',
+            background: 'var(--bg-subtle)',
+            color: 'var(--text-primary)',
+            cursor: 'pointer',
+            fontWeight: 500,
+            transition: 'all 0.15s ease'
+          }}
+        >
+          Last 7 Days
+        </button>
+        <button
+          type="button"
+          onClick={() => handleQuickPreset('all')}
+          style={{
+            fontSize: '0.75rem',
+            padding: '4px 10px',
+            borderRadius: '12px',
+            border: activeTab === 'all' && !startDate && !endDate ? '1px solid #2563eb' : '1px solid var(--border)',
+            background: activeTab === 'all' && !startDate && !endDate ? 'rgba(37, 99, 235, 0.1)' : 'var(--bg-subtle)',
+            color: activeTab === 'all' && !startDate && !endDate ? '#2563eb' : 'var(--text-primary)',
+            cursor: 'pointer',
+            fontWeight: 600,
+            transition: 'all 0.15s ease'
+          }}
+        >
+          All Time
+        </button>
+      </div>
+
       {/* Filters Bar */}
       <div
         style={{
@@ -289,28 +398,68 @@ export const HddShotReport = ({ selectedVendorId }) => {
         }}
       >
         {/* Start Date */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', minWidth: '130px', flex: '1 1 130px' }}>
-          <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>Start Date</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', minWidth: '135px', flex: '1 1 135px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>Start Date</label>
+            {startDate && (
+              <button
+                type="button"
+                onClick={() => { setStartDate(''); setPage(1); }}
+                style={{ fontSize: '0.7rem', color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}
+                title="Clear Start Date"
+              >
+                Clear
+              </button>
+            )}
+          </div>
           <input
             type="date"
             className="form-input"
             value={startDate}
-            disabled={activeTab === 'today'}
-            onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
-            style={{ fontSize: '0.82rem', padding: '6px 10px', height: '36px' }}
+            max={endDate || undefined}
+            onClick={(e) => { try { e.target.showPicker?.(); } catch (_) {} }}
+            onChange={(e) => {
+              const val = e.target.value;
+              setStartDate(val);
+              setPage(1);
+              if (val && activeTab === 'today') {
+                setActiveTab('all');
+              }
+            }}
+            style={{ fontSize: '0.82rem', padding: '6px 10px', height: '36px', cursor: 'pointer' }}
           />
         </div>
 
         {/* End Date */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', minWidth: '130px', flex: '1 1 130px' }}>
-          <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>End Date</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', minWidth: '135px', flex: '1 1 135px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>End Date</label>
+            {endDate && (
+              <button
+                type="button"
+                onClick={() => { setEndDate(''); setPage(1); }}
+                style={{ fontSize: '0.7rem', color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}
+                title="Clear End Date"
+              >
+                Clear
+              </button>
+            )}
+          </div>
           <input
             type="date"
             className="form-input"
             value={endDate}
-            disabled={activeTab === 'today'}
-            onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
-            style={{ fontSize: '0.82rem', padding: '6px 10px', height: '36px' }}
+            min={startDate || undefined}
+            onClick={(e) => { try { e.target.showPicker?.(); } catch (_) {} }}
+            onChange={(e) => {
+              const val = e.target.value;
+              setEndDate(val);
+              setPage(1);
+              if (val && activeTab === 'today') {
+                setActiveTab('all');
+              }
+            }}
+            style={{ fontSize: '0.82rem', padding: '6px 10px', height: '36px', cursor: 'pointer' }}
           />
         </div>
 
@@ -426,7 +575,12 @@ export const HddShotReport = ({ selectedVendorId }) => {
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button
             type="button"
-            onClick={() => { setActiveTab('today'); setPage(1); }}
+            onClick={() => {
+              setActiveTab('today');
+              setStartDate('');
+              setEndDate('');
+              setPage(1);
+            }}
             style={{
               padding: '8px 16px',
               fontSize: '0.85rem',
@@ -442,7 +596,7 @@ export const HddShotReport = ({ selectedVendorId }) => {
             }}
           >
             <Clock size={14} />
-            Today's Shots ({summary.today_shots_count ?? (activeTab === 'today' ? pagination.total_records : 0)})
+            Today's Shots ({summary.today_shots_count ?? 0})
           </button>
 
           <button
@@ -459,7 +613,10 @@ export const HddShotReport = ({ selectedVendorId }) => {
               color: activeTab === 'all' ? '#2563eb' : 'var(--text-muted)'
             }}
           >
-            All Historical Shots ({activeTab === 'all' ? pagination.total_records.toLocaleString() : summary.total_shots.toLocaleString()})
+            {startDate || endDate
+              ? `Filtered Shots (${pagination.total_records.toLocaleString()})`
+              : `All Historical Shots (${activeTab === 'all' ? pagination.total_records.toLocaleString() : (summary.total_historical_shots ?? summary.total_shots ?? 0).toLocaleString()})`
+            }
           </button>
 
           <button
@@ -601,8 +758,8 @@ export const HddShotReport = ({ selectedVendorId }) => {
                       </div>
                       <p style={{ margin: '0.25rem 0 0.75rem', fontSize: '0.82rem' }}>
                         {activeTab === 'today'
-                          ? "No shots were logged today or they match different filter criteria. View All Historical Shots to see past progress."
-                          : "No records match the current filters. Try adjusting the date range or chassis number."}
+                          ? "No shots were logged today or they match different filter criteria. View All Historical Shots or select a date range above to view records."
+                          : "No records match the current filters. Try adjusting the date range or machine filters."}
                       </p>
                       <button type="button" className="btn-secondary" onClick={handleResetFilters} style={{ fontSize: '0.8rem', margin: '0 auto' }}>
                         Clear Filters

@@ -77,7 +77,7 @@ def resolve_latest_task_timestamp(task_obj, exec_data=None):
                                         dp.get('capturedAt'),
                                         dp.get('depthCaptureStartTime'),
                                         dp.get('depthCaptureEndTime'),
-                                        (dp.get('depthoMeterImage') or {}).get('capturedAt'),
+                                        (dp.get('depthoMeterImage') if isinstance(dp.get('depthoMeterImage'), dict) else {}).get('capturedAt'),
                                         dp.get('createdAt'),
                                         dp.get('timestamp')
                                     ])
@@ -166,21 +166,20 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         force_refresh = (
             str(q_params.get('refresh', '')).lower() in ('1', 'true')
             or str(q_params.get('nocache', '')).lower() in ('1', 'true')
-            or str(q_params.get('live', '')).lower() in ('1', 'true')
         )
     if not force_refresh and extra_params:
         force_refresh = (
             str(extra_params.get('refresh', '')).lower() in ('1', 'true')
             or str(extra_params.get('nocache', '')).lower() in ('1', 'true')
-            or str(extra_params.get('live', '')).lower() in ('1', 'true')
         )
 
     auth_cache_key = None
+    u_id = getattr(user, 'id', 'anon') if user else 'anon'
+    u_type = getattr(user, 'user_type', '') if user else ''
+    extra_tuple = tuple(sorted((str(k), str(v)) for k, v in extra_params.items())) if extra_params else ()
+    auth_cache_key = f"auth_tasks:{u_id}:{u_type}:{task_type}:{page}:{size}:{req_vendor}:{expand_hierarchy}:{include_telemetry}:{extra_tuple}"
+
     if not force_refresh:
-        u_id = getattr(user, 'id', 'anon') if user else 'anon'
-        u_type = getattr(user, 'user_type', '') if user else ''
-        extra_tuple = tuple(sorted((str(k), str(v)) for k, v in extra_params.items())) if extra_params else ()
-        auth_cache_key = f"auth_tasks:{u_id}:{u_type}:{task_type}:{page}:{size}:{req_vendor}:{expand_hierarchy}:{include_telemetry}:{extra_tuple}"
         cached_res = ttl_get(auth_cache_key)
         if cached_res is not None:
             return cached_res
@@ -271,7 +270,23 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         total_elements = len(base_content)
         total_pages = 1 if total_elements > 0 else 0
     else:
-        raw_data = client.get_my_tasks(task_type=req_task_type, page=page, size=size, params=extra_params)
+        raw_data = None
+        for attempt in range(2):
+            try:
+                raw_data = client.get_my_tasks(task_type=req_task_type, page=page, size=size, params=extra_params)
+                break
+            except Exception as exc:
+                logger.warning("[TASK_SCOPE] get_my_tasks attempt %d failed: %s", attempt + 1, exc)
+                if attempt == 0:
+                    time.sleep(0.5)
+                else:
+                    if auth_cache_key:
+                        stale = ttl_get(auth_cache_key)
+                        if stale:
+                            logger.info("[TASK_SCOPE] Serving stale cached tasks after live fetch failure")
+                            return stale
+                    raise
+
         
         # Extract base task list and pagination metadata
         if isinstance(raw_data, dict):
@@ -675,9 +690,12 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
 
         filtered_geo_tasks = []
         for t in expanded_results:
-            t_circle = str(t.get('circle') or t.get('state') or t.get('circleName') or '').strip().lower()
-            t_district = str(t.get('district') or t.get('districtName') or '').strip().lower()
-            t_block = str(t.get('block') or t.get('blockName') or '').strip().lower()
+            if not isinstance(t, dict):
+                continue
+            loc = t.get('locationSnapshot') if isinstance(t.get('locationSnapshot'), dict) else (t.get('location') if isinstance(t.get('location'), dict) else {})
+            t_circle = str(t.get('circle') or t.get('state') or t.get('circleName') or loc.get('circle') or loc.get('state') or '').strip().lower()
+            t_district = str(t.get('district') or t.get('districtName') or loc.get('district') or '').strip().lower()
+            t_block = str(t.get('block') or t.get('blockName') or loc.get('blockName') or loc.get('block') or '').strip().lower()
 
             match = True
             if geo_circle and t_circle and geo_circle not in t_circle and t_circle not in geo_circle:
@@ -735,6 +753,8 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
     if target_match_ids or target_match_names or (has_subordinates and allowed_user_identifiers) or target_circle_name or target_district_name or target_block_name:
         final_tasks = []
         for t in expanded_results:
+            if not isinstance(t, dict):
+                continue
             t_vid = str(t.get('vendorId') or '').strip().lower()
             t_vname = str(t.get('vendorName') or '').strip().lower()
 
@@ -748,8 +768,9 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
             if has_subordinates and allowed_user_identifiers:
                 # Check task assignees / owners against reporting scope
                 as_snap = t.get('assigneeSnapshot') if isinstance(t.get('assigneeSnapshot'), dict) else {}
-                assignee_id = str(t.get('assignedToId') or t.get('assigneeId') or as_snap.get('userId') or as_snap.get('id') or t.get('userId') or t.get('assignedUser') or t.get('assignee') or t.get('user', {}).get('id') or '').strip().lower()
-                assignee_email = str(t.get('assignedToEmail') or t.get('assigneeEmail') or as_snap.get('email') or as_snap.get('mobile') or t.get('user', {}).get('email') or '').strip().lower()
+                u_snap = t.get('user') if isinstance(t.get('user'), dict) else {}
+                assignee_id = str(t.get('assignedToId') or t.get('assigneeId') or as_snap.get('userId') or as_snap.get('id') or t.get('userId') or t.get('assignedUser') or t.get('assignee') or u_snap.get('id') or '').strip().lower()
+                assignee_email = str(t.get('assignedToEmail') or t.get('assigneeEmail') or as_snap.get('email') or as_snap.get('mobile') or u_snap.get('email') or '').strip().lower()
 
                 # If task has an assignee, check if assignee is in reporting scope
                 if assignee_id or assignee_email:
@@ -757,7 +778,7 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
 
             geo_ok = True
             if target_circle_name or target_district_name or target_block_name:
-                loc = t.get('locationSnapshot') or t.get('location') or {}
+                loc = t.get('locationSnapshot') if isinstance(t.get('locationSnapshot'), dict) else (t.get('location') if isinstance(t.get('location'), dict) else {})
                 t_circle = str(loc.get('circle') or loc.get('state') or t.get('circle') or t.get('state') or '').strip().lower()
                 t_district = str(loc.get('district') or t.get('district') or '').strip().lower()
                 t_block = str(loc.get('blockName') or loc.get('block') or t.get('blockName') or t.get('block') or '').strip().lower()
@@ -848,7 +869,7 @@ def is_task_authorized_for_user(user, task_id, request=None):
 
                 # Advance User Geography Check
                 if getattr(user, 'user_type', None) == 'ADVANCE':
-                    loc = task_obj.get('locationSnapshot') or task_obj.get('location') or {}
+                    loc = task_obj.get('locationSnapshot') if isinstance(task_obj.get('locationSnapshot'), dict) else (task_obj.get('location') if isinstance(task_obj.get('location'), dict) else {})
                     t_circle = str(loc.get('circle') or loc.get('state') or task_obj.get('circle') or task_obj.get('state') or '').strip().lower()
                     t_district = str(loc.get('district') or task_obj.get('district') or '').strip().lower()
                     t_block = str(loc.get('blockName') or loc.get('block') or task_obj.get('blockName') or task_obj.get('block') or '').strip().lower()

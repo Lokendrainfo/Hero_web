@@ -310,8 +310,8 @@ def get_hdd_shot_report_data(
     """
     today_str = datetime.now().strftime('%Y-%m-%d')
 
-    # If today_only is requested, override date range to today's date
-    if today_only:
+    # If today_only is requested and no explicit date range was provided, override date range to today's date
+    if today_only and not start_date and not end_date:
         start_date = today_str
         end_date = today_str
 
@@ -337,6 +337,9 @@ def get_hdd_shot_report_data(
 
     # 3. Filtering
     filtered = []
+    all_matching_non_date = []
+    today_matching = []
+
     chassis_query = str(chassis_number or '').strip().lower()
     machine_query = str(machine_id or '').strip().lower()
     vendor_query = str(vendor_id or '').strip().lower()
@@ -344,13 +347,10 @@ def get_hdd_shot_report_data(
     district_query = str(district or '').strip().lower()
     block_query = str(block or '').strip().lower()
 
-    for s in shots:
-        s_date = s['date']
-        if norm_start and s_date < norm_start:
-            continue
-        if norm_end and s_date > norm_end:
-            continue
+    # Determine effective today from active fleet records
+    effective_today = today_str if any(s.get('date') == today_str for s in shots) else (max((s['date'] for s in shots), default=today_str))
 
+    for s in shots:
         if chassis_query:
             c_val = str(s['chassis_number']).lower()
             if chassis_query != c_val and chassis_query not in c_val:
@@ -383,6 +383,17 @@ def get_hdd_shot_report_data(
             s_blk = str(s.get('block') or '').lower()
             if block_query != s_blk and block_query not in s_blk:
                 continue
+
+        all_matching_non_date.append(s)
+
+        s_date = s['date']
+        if s_date == effective_today:
+            today_matching.append(s)
+
+        if norm_start and s_date < norm_start:
+            continue
+        if norm_end and s_date > norm_end:
+            continue
 
         filtered.append(s)
 
@@ -427,9 +438,7 @@ def get_hdd_shot_report_data(
     total_meters = round(sum(s['shot_meters'] for s in filtered), 2)
     machines_matched = len(set(s['chassis_number'] for s in filtered))
 
-    # Also compute today's shots specifically from the active shots
-    effective_today = today_str if any(s.get('date') == today_str for s in shots) else (max((s['date'] for s in shots), default=today_str))
-    today_records = [s for s in filtered if s.get('date') == effective_today]
+    today_records = today_matching
 
     # 5. Pagination
     try:
@@ -453,6 +462,8 @@ def get_hdd_shot_report_data(
         total_pages = 1
         paginated_records = filtered
 
+    is_today_view = bool(today_only and not (start_date and norm_start != today_str) and not norm_end != today_str)
+
     return {
         'results': paginated_records,
         'all_filtered_records': filtered,
@@ -465,11 +476,13 @@ def get_hdd_shot_report_data(
             'total_pages': total_pages
         },
         'summary': {
-            'total_shots': total_records,
+            'total_shots': len(all_matching_non_date) if today_only else total_records,
+            'total_filtered_shots': total_records,
             'total_meters': total_meters,
             'total_machines': machines_matched,
             'today_shots_count': len(today_records),
             'today_meters': round(sum(s['shot_meters'] for s in today_records), 2),
+            'total_historical_shots': len(all_matching_non_date),
             'date_range': {
                 'start': norm_start or (min((s['date'] for s in filtered), default=None)),
                 'end': norm_end or (max((s['date'] for s in filtered), default=None))

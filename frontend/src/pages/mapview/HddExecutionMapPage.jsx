@@ -578,57 +578,8 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
     handleAlignMultiPlans([planSummary], planSummary.bounds);
   };
 
-  // Batch resolve S3 Presigned URLs via POST /api/survey/photo-urls
+  // Batch resolve S3 Presigned URLs via POST /api/survey/photo-urls (disabled as requested: do not load photos)
   const resolvePhotoUrlsForExecution = async (normalized) => {
-    if (!normalized) return normalized;
-
-    const keysSet = new Set();
-
-    (normalized.pits || []).forEach(pit => {
-      (pit.photos || []).forEach(ph => {
-        if (ph.key) keysSet.add(ph.key);
-      });
-    });
-
-    (normalized.shots || []).forEach(trench => {
-      (trench.photos || []).forEach(ph => {
-        if (ph.key) keysSet.add(ph.key);
-      });
-    });
-
-    (normalized.depthPoints || []).forEach(dp => {
-      (dp.photos || []).forEach(ph => {
-        if (ph.key) keysSet.add(ph.key);
-      });
-    });
-
-    const keysArray = Array.from(keysSet);
-    if (keysArray.length === 0) return normalized;
-
-    try {
-      const res = await taskService.getSurveyPhotoUrls(keysArray);
-      const urlMap = res?.data?.data || res?.data || res || {};
-
-      const applyPresignedUrl = (mediaObj) => {
-        if (!mediaObj || !mediaObj.key) return;
-        const cleanK = String(mediaObj.key).replace(/^\/+/, '');
-        const resolved = urlMap[mediaObj.key] || urlMap[cleanK] || urlMap[`/${cleanK}`];
-        if (resolved) {
-          mediaObj.photoUrl = resolved;
-          mediaObj.url = resolved;
-          mediaObj.src = resolved;
-        } else if (mediaObj.photoUrl) {
-          mediaObj.photoUrl = formatImageUrl(mediaObj.photoUrl);
-        }
-      };
-
-      (normalized.pits || []).forEach(pit => (pit.photos || []).forEach(applyPresignedUrl));
-      (normalized.shots || []).forEach(trench => (trench.photos || []).forEach(applyPresignedUrl));
-      (normalized.depthPoints || []).forEach(dp => (dp.photos || []).forEach(applyPresignedUrl));
-    } catch (err) {
-      console.error('[HddExecutionMapPage] Error batch resolving photo URLs:', err);
-    }
-
     return normalized;
   };
 

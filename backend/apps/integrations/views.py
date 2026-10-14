@@ -474,16 +474,29 @@ class IlyncMyTasksListView(IlyncBaseView):
         extra_params = {k: v for k, v in request.query_params.items() if k not in ['page', 'size', 'taskType', 'task_type']}
 
         from apps.common.task_scope import get_user_authorized_tasks
+        from apps.common.ttl_cache import ttl_get, ttl_set
         user = request.user if request.user and request.user.is_authenticated else None
-        
-        scoped_data = get_user_authorized_tasks(
-            user=user,
-            request=request,
-            task_type=task_type,
-            page=page,
-            size=size,
-            extra_params=extra_params
-        )
+        u_id = getattr(user, 'id', 'anon') if user else 'anon'
+        fallback_cache_key = f"my_tasks_fb:{u_id}:{task_type}"
+
+        try:
+            scoped_data = get_user_authorized_tasks(
+                user=user,
+                request=request,
+                task_type=task_type,
+                page=page,
+                size=size,
+                extra_params=extra_params
+            )
+            if scoped_data and isinstance(scoped_data, dict) and scoped_data.get('results'):
+                ttl_set(fallback_cache_key, scoped_data, ttl_seconds=1800)
+        except Exception as exc:
+            logger.error("[my-tasks] Error fetching tasks: %s", exc, exc_info=True)
+            cached = ttl_get(fallback_cache_key)
+            if cached:
+                logger.info("[my-tasks] Serving fallback cached tasks after upstream error")
+                return success_response(data=cached, message="Serving cached tasks (upstream temporary issue)")
+            raise
 
         return success_response(data=scoped_data, message="My tasks fetched successfully from ILYNC API")
 
@@ -812,35 +825,7 @@ class IlyncTaskExportView(IlyncBaseView):
 
 class IlyncSurveyPhotoUrlsView(IlyncBaseView):
     def post(self, request):
-        photo_keys = request.data.get('photoKeys') or request.data.get('photoUrls') or request.data.get('keys') or []
-        if isinstance(photo_keys, str):
-            photo_keys = [photo_keys]
-        if not isinstance(photo_keys, list):
-            photo_keys = []
-            
-        cleaned_keys = []
-        for k in photo_keys:
-            if isinstance(k, str) and k.strip():
-                c_key = k.strip()
-                if c_key.startswith('http://') or c_key.startswith('https://'):
-                    parts = c_key.split('.com/')
-                    if len(parts) > 1:
-                        c_key = parts[1].split('?')[0]
-                cleaned_keys.append(c_key.lstrip('/'))
-
-        if not cleaned_keys:
-            return success_response(data={}, message="No photo keys provided")
-
-        try:
-            client = IlyncClient()
-            res = client.get_survey_photo_urls(cleaned_keys)
-            data = res.get('data') if isinstance(res, dict) else None
-            if isinstance(data, dict):
-                return success_response(data=data, message="Photo URLs resolved successfully")
-        except Exception:
-            logger.exception("[IlyncSurveyPhotoUrlsView] Error resolving photo URLs")
-
-        return success_response(data={}, message="Photo URLs unavailable")
+        return success_response(data={}, message="Photo URLs resolution disabled")
 
 
 def prune_execution_telemetry(exec_data):
@@ -875,19 +860,8 @@ def prune_execution_telemetry(exec_data):
                 for dp in dps:
                     if not isinstance(dp, dict):
                         continue
-                    
-                    img = dp.get('depthoMeterImage')
-                    img_clean = None
-                    if isinstance(img, dict):
-                        img_clean = {
-                            'photoUrl': img.get('photoUrl') or img.get('url') or img.get('src') or img.get('key'),
-                            'latitude': dp.get('latitude') or img.get('latitude'),
-                            'longitude': dp.get('longitude') or img.get('longitude'),
-                            'capturedAt': dp.get('capturedAt') or img.get('capturedAt'),
-                        }
-                    elif isinstance(img, str):
-                        img_clean = img
 
+                    # Photos omitted as requested ("DO NOT LOAD PHOTOS IN THIS TIME HERE IF NOT LOADING THAN FINE")
                     pruned_dps.append({
                         'id': dp.get('id') or dp.get('depthPointId'),
                         'depth': dp.get('depth'),
@@ -896,15 +870,8 @@ def prune_execution_telemetry(exec_data):
                         'capturedAt': dp.get('capturedAt') or dp.get('createdAt') or dp.get('depthCaptureStartTime'),
                         'depthCaptureStartTime': dp.get('depthCaptureStartTime'),
                         'depthCaptureEndTime': dp.get('depthCaptureEndTime'),
-                        'depthoMeterImage': img_clean
+                        'depthoMeterImage': None
                     })
-
-            start_img = s.get('startHddShotImage')
-            if isinstance(start_img, dict):
-                start_img = {
-                    'photoUrl': start_img.get('photoUrl') or start_img.get('url') or start_img.get('src') or start_img.get('key'),
-                    'capturedAt': start_img.get('capturedAt')
-                }
 
             pruned_shots.append({
                 'hddShotSerialNo': s.get('hddShotSerialNo'),
@@ -921,8 +888,8 @@ def prune_execution_telemetry(exec_data):
                 'crossingPointInShot': s.get('crossingPointInShot'),
                 'strataType': s.get('strataType'),
                 'remarks': s.get('remarks'),
-                'startHddShotImage': start_img,
-                'pitToPitVideo': s.get('pitToPitVideo'),
+                'startHddShotImage': None,
+                'pitToPitVideo': None,
                 'depthCapture': pruned_dps
             })
 
@@ -943,12 +910,12 @@ def prune_execution_telemetry(exec_data):
                 'pitType': p.get('pitType') or p.get('type'),
                 'taskStage': p.get('taskStage') or p.get('stage'),
                 'pitDiggingTime': p.get('pitDiggingTime') or p.get('diggingTime') or p.get('createdAt'),
-                'pitImage_1': p.get('pitImage_1'),
-                'pitImage_2': p.get('pitImage_2'),
-                'pitImage_3': p.get('pitImage_3'),
-                'pitDepthImage': p.get('pitDepthImage'),
-                'pitWidthImage': p.get('pitWidthImage'),
-                'pitVideo': p.get('pitVideo'),
+                'pitImage_1': None,
+                'pitImage_2': None,
+                'pitImage_3': None,
+                'pitDepthImage': None,
+                'pitWidthImage': None,
+                'pitVideo': None,
             })
 
     pruned_trenching = {
@@ -965,13 +932,13 @@ def prune_execution_telemetry(exec_data):
             'strataType': raw_mach.get('strataType'),
             'rowArea': raw_mach.get('rowArea'),
             'cableType': raw_mach.get('cableType'),
-            'machineImage': raw_mach.get('machineImage'),
+            'machineImage': None,
         }
     if isinstance(raw_op, dict) and raw_op:
         pruned_trenching['operatorDetails'] = {
             'name': raw_op.get('name'),
             'mobileNumber': raw_op.get('mobileNumber'),
-            'operatorPhoto': raw_op.get('operatorPhoto'),
+            'operatorPhoto': None,
         }
 
     pruned_field_data = {
@@ -1014,24 +981,40 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
         extra_params = {k: v for k, v in q_params.items() if k not in ['page', 'size', 'taskType', 'task_type', 'telemetry', 'include_telemetry']}
         extra_params['live'] = 'true'
 
+        u_id = getattr(user, 'id', 'anon') if user else 'anon'
+        fallback_cache_key = f"map_view_exec_fb:{u_id}"
+
         # 1. Fetch authorized tasks and hierarchy WITHOUT telemetry upfront (fast)
-        scoped_data = get_user_authorized_tasks(
-            user=user,
-            request=request,
-            task_type='FIBER_TRENCHING_DUCTING_TASK',
-            page=0,
-            size=50,
-            extra_params=extra_params,
-            expand_hierarchy=True,
-            include_telemetry=False
-        )
+        try:
+            scoped_data = get_user_authorized_tasks(
+                user=user,
+                request=request,
+                task_type='FIBER_TRENCHING_DUCTING_TASK',
+                page=0,
+                size=50,
+                extra_params=extra_params,
+                expand_hierarchy=True,
+                include_telemetry=False
+            )
+        except Exception as exc:
+            logger.error("[map-view-executions] Error fetching authorized tasks: %s", exc, exc_info=True)
+            cached_data = ttl_get(fallback_cache_key)
+            if cached_data:
+                logger.info("[map-view-executions] Serving fallback cached tasks after upstream error")
+                return success_response(
+                    data=cached_data,
+                    message="Serving cached map view executions (upstream temporary issue)"
+                )
+            raise
 
         raw_tasks = scoped_data.get('results', []) if isinstance(scoped_data, dict) else []
 
         # 2. Enrich circle, district, block, state, and user identity
         enriched_tasks = []
         for t in raw_tasks:
-            loc = t.get('locationSnapshot') or t.get('location') or {}
+            if not isinstance(t, dict):
+                continue
+            loc = t.get('locationSnapshot') if isinstance(t.get('locationSnapshot'), dict) else (t.get('location') if isinstance(t.get('location'), dict) else {})
             if not t.get('circle') and loc.get('circle'):
                 t['circle'] = loc.get('circle')
             if not t.get('district') and loc.get('district'):
@@ -1041,9 +1024,13 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
             if not t.get('state') and (loc.get('state') or loc.get('circle')):
                 t['state'] = loc.get('state') or loc.get('circle')
 
-            snap = t.get('assigneeSnapshot') or {}
-            uid = str(snap.get('userId') or snap.get('id') or t.get('assignedTo') or t.get('userId') or (t.get('taskExecution') or {}).get('userId') or (t.get('taskExecution') or {}).get('createdById') or '').strip()
-            uname = str(snap.get('name') or t.get('assigneeName') or (t.get('taskExecution') or {}).get('createdByName') or (t.get('assignedUser') or {}).get('name') or '').strip()
+            snap = t.get('assigneeSnapshot') if isinstance(t.get('assigneeSnapshot'), dict) else {}
+            u_obj = t.get('user') if isinstance(t.get('user'), dict) else {}
+            t_exec = t.get('taskExecution') if isinstance(t.get('taskExecution'), dict) else {}
+            t_assigned_user = t.get('assignedUser') if isinstance(t.get('assignedUser'), dict) else {}
+
+            uid = str(snap.get('userId') or snap.get('id') or t.get('assignedTo') or t.get('userId') or t_exec.get('userId') or t_exec.get('createdById') or u_obj.get('id') or '').strip()
+            uname = str(snap.get('name') or t.get('assigneeName') or t_exec.get('createdByName') or t_assigned_user.get('name') or u_obj.get('name') or '').strip()
             if uid:
                 t['userId'] = uid
                 t['assigneeId'] = uid
@@ -1051,14 +1038,18 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
                 t['userName'] = uname
                 t['assigneeName'] = uname
 
+            exec_fd = t_exec.get('fieldData') if isinstance(t_exec.get('fieldData'), dict) else {}
+            exec_tr = exec_fd.get('trenching') if isinstance(exec_fd.get('trenching'), dict) else {}
             t_mach = (
                 t.get('trenchingMachineDetails') or
                 t.get('machineDetails') or
                 t.get('machineSnapshot') or
                 t.get('assetSnapshot') or
-                ((t.get('taskExecution') or {}).get('fieldData') or {}).get('trenching', {}).get('trenchingMachineDetails') or
+                (exec_tr.get('trenchingMachineDetails') if isinstance(exec_tr, dict) else {}) or
                 {}
             )
+            if not isinstance(t_mach, dict):
+                t_mach = {}
             mid = t.get('machineId') or t_mach.get('machineId') or t_mach.get('id') or t_mach.get('registrationNo')
             mname = t.get('machineName') or t_mach.get('machineName') or t_mach.get('name')
             if mid and not t.get('machineId'):
@@ -1140,6 +1131,8 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
 
         def fetch_and_attach_exec(task_obj):
             nonlocal telemetry_calls_count
+            if not isinstance(task_obj, dict):
+                return
             tid = task_obj.get('id')
             if not tid:
                 return
@@ -1153,8 +1146,9 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
                     if latest_iso:
                         task_obj['updatedAt'] = latest_iso
                         task_obj['lastModified'] = latest_iso
-                    tr = ((cached_exec.get('fieldData') or {}).get('trenching') or {})
-                    mach = tr.get('trenchingMachineDetails') or {}
+                    fd = cached_exec.get('fieldData') if isinstance(cached_exec.get('fieldData'), dict) else {}
+                    tr = fd.get('trenching') if isinstance(fd.get('trenching'), dict) else fd
+                    mach = tr.get('trenchingMachineDetails') if isinstance(tr, dict) and isinstance(tr.get('trenchingMachineDetails'), dict) else {}
                     if mach:
                         if mach.get('machineId') and not task_obj.get('machineId'):
                             task_obj['machineId'] = mach.get('machineId')
@@ -1165,7 +1159,7 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
 
             telemetry_calls_count += 1
             try:
-                e_res = client.get_task_execution(tid)
+                e_res = client.get_task_execution(tid, timeout=(2.0, 4.0))
                 raw_exec = e_res.get('data') if isinstance(e_res, dict) else None
                 if raw_exec and isinstance(raw_exec, dict):
                     pruned = prune_execution_telemetry(raw_exec)
@@ -1178,8 +1172,9 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
                         task_obj['lastModified'] = latest_iso
 
                     # Machine details from pruned / raw
-                    tr = ((pruned.get('fieldData') or {}).get('trenching') or {})
-                    mach = tr.get('trenchingMachineDetails') or {}
+                    fd = pruned.get('fieldData') if isinstance(pruned.get('fieldData'), dict) else {}
+                    tr = fd.get('trenching') if isinstance(fd.get('trenching'), dict) else fd
+                    mach = tr.get('trenchingMachineDetails') if isinstance(tr, dict) and isinstance(tr.get('trenchingMachineDetails'), dict) else {}
                     if mach:
                         if mach.get('machineId') and not task_obj.get('machineId'):
                             task_obj['machineId'] = mach.get('machineId')
@@ -1188,7 +1183,7 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
                         task_obj['trenchingMachineDetails'] = mach
 
                     # Calculate covered length if shots are present
-                    shots = tr.get('hddShot') or []
+                    shots = tr.get('hddShot') if isinstance(tr, dict) else []
                     if isinstance(shots, list) and len(shots) > 0:
                         tot_m = sum(float(s.get('tentativeShotLength') or 0) for s in shots if isinstance(s, dict))
                         if tot_m > 0:
@@ -1219,12 +1214,16 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
             dict(q_params)
         )
 
+        final_payload = {
+            "results": enriched_tasks,
+            "total": len(enriched_tasks),
+            "is_live": True
+        }
+        if enriched_tasks:
+            ttl_set(fallback_cache_key, final_payload, ttl_seconds=1800)
+
         return success_response(
-            data={
-                "results": enriched_tasks,
-                "total": len(enriched_tasks),
-                "is_live": True
-            },
+            data=final_payload,
             message="Live map view execution tasks fetched successfully from iLync"
         )
 
