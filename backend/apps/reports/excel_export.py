@@ -33,10 +33,10 @@ def generate_hdd_shot_excel_report(shots, daily_summary, filters_applied=None, t
 
     def resolve_end_time_display(val):
         if not val:
-            return 'WIP'
+            return '—'
         s_val = str(val).strip()
-        if not s_val or s_val.lower() in ('none', 'null', '-', '—', '--', 'n/a', 'nan', '00:00:00', 'undefined'):
-            return 'WIP'
+        if not s_val or s_val.lower() in ('none', 'null', '-', '—', '--', 'n/a', 'nan', '00:00:00', 'undefined', 'wip'):
+            return '—'
         return s_val
 
     header_fill = PatternFill(start_color=primary_navy, end_color=primary_navy, fill_type="solid")

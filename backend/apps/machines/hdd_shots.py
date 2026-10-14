@@ -8,7 +8,7 @@ from apps.machines.models import Machine
 
 logger = logging.getLogger(__name__)
 
-CACHE_KEY = "hdd_machine_chassis_shot_summary_v1"
+CACHE_KEY = "hdd_machine_chassis_shot_summary_v2"
 CACHE_TTL = 120  # 2 minutes cache for sub-10ms response times
 
 
@@ -41,6 +41,136 @@ def parse_timestamp_to_iso(dt_val):
         return dt.strftime('%Y-%m-%dT%H:%M:%S')
     except Exception:
         return s
+
+
+def parse_shot_datetime(dt_val):
+    """
+    Parses start or end timestamps into a naive datetime object.
+    Accepts:
+    - DD-MM-YYYY HH:MM:SS or DD/MM/YYYY HH:MM:SS (optional seconds)
+    - YYYY-MM-DD HH:MM:SS or YYYY/MM/DD HH:MM:SS (optional seconds)
+    - ISO 8601 strings (e.g. 2026-10-14T09:00:00, 2026-10-14 09:00:00, with or without Z/offset)
+    - Epoch timestamps (milliseconds or seconds, int/float or digit string)
+    Returns a datetime object or None if invalid/missing.
+    """
+    if dt_val is None:
+        return None
+    
+    if isinstance(dt_val, (int, float)):
+        try:
+            ts = float(dt_val)
+            if ts <= 0:
+                return None
+            if ts > 1e11:  # milliseconds
+                ts /= 1000.0
+            return datetime.fromtimestamp(ts)
+        except Exception:
+            return None
+
+    s = str(dt_val).strip()
+    if not s or s.lower() in ('none', 'null', 'undefined', 'nan', 'wip', 'in_progress', 'inprogress', 'pending', '-', '—', '--', 'n/a', '00:00:00'):
+        return None
+
+    if s.isdigit():
+        try:
+            ts = float(s)
+            if ts <= 0:
+                return None
+            if ts > 1e11:
+                ts /= 1000.0
+            return datetime.fromtimestamp(ts)
+        except Exception:
+            return None
+
+    # 1. Match DD-MM-YYYY or DD/MM/YYYY
+    m_dd = re.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?:[\sT]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$', s)
+    if m_dd:
+        d, mo, y, h, mi, sec = m_dd.groups()
+        try:
+            return datetime(int(y), int(mo), int(d), int(h or 0), int(mi or 0), int(sec or 0))
+        except Exception:
+            return None
+
+    # 2. Match YYYY-MM-DD or YYYY/MM/DD
+    m_yy = re.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[\sT]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$', s)
+    if m_yy:
+        y, mo, d, h, mi, sec = m_yy.groups()
+        try:
+            return datetime(int(y), int(mo), int(d), int(h or 0), int(mi or 0), int(sec or 0))
+        except Exception:
+            return None
+
+    # 3. Standard ISO formatted string
+    try:
+        clean_s = s.replace('Z', '+00:00')
+        dt = datetime.fromisoformat(clean_s)
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+        return dt
+    except Exception:
+        pass
+
+    return None
+
+
+def is_shot_completed(shot):
+    """
+    Evaluates whether an individual HDD shot is fully completed according to
+    enterprise validation rules:
+    - Include a shot only when both start_time and end_time are present and valid.
+    - Exclude shots where start_time is missing.
+    - Exclude shots where end_time is null, empty, or missing.
+    - Exclude in-progress shots, even if they have already recorded partial metres.
+    - Validate that the end time is not earlier than the start time.
+    Returns (is_valid: bool, start_dt: datetime, end_dt: datetime).
+    """
+    if not isinstance(shot, dict):
+        return False, None, None
+
+    # Check explicit in-progress status flags
+    for status_key in ('taskStage', 'taskHddStage', 'status', 'shotStatus', 'executionStatus', 'state'):
+        st_val = str(shot.get(status_key) or '').strip().upper()
+        if st_val in ('IN_PROGRESS', 'INPROGRESS', 'WIP', 'PENDING', 'RUNNING', 'STARTED', 'PARTIAL'):
+            return False, None, None
+
+    # Extract start time candidate
+    start_raw = (
+        shot.get('hddStartTime')
+        or shot.get('startTime')
+        or shot.get('start_time')
+        or shot.get('ductingStartTime')
+        or shot.get('time')
+    )
+    if not start_raw:
+        return False, None, None
+
+    # Extract end time candidate
+    end_raw = (
+        shot.get('hddEndTime')
+        or shot.get('endTime')
+        or shot.get('end_time')
+        or shot.get('ductedTime')
+        or shot.get('savingTime')
+    )
+    if not end_raw:
+        return False, None, None
+
+    # String sanity check on end_raw
+    end_str = str(end_raw).strip().lower()
+    if end_str in ('none', 'null', 'undefined', 'wip', 'inprogress', 'in_progress', 'pending', '-', '—', '--', 'n/a', '00:00:00'):
+        return False, None, None
+
+    start_dt = parse_shot_datetime(start_raw)
+    end_dt = parse_shot_datetime(end_raw)
+
+    if not start_dt or not end_dt:
+        return False, None, None
+
+    # Validate that the end time is not earlier than the start time
+    if end_dt < start_dt:
+        return False, None, None
+
+    return True, start_dt, end_dt
 
 
 def build_all_chassis_hdd_shot_summary(force_refresh=False):
@@ -149,22 +279,20 @@ def build_all_chassis_hdd_shot_summary(force_refresh=False):
             }
             summary_map[raw_chassis] = matched_rec
 
-        # Aggregate shots
+        # Aggregate completed shots only
+        prev_cum = None
         for s in shots:
             if not isinstance(s, dict):
                 continue
-            matched_rec["hdd_shot_count"] += 1
-            length = float(s.get('tentativeShotLength') or s.get('lengthMeters') or s.get('shotLength') or 0.0)
-            matched_rec["hdd_shot_meters"] += length
+            is_valid, start_dt, end_dt = is_shot_completed(s)
+            if not is_valid:
+                continue
 
-            shot_time = (
-                s.get('hddEndTime')
-                or s.get('hddStartTime')
-                or s.get('date')
-                or t.get('updatedAt')
-                or t.get('lastModified')
-            )
-            iso_time = parse_timestamp_to_iso(shot_time)
+            meters, prev_cum = extract_shot_meters(s, prev_cum)
+            matched_rec["hdd_shot_count"] += 1
+            matched_rec["hdd_shot_meters"] += meters
+
+            iso_time = end_dt.strftime('%Y-%m-%dT%H:%M:%S')
             if iso_time and (not matched_rec["last_updated"] or iso_time > matched_rec["last_updated"]):
                 matched_rec["last_updated"] = iso_time
 
@@ -267,7 +395,7 @@ def get_chassis_hdd_shot_data(chassis_query=None, machine_id=None, force_refresh
     return {"success": True, "data": matches, "total_records": len(matches)}
 
 
-DAILY_METRICS_CACHE_KEY = "hdd_machine_chassis_daily_metrics_v2"
+DAILY_METRICS_CACHE_KEY = "hdd_machine_chassis_daily_metrics_v3"
 DAILY_METRICS_CACHE_TTL = 120  # 2 minutes TTL
 
 
@@ -475,8 +603,9 @@ def build_all_chassis_daily_hdd_metrics(force_refresh=False):
         logger.error("[build_all_chassis_daily_hdd_metrics] Error fetching tasks: %s", exc)
         tasks = []
 
-    daily_map = defaultdict(lambda: defaultdict(lambda: {"count": 0, "meters": 0.0}))
+    daily_map = defaultdict(lambda: defaultdict(lambda: {"count": 0, "meters": 0.0, "shots": []}))
     canonical_chassis_info = {}
+    seen_shot_keys = set()
 
     for t in tasks:
         if not isinstance(t, dict):
@@ -520,15 +649,43 @@ def build_all_chassis_daily_hdd_metrics(force_refresh=False):
 
         shots = tr.get('hddShot') if isinstance(tr.get('hddShot'), list) else []
         prev_cum = None
-        for s in shots:
+        for idx, s in enumerate(shots):
             if not isinstance(s, dict):
                 continue
-            shot_date = extract_shot_date(s, t)
-            if not shot_date:
+            
+            # 1. Enforce completed shot validation rules
+            is_valid, start_dt, end_dt = is_shot_completed(s)
+            if not is_valid:
                 continue
+
+            shot_date = start_dt.strftime('%Y-%m-%d')
             meters, prev_cum = extract_shot_meters(s, prev_cum)
+            meters = round(float(meters), 2)
+
+            start_iso = start_dt.strftime('%Y-%m-%dT%H:%M:%S')
+            end_iso = end_dt.strftime('%Y-%m-%dT%H:%M:%S')
+            shot_id = str(
+                s.get('hddShotName')
+                or s.get('hddShotSerialNo')
+                or s.get('shot_id')
+                or s.get('id')
+                or f"SHOT{len(daily_map[canonical_chassis][shot_date]['shots']) + 1:03d}"
+            ).strip()
+
+            # Prevent duplicate processing of the same telemetry shot
+            dedup_key = (canonical_chassis, shot_id, start_iso, end_iso)
+            if dedup_key in seen_shot_keys:
+                continue
+            seen_shot_keys.add(dedup_key)
+
             daily_map[canonical_chassis][shot_date]["count"] += 1
             daily_map[canonical_chassis][shot_date]["meters"] += meters
+            daily_map[canonical_chassis][shot_date]["shots"].append({
+                "shot_id": shot_id,
+                "start_time": start_iso,
+                "end_time": end_iso,
+                "shot_meters": meters
+            })
 
     # Build clean formatted day-wise records
     formatted_chassis_records = {}
@@ -537,12 +694,16 @@ def build_all_chassis_daily_hdd_metrics(force_refresh=False):
         m_id = info.get("machine_id")
         rec_list = []
         for d_str, data in sorted(date_dict.items()):
+            day_shots = data.get("shots", [])
+            # Sort individual shots chronologically by start_time
+            day_shots.sort(key=lambda x: x.get("start_time", ""))
             rec_list.append({
                 "chassis_number": canon_chassis,
                 "date": d_str,
                 "hdd_shot_count": int(data["count"]),
                 "hdd_shot_meters": round(float(data["meters"]), 2),
-                "machine_id": m_id
+                "machine_id": m_id,
+                "shots": day_shots
             })
         formatted_chassis_records[canon_chassis] = rec_list
 

@@ -11,11 +11,13 @@ from apps.machines.hdd_shots import (
     normalize_date_input,
     extract_shot_date,
     extract_shot_meters,
+    is_shot_completed,
+    parse_shot_datetime,
 )
 
 logger = logging.getLogger(__name__)
 
-CACHE_KEY_SHOTS = "hero_reports_hdd_shots_dataset_v4"
+CACHE_KEY_SHOTS = "hero_reports_hdd_shots_dataset_v5"
 CACHE_TTL_SHOTS = 180  # 3 minutes cache for super-fast retrieval
 
 
@@ -163,27 +165,29 @@ def build_all_hdd_shot_records(force_refresh=False):
             if not isinstance(s, dict):
                 continue
 
-            shot_date = extract_shot_date(s, t)
-            if not shot_date:
+            # Enforce completed shot validation rules
+            is_valid, start_dt, end_dt = is_shot_completed(s)
+            if not is_valid:
                 continue
 
+            shot_date = start_dt.strftime('%Y-%m-%d')
             meters, prev_cum = extract_shot_meters(s, prev_cum)
             meters = round(float(meters), 2)
 
             shot_serial = str(s.get('hddShotSerialNo') or f"HDD-{idx+1:03d}").strip()
             shot_name = str(s.get('hddShotName') or '').strip()
-            start_raw = s.get('hddStartTime') or ''
-            end_raw = s.get('hddEndTime') or ''
+            start_iso = start_dt.strftime('%Y-%m-%dT%H:%M:%S')
+            end_iso = end_dt.strftime('%Y-%m-%dT%H:%M:%S')
 
             # Deduplication key to prevent duplicates
-            dedup_key = (canonical_chassis, shot_serial, shot_name, str(start_raw), meters)
+            dedup_key = (canonical_chassis, shot_serial, shot_name, start_iso, end_iso, meters)
             if dedup_key in seen_dedup_keys:
                 continue
             seen_dedup_keys.add(dedup_key)
 
             shot_id = shot_name or s.get('id') or s.get('hddShotId') or f"{canonical_chassis}_{shot_serial}"
-            end_formatted = format_time_display(end_raw)
-            end_display = end_formatted if end_formatted else 'WIP'
+            start_display = format_time_display(start_iso)
+            end_display = format_time_display(end_iso)
 
             raw_shots.append({
                 'date': shot_date,
@@ -196,10 +200,10 @@ def build_all_hdd_shot_records(force_refresh=False):
                 'chassis_number': canonical_chassis,
                 'shot_id': shot_id,
                 'shot_serial': shot_serial,
-                'start_time': format_time_display(start_raw),
-                'start_time_raw': start_raw,
+                'start_time': start_display,
+                'start_time_raw': start_iso,
                 'end_time': end_display,
-                'end_time_raw': end_raw,
+                'end_time_raw': end_iso,
                 'shot_meters': meters,
                 'vendor_id': vendor_id,
                 'vendor_name': vendor_name,

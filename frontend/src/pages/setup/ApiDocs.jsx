@@ -101,7 +101,7 @@ const ENDPOINTS_CATALOG = [
         method: 'GET',
         title: 'HDD Day-Wise Shot Count & Meters (by Chassis)',
         path: '/api/machines/hdd-metrics',
-        description: 'Chassis Number-Wise Day-Wise HDD Shot Count and Shot Meters API. Exposes machine operational performance data aggregated per individual calendar day. Supports date-wise filtering with start_date and end_date.',
+        description: 'Chassis Number-Wise Day-Wise HDD Shot Count and Shot Meters API. Returns only completed shots with valid start and end times. Excludes in-progress and incomplete shots from daily counts, metre totals, and shots list. Supports date-wise filtering with start_date and end_date.',
         params: [
           { name: 'chassis_number', in: 'query', type: 'string', required: true, default: '600202608401', desc: 'Machine chassis number (e.g. 600202608401) or comma-separated list' },
           { name: 'start_date', in: 'query', type: 'string', required: false, default: '2026-10-01', desc: 'Filter from start date inclusive (YYYY-MM-DD or DD-MM-YYYY)' },
@@ -114,27 +114,25 @@ const ENDPOINTS_CATALOG = [
           data: [
             {
               chassis_number: "600202608401",
-              date: "2026-10-01",
-              hdd_shot_count: 4,
-              hdd_shot_meters: 552.63,
-              machine_id: 6
-            },
-            {
-              chassis_number: "600202608401",
-              date: "2026-10-02",
+              date: "2026-10-14",
               hdd_shot_count: 2,
-              hdd_shot_meters: 254.57,
-              machine_id: 6
-            },
-            {
-              chassis_number: "600202608401",
-              date: "2026-10-03",
-              hdd_shot_count: 4,
-              hdd_shot_meters: 581.34,
-              machine_id: 6
+              hdd_shot_meters: 125.5,
+              shots: [
+                {
+                  shot_id: "SHOT001",
+                  start_time: "2026-10-14T09:00:00",
+                  end_time: "2026-10-14T09:15:00",
+                  shot_meters: 60.0
+                },
+                {
+                  shot_id: "SHOT002",
+                  start_time: "2026-10-14T09:30:00",
+                  end_time: "2026-10-14T09:45:00",
+                  shot_meters: 65.5
+                }
+              ]
             }
-          ],
-          total_records: 3
+          ]
         },
         emptyResponse: {
           success: true,
