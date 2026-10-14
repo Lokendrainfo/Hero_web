@@ -59,7 +59,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
       items: [
         { label: 'Dashboard', path: '/map-view', icon: LucideLayoutDashboard, perm: 'mapview.dashboard' },
         { label: 'Trenching', path: '/map-view/trenching', icon: LucideGlobe, perm: 'mapview.view' },
-        { label: 'Green Survey', path: '/map-view/green', icon: LucideCompass, perm: 'mapview.view' }
+        { label: 'Green Survey', path: '/map-view/green', icon: LucideCompass, perm: ['mapview.green_field', 'green_field.view', 'mapview.green_survey'] }
       ]
     },
     {

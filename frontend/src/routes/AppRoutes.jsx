@@ -70,7 +70,7 @@ const DefaultRedirect = () => {
 
 const PermissionRoute = ({ perm, children }) => {
   const { hasPermission, isAdmin } = useAuth();
-  if (isAdmin || (perm && hasPermission(perm))) {
+  if (isAdmin || (perm && (Array.isArray(perm) ? perm.some(p => hasPermission(p)) : hasPermission(perm)))) {
     return children;
   }
   return <Navigate to="/dashboard" replace />;
@@ -109,8 +109,8 @@ export const AppRoutes = () => {
             <Route path="/machine-shift/create" element={<MachineShiftCreate />} />
             <Route path="/map-view" element={<MapViewPage />} />
             <Route path="/map-view/trenching" element={<TrenchingMapViewPage />} />
-            <Route path="/map-view/green" element={<GreenSurveyMapViewPage />} />
-            <Route path="/map-view/green/:taskId" element={<GreenSurveyMapViewPage />} />
+            <Route path="/map-view/green" element={<PermissionRoute perm={['mapview.green_field', 'green_field.view', 'mapview.green_survey']}><GreenSurveyMapViewPage /></PermissionRoute>} />
+            <Route path="/map-view/green/:taskId" element={<PermissionRoute perm={['mapview.green_field', 'green_field.view', 'mapview.green_survey']}><GreenSurveyMapViewPage /></PermissionRoute>} />
             <Route path="/map-view/bharatnet" element={<BharatNetMapPage />} />
             <Route path="/chart-view" element={<ChartViewPage />} />
             <Route path="/chart-view/:executionId" element={<ChartViewPage />} />

@@ -31,6 +31,7 @@ import {
   LucideX,
   LucideCompass
 } from 'lucide-react';
+import { useAuth } from '../../hooks/useAuth';
 import { taskService } from '../../services/taskService';
 import { vendorService } from '../../services/vendorService';
 import { TaskRouteMap } from '../../components/tasks/TaskRouteMap';
@@ -114,6 +115,9 @@ const DetailModal = ({ open, title, onClose, children }) => {
 };
 
 export const TaskDetailPage = () => {
+  const { hasPermission, isAdmin } = useAuth();
+  const canViewGreenSurvey = isAdmin || hasPermission('mapview.green_field') || hasPermission('green_field.view') || hasPermission('mapview.green_survey');
+
   const { taskId } = useParams();
   const navigate = useNavigate();
 
@@ -678,9 +682,11 @@ export const TaskDetailPage = () => {
               <LucideWrench size={14} /> Edit Job
             </button>
             {typeStr === 'GREEN_SURVEY' ? (
-              <a className="btn-primary" href={`/map-view/green?taskId=${taskId}`} target="_blank" rel="noopener noreferrer" style={{ background: '#059669', borderColor: '#10b981' }}>
-                <LucideCompass size={14} /> Open Green Map & Video
-              </a>
+              canViewGreenSurvey ? (
+                <a className="btn-primary" href={`/map-view/green?taskId=${taskId}`} target="_blank" rel="noopener noreferrer" style={{ background: '#059669', borderColor: '#10b981' }}>
+                  <LucideCompass size={14} /> Open Green Map & Video
+                </a>
+              ) : null
             ) : (
               <a className="btn-secondary" href={`/map-view/${taskId}`} target="_blank" rel="noopener noreferrer">
                 <LucideExternalLink size={14} /> Open map

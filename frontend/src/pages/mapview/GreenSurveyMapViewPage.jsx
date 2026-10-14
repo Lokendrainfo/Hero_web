@@ -23,6 +23,7 @@ import {
   LucideNavigation,
   LucideImage
 } from 'lucide-react';
+import { useAuth } from '../../hooks/useAuth';
 import { taskService } from '../../services/taskService';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -76,6 +77,9 @@ const createNodeIcon = (type, sequence, code) => {
 };
 
 export const GreenSurveyMapViewPage = () => {
+  const { hasPermission, isAdmin } = useAuth();
+  const hasAccess = isAdmin || hasPermission('mapview.green_field') || hasPermission('green_field.view') || hasPermission('mapview.green_survey');
+
   const { taskId: paramTaskId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -188,8 +192,10 @@ export const GreenSurveyMapViewPage = () => {
 
   // Initial load
   useEffect(() => {
-    fetchGreenData();
-  }, []);
+    if (hasAccess) {
+      fetchGreenData();
+    }
+  }, [hasAccess]);
 
   // Filter change handlers
   const handleDistrictChange = (newDist) => {
@@ -571,6 +577,20 @@ export const GreenSurveyMapViewPage = () => {
     const totalKm = selectedTask?.lengthKm || 0;
     return (totalKm * (progressPercent / 100)).toFixed(2);
   }, [selectedTask?.lengthKm, progressPercent]);
+
+  if (!hasAccess) {
+    return (
+      <div className="green-survey-page" style={{ padding: 40, display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
+        <EmptyState
+          icon={LucideCompass}
+          title="Access Restricted"
+          subtitle="You do not have permission to view Green Field Survey data. Please contact your system administrator to assign the 'mapview.green_field' permission."
+          actionText="Back to Tasks"
+          onAction={() => navigate('/tasks')}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="green-survey-page">

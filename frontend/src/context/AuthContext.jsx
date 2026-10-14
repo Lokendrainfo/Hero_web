@@ -119,8 +119,13 @@ export const AuthProvider = ({ children }) => {
     if (isAdmin) return true;
     if (!code) return true;
 
+    if (Array.isArray(code)) {
+      return code.some(c => hasPermission(c));
+    }
+
     const normCode = String(code).trim().toLowerCase();
-    const isViewOnlyReq = normCode.endsWith('.view') || normCode.includes('view');
+    const isGreenFieldCode = normCode.includes('green_field') || normCode.includes('green_survey');
+    const isViewOnlyReq = (normCode.endsWith('.view') || normCode.includes('view')) && !isGreenFieldCode;
 
     if (isAllViewer && isViewOnlyReq) return true;
 
@@ -131,7 +136,7 @@ export const AuthProvider = ({ children }) => {
     });
 
     if (matches) return true;
-    if (activePermissions.length === 0 && VIEWER_FALLBACK_PERMS.includes(code)) return true;
+    if (!isGreenFieldCode && activePermissions.length === 0 && VIEWER_FALLBACK_PERMS.includes(code)) return true;
 
     return false;
   };

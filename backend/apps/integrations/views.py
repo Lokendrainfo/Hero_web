@@ -1337,6 +1337,20 @@ class IlyncGreenSurveyMapView(IlyncBaseView):
 
         t_start = time.time()
         user = request.user if request.user and request.user.is_authenticated else None
+
+        # Permission check: Require mapview.green_field (or green_field.view / admin)
+        if user and not user.is_superuser:
+            user_roles = [r.upper() for r in (user.get_role_list() if hasattr(user, 'get_role_list') else [])]
+            is_admin = 'ADMIN' in user_roles or 'SUPER_ADMIN' in user_roles
+            if not is_admin:
+                user_perms = user.get_permission_codes() if hasattr(user, 'get_permission_codes') else []
+                has_green_perm = any(p in user_perms for p in ('mapview.green_field', 'green_field.view', 'mapview.green_survey'))
+                if not has_green_perm:
+                    return Response({
+                        "success": False,
+                        "message": "Permission denied. 'mapview.green_field' permission is required to view Green Field Survey data."
+                    }, status=status.HTTP_403_FORBIDDEN)
+
         q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
 
         target_task_id = (q_params.get('taskId') or q_params.get('task_id') or '').strip()
@@ -1692,6 +1706,16 @@ class IlyncGreenSurveyVideoStreamView(IlyncBaseView):
         import urllib.request
         from django.http import HttpResponse
         from apps.common.ttl_cache import ttl_get, ttl_set
+
+        user = request.user if request.user and request.user.is_authenticated else None
+        if user and not user.is_superuser:
+            user_roles = [r.upper() for r in (user.get_role_list() if hasattr(user, 'get_role_list') else [])]
+            is_admin = 'ADMIN' in user_roles or 'SUPER_ADMIN' in user_roles
+            if not is_admin:
+                user_perms = user.get_permission_codes() if hasattr(user, 'get_permission_codes') else []
+                has_green_perm = any(p in user_perms for p in ('mapview.green_field', 'green_field.view', 'mapview.green_survey'))
+                if not has_green_perm:
+                    return HttpResponse("Permission denied. 'mapview.green_field' permission required.", status=403)
 
         q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
         manifest_key = q_params.get('manifest') or q_params.get('manifestKey') or q_params.get('key')

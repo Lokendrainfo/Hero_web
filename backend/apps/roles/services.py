@@ -33,6 +33,7 @@ SYSTEM_PERMISSIONS = [
     # Map View & GIS Topology
     ("mapview.dashboard", "View Map View Dashboard", "Map View", "View T&D execution dashboard and operational analytics"),
     ("mapview.view", "View Map View & Topology", "Map View", "View GIS map view and trenching / HDD execution topology"),
+    ("mapview.green_field", "View Green Field Survey", "Map View", "View Green V2 field survey route map and live inspection videos"),
     ("mapview.export", "Export Map Data", "Map View", "Export spatial and execution topology data"),
 
     # Depth View / Chart View
