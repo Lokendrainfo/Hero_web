@@ -201,6 +201,10 @@ export const filterHddExecutionByDate = (data, selectedDate) => {
       if (s.startPit && s.startPit.name) activePitIds.add(String(s.startPit.name));
       if (s.endPit && s.endPit.id) activePitIds.add(String(s.endPit.id));
       if (s.endPit && s.endPit.name) activePitIds.add(String(s.endPit.name));
+      if (s.startPitId) activePitIds.add(String(s.startPitId));
+      if (s.startPitName) activePitIds.add(String(s.startPitName));
+      if (s.endPitId) activePitIds.add(String(s.endPitId));
+      if (s.endPitName) activePitIds.add(String(s.endPitName));
     });
 
     filteredPits = (data.pits || []).filter(pit => {

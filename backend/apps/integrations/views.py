@@ -823,16 +823,69 @@ class IlyncTaskExportView(IlyncBaseView):
         except Exception as e:
             return Response({"success": False, "message": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+def _clean_media(m, default_label=''):
+    if not isinstance(m, dict):
+        return None
+    url = m.get('photoUrl') or m.get('url') or m.get('key') or m.get('s3Key')
+    if not url:
+        return None
+    return {
+        'photoUrl': url,
+        'key': url,
+        'url': url,
+        'latitude': m.get('latitude'),
+        'longitude': m.get('longitude'),
+        'capturedAt': m.get('capturedAt') or m.get('createdAt'),
+        'label': m.get('label') or default_label,
+        'remarks': m.get('remarks'),
+    }
+
+
 class IlyncSurveyPhotoUrlsView(IlyncBaseView):
     def post(self, request):
-        return success_response(data={}, message="Photo URLs resolution disabled")
+        keys = request.data.get('photoKeys') or request.data.get('keys') or []
+        if isinstance(keys, str):
+            keys = [keys]
+        if not isinstance(keys, list):
+            return Response({"success": False, "message": "Invalid keys format, expected array of strings"}, status=status.HTTP_400_BAD_REQUEST)
+
+        cleaned_keys = [str(k).strip() for k in keys if k and str(k).strip() and not str(k).startswith('http')]
+        if not cleaned_keys:
+            return success_response(data={}, message="No keys provided")
+
+        from apps.common.ttl_cache import ttl_get, ttl_set
+        merged_urls = {}
+        missing_keys = []
+
+        # Check in-memory TTL cache first (1 hour cache)
+        for k in cleaned_keys:
+            cached_url = ttl_get(f"s3_url:{k}")
+            if cached_url:
+                merged_urls[k] = cached_url
+            else:
+                missing_keys.append(k)
+
+        if missing_keys:
+            try:
+                client = IlyncClient(request=request)
+                res = client.get_survey_photo_urls(missing_keys)
+                fetched = res.get('data') if isinstance(res, dict) else {}
+                if isinstance(fetched, dict):
+                    for k, u in fetched.items():
+                        if u:
+                            ttl_set(f"s3_url:{k}", u, ttl_seconds=3600)
+                            merged_urls[k] = u
+            except Exception as e:
+                logger.error("[IlyncSurveyPhotoUrlsView] Failed resolving media URLs: %s", e)
+
+        return success_response(data=merged_urls, message="Photo/Media URLs resolved successfully")
 
 
 def prune_execution_telemetry(exec_data):
     """
-    Prunes upstream raw iLync execution telemetry in-memory to retain only
+    Prunes upstream raw iLync execution telemetry in-memory to retain
     fields required by frontend map rendering (Leaflet, polylines, depth points,
-    pit markers, photos, latest capture) while discarding bloated sensor dumps.
+    pit markers, photos, latest capture, green survey paths) while discarding bloated sensor dumps.
     """
     if not isinstance(exec_data, dict):
         return exec_data
@@ -853,7 +906,7 @@ def prune_execution_telemetry(exec_data):
         for s in raw_shots:
             if not isinstance(s, dict):
                 continue
-            
+
             dps = s.get('depthCapture') or s.get('depthReadings') or []
             pruned_dps = []
             if isinstance(dps, list):
@@ -861,7 +914,6 @@ def prune_execution_telemetry(exec_data):
                     if not isinstance(dp, dict):
                         continue
 
-                    # Photos omitted as requested ("DO NOT LOAD PHOTOS IN THIS TIME HERE IF NOT LOADING THAN FINE")
                     pruned_dps.append({
                         'id': dp.get('id') or dp.get('depthPointId'),
                         'depth': dp.get('depth'),
@@ -870,7 +922,7 @@ def prune_execution_telemetry(exec_data):
                         'capturedAt': dp.get('capturedAt') or dp.get('createdAt') or dp.get('depthCaptureStartTime'),
                         'depthCaptureStartTime': dp.get('depthCaptureStartTime'),
                         'depthCaptureEndTime': dp.get('depthCaptureEndTime'),
-                        'depthoMeterImage': None
+                        'depthoMeterImage': _clean_media(dp.get('depthoMeterImage'), 'Depth Meter Photo')
                     })
 
             pruned_shots.append({
@@ -888,8 +940,8 @@ def prune_execution_telemetry(exec_data):
                 'crossingPointInShot': s.get('crossingPointInShot'),
                 'strataType': s.get('strataType'),
                 'remarks': s.get('remarks'),
-                'startHddShotImage': None,
-                'pitToPitVideo': None,
+                'startHddShotImage': _clean_media(s.get('startHddShotImage'), 'Start Shot Photo'),
+                'pitToPitVideo': _clean_media(s.get('pitToPitVideo'), 'Pit to Pit Video'),
                 'depthCapture': pruned_dps
             })
 
@@ -898,24 +950,50 @@ def prune_execution_telemetry(exec_data):
         for p in raw_pits:
             if not isinstance(p, dict):
                 continue
+
+            p_lat = p.get('latitude') or p.get('lat')
+            p_lng = p.get('longitude') or p.get('lng')
+            p_img1 = p.get('pitImage_1')
+            p_img2 = p.get('pitImage_2')
+            p_img3 = p.get('pitImage_3')
+            p_depth_img = p.get('pitDepthImage')
+            p_width_img = p.get('pitWidthImage')
+            p_vid = p.get('pitVideo')
+            tpr = p.get('threePointReference') or {}
+
+            # Fallback to photo coordinates if top-level pit coordinates are missing or 0
+            if (p_lat is None or p_lng is None or p_lat == 0 or p_lng == 0):
+                if isinstance(p_img1, dict):
+                    p_lat = p_lat or p_img1.get('latitude')
+                    p_lng = p_lng or p_img1.get('longitude')
+                if (p_lat is None or p_lng is None or p_lat == 0 or p_lng == 0) and isinstance(p_depth_img, dict):
+                    p_lat = p_lat or p_depth_img.get('latitude')
+                    p_lng = p_lng or p_depth_img.get('longitude')
+                if (p_lat is None or p_lng is None or p_lat == 0 or p_lng == 0) and isinstance(tpr, dict):
+                    cd = tpr.get('pitDepthCenterOfTheRoadImage') or {}
+                    if isinstance(cd, dict):
+                        p_lat = p_lat or cd.get('latitude')
+                        p_lng = p_lng or cd.get('longitude')
+
             pruned_pits.append({
                 'id': p.get('id') or p.get('pitId'),
                 'pitSerialNo': p.get('pitSerialNo') or p.get('serialNo'),
                 'pitName': p.get('pitName') or p.get('name'),
-                'latitude': p.get('latitude') or p.get('lat'),
-                'longitude': p.get('longitude') or p.get('lng'),
+                'latitude': p_lat,
+                'longitude': p_lng,
                 'pitDepth': p.get('pitDepth') or p.get('depth'),
                 'pitWidth': p.get('pitWidth') or p.get('width'),
                 'pitSide': p.get('pitSide') or p.get('side'),
                 'pitType': p.get('pitType') or p.get('type'),
                 'taskStage': p.get('taskStage') or p.get('stage'),
                 'pitDiggingTime': p.get('pitDiggingTime') or p.get('diggingTime') or p.get('createdAt'),
-                'pitImage_1': None,
-                'pitImage_2': None,
-                'pitImage_3': None,
-                'pitDepthImage': None,
-                'pitWidthImage': None,
-                'pitVideo': None,
+                'pitImage_1': _clean_media(p_img1, 'Pit Photo 1'),
+                'pitImage_2': _clean_media(p_img2, 'Pit Photo 2'),
+                'pitImage_3': _clean_media(p_img3, 'Pit Photo 3'),
+                'pitDepthImage': _clean_media(p_depth_img, 'Pit Depth Photo'),
+                'pitWidthImage': _clean_media(p_width_img, 'Pit Width Photo'),
+                'pitVideo': _clean_media(p_vid, 'Pit Video'),
+                'threePointReference': tpr if isinstance(tpr, dict) and tpr else None
             })
 
     pruned_trenching = {
@@ -946,6 +1024,16 @@ def prune_execution_telemetry(exec_data):
     }
     if work_mode:
         pruned_field_data['workExecutionMode'] = work_mode
+
+    # Preserve Green Survey / Route Snapshot data if present
+    if 'routeSnapshot' in fd:
+        pruned_field_data['routeSnapshot'] = fd['routeSnapshot']
+    if 'surveyKind' in fd:
+        pruned_field_data['surveyKind'] = fd['surveyKind']
+    if 'currentStep' in fd:
+        pruned_field_data['currentStep'] = fd['currentStep']
+    if 'submittedAt' in fd:
+        pruned_field_data['submittedAt'] = fd['submittedAt']
 
     return {
         'id': exec_data.get('id'),
