@@ -30,6 +30,16 @@ export const taskService = {
     });
   },
 
+  getGreenSurveyMapData: (params) => {
+    return api.get('/integrations/tasks/green-survey-map/', { params });
+  },
+
+  getGreenSurveyTask: (taskId) => {
+    return api.get('/integrations/tasks/green-survey-map/', {
+      params: { taskId }
+    });
+  },
+
   getTrenchingDashboardSummary: (params) => {
     return api.get('/integrations/tasks/trenching-dashboard-summary/', { params });
   },

@@ -30,6 +30,7 @@ const TrenchingMapViewPage = lazyComponent(() => import('../pages/mapview/Trench
 const HddExecutionMapPage = lazyComponent(() => import('../pages/mapview/HddExecutionMapPage'), 'HddExecutionMapPage');
 const BharatNetLiveViewPage = lazyComponent(() => import('../pages/mapview/BharatNetLiveViewPage'), 'BharatNetLiveViewPage');
 const BharatNetMapPage = lazyComponent(() => import('../pages/mapview/BharatNetMapPage'), 'BharatNetMapPage');
+const GreenSurveyMapViewPage = lazyComponent(() => import('../pages/mapview/GreenSurveyMapViewPage'), 'GreenSurveyMapViewPage');
 const ChartViewPage = lazyComponent(() => import('../pages/mapview/ChartViewPage'), 'ChartViewPage');
 const Team = lazyComponent(() => import('../pages/team/Team'), 'Team');
 const Attendance = lazyComponent(() => import('../pages/attendance/Attendance'), 'Attendance');
@@ -108,6 +109,8 @@ export const AppRoutes = () => {
             <Route path="/machine-shift/create" element={<MachineShiftCreate />} />
             <Route path="/map-view" element={<MapViewPage />} />
             <Route path="/map-view/trenching" element={<TrenchingMapViewPage />} />
+            <Route path="/map-view/green" element={<GreenSurveyMapViewPage />} />
+            <Route path="/map-view/green/:taskId" element={<GreenSurveyMapViewPage />} />
             <Route path="/map-view/bharatnet" element={<BharatNetMapPage />} />
             <Route path="/chart-view" element={<ChartViewPage />} />
             <Route path="/chart-view/:executionId" element={<ChartViewPage />} />

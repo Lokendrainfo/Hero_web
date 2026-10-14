@@ -1316,6 +1316,489 @@ class IlyncMapViewExecutionsView(IlyncBaseView):
         )
 
 
+class IlyncGreenSurveyMapView(IlyncBaseView):
+    """
+    Real-time Live Green V2 / Green Field Survey Map View Executions endpoint.
+    Retrieves authorized GREEN_SURVEY tasks with actual geographical route path,
+    start/end markers, GP and Joint nodes, and resolves associated survey video manifests
+    and playable video chunk S3 URLs in real-time.
+    Supports live synchronization of video playback with map markers.
+    100% in-memory streaming with TTL caching (DO NOT store in database).
+    """
+    def get(self, request):
+        import time
+        import json
+        import urllib.request
+        from collections import defaultdict
+        from concurrent.futures import ThreadPoolExecutor
+        from apps.common.task_scope import get_user_authorized_tasks, resolve_latest_task_timestamp
+        from apps.common.ttl_cache import ttl_get, ttl_set
+        from apps.integrations.exceptions import IlyncNotFoundException
+
+        t_start = time.time()
+        user = request.user if request.user and request.user.is_authenticated else None
+        q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
+
+        target_task_id = (q_params.get('taskId') or q_params.get('task_id') or '').strip()
+        req_state = (q_params.get('state') or q_params.get('circle') or '').strip().lower()
+        req_district = (q_params.get('district') or '').strip().lower()
+        req_block = (q_params.get('block') or q_params.get('blockName') or '').strip().lower()
+        force_refresh = str(q_params.get('refresh', '')).lower() in ('1', 'true')
+
+        client = IlyncClient(request=request)
+
+        # Helper to resolve manifest JSON and chunk S3 URLs
+        def resolve_video_manifest(manifest_key):
+            if not manifest_key:
+                return None
+            cache_key = f"green_manifest:{manifest_key}"
+            if not force_refresh:
+                cached = ttl_get(cache_key)
+                if cached:
+                    return cached
+            try:
+                m_res = client.get_survey_photo_urls([manifest_key])
+                m_url = (m_res.get('data') or {}).get(manifest_key)
+                if not m_url:
+                    return None
+
+                req = urllib.request.Request(m_url, headers={'User-Agent': 'NetInfra/1.0'})
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    manifest_data = json.loads(resp.read().decode('utf-8'))
+
+                raw_chunks = manifest_data.get('chunks') or []
+                chunk_keys = [c.get('s3Key') or c.get('AWSPath') for c in raw_chunks if c.get('s3Key') or c.get('AWSPath')]
+
+                chunk_url_map = {}
+                if chunk_keys:
+                    c_res = client.get_survey_photo_urls(chunk_keys)
+                    chunk_url_map = (c_res.get('data') or {}) if isinstance(c_res, dict) else {}
+
+                resolved_chunks = []
+                for c in raw_chunks:
+                    k = c.get('s3Key') or c.get('AWSPath')
+                    resolved_chunks.append({
+                        'partNumber': c.get('partNumber'),
+                        'file': c.get('file'),
+                        's3Key': k,
+                        'url': chunk_url_map.get(k) or '',
+                        'byteStart': c.get('byteStart'),
+                        'byteEnd': c.get('byteEnd'),
+                    })
+
+                result = {
+                    'manifestKey': manifest_key,
+                    'videoStartUtcIso': manifest_data.get('videoStartUtcIso'),
+                    'endedUtc': manifest_data.get('endedUtc'),
+                    'routeType': manifest_data.get('routeType'),
+                    'terrainType': manifest_data.get('terrainType'),
+                    'totalBytes': manifest_data.get('totalBytes'),
+                    'syncPoints': manifest_data.get('syncPoints') or [],
+                    'gpsTrack': manifest_data.get('gpsTrack') or [],
+                    'chunks': resolved_chunks,
+                    'totalChunks': len(resolved_chunks),
+                }
+                ttl_set(cache_key, result, ttl_seconds=3600)
+                return result
+            except Exception as e:
+                logger.warning("[IlyncGreenSurveyMapView] Failed resolving manifest %s: %s", manifest_key, e)
+                return None
+
+        # Helper to process a task and its execution into clean survey payload
+        def build_green_task_payload(task_dict, exec_dict=None):
+            if not isinstance(task_dict, dict):
+                return None
+            t_id = task_dict.get('id')
+            if not t_id:
+                return None
+
+            loc = task_dict.get('locationSnapshot') or task_dict.get('location') or {}
+            state_val = task_dict.get('state') or loc.get('state') or loc.get('circle') or ''
+            district_val = task_dict.get('district') or loc.get('district') or ''
+            block_val = task_dict.get('block') or loc.get('blockName') or loc.get('block') or ''
+
+            active_exec = exec_dict or task_dict.get('taskExecution') or {}
+            fd = active_exec.get('fieldData') or {}
+            rs = fd.get('routeSnapshot') or task_dict.get('routeSnapshot') or {}
+
+            raw_path = rs.get('path') or []
+            clean_path = []
+            for pt in raw_path:
+                if isinstance(pt, dict) and pt.get('lat') is not None and pt.get('lng') is not None:
+                    try:
+                        clean_path.append({'lat': float(pt['lat']), 'lng': float(pt['lng'])})
+                    except (ValueError, TypeError):
+                        pass
+
+            raw_nodes = rs.get('nodes') or []
+            clean_nodes = []
+            for n in raw_nodes:
+                if isinstance(n, dict):
+                    try:
+                        clean_nodes.append({
+                            'id': n.get('id'),
+                            'code': n.get('code'),
+                            'name': n.get('name'),
+                            'type': n.get('type') or 'GP',
+                            'lat': float(n.get('lat')) if n.get('lat') is not None else None,
+                            'lng': float(n.get('lng')) if n.get('lng') is not None else None,
+                            'sequence': n.get('sequence', 0),
+                        })
+                    except (ValueError, TypeError):
+                        pass
+
+            start_coord = clean_path[0] if clean_path else (clean_nodes[0] if clean_nodes else None)
+            end_coord = clean_path[-1] if clean_path else (clean_nodes[-1] if clean_nodes else None)
+
+            # Photos
+            route_media = rs.get('routeMedia') or {}
+            raw_photos = route_media.get('photos') or []
+            clean_photos = []
+            photo_keys = []
+            for p in raw_photos:
+                if isinstance(p, dict):
+                    pk = p.get('photoPath') or p.get('photoUrl') or p.get('key')
+                    if pk:
+                        photo_keys.append(pk)
+                    clean_photos.append({
+                        'label': p.get('label') or 'Survey Photo',
+                        'photoPath': pk,
+                        'key': pk,
+                        'lat': p.get('latitude') or p.get('lat'),
+                        'lng': p.get('longitude') or p.get('lng'),
+                        'url': ''
+                    })
+
+            if photo_keys:
+                try:
+                    p_res = client.get_survey_photo_urls(photo_keys)
+                    p_map = (p_res.get('data') or {}) if isinstance(p_res, dict) else {}
+                    for cp in clean_photos:
+                        if cp['key'] in p_map:
+                            cp['url'] = p_map[cp['key']]
+                except Exception:
+                    pass
+
+            # Videos (Manifests & Chunks)
+            raw_video_keys = route_media.get('videos') or []
+            resolved_videos = []
+            for vk in raw_video_keys:
+                if vk:
+                    v_info = resolve_video_manifest(vk)
+                    if v_info:
+                        resolved_videos.append(v_info)
+
+            length_km = rs.get('lengthKm') or task_dict.get('totalLengthKm') or task_dict.get('coveredLengthKm') or 0
+            try:
+                length_km = float(length_km)
+            except (ValueError, TypeError):
+                length_km = 0.0
+
+            assignee_snap = task_dict.get('assigneeSnapshot') or {}
+            assignee_name = assignee_snap.get('name') or task_dict.get('assigneeName') or ''
+            assignee_id = assignee_snap.get('userId') or task_dict.get('assigneeUserId') or ''
+
+            return {
+                'id': t_id,
+                'taskCode': task_dict.get('taskCode') or t_id,
+                'displayName': task_dict.get('displayName') or rs.get('routeName') or task_dict.get('name') or 'Green Survey',
+                'taskName': task_dict.get('name') or rs.get('routeName') or task_dict.get('displayName') or 'Green Survey',
+                'state': state_val,
+                'circle': state_val,
+                'district': district_val,
+                'block': block_val,
+                'lengthKm': round(length_km, 3),
+                'status': task_dict.get('status') or 'COMPLETED',
+                'approvalStatus': task_dict.get('approvalStatus') or 'APPROVED',
+                'assigneeName': assignee_name,
+                'assigneeUserId': assignee_id,
+                'routeLevel': rs.get('level') or task_dict.get('routeSnapshot', {}).get('level') or 'SEGMENT',
+                'path': clean_path,
+                'nodes': clean_nodes,
+                'startCoord': start_coord,
+                'endCoord': end_coord,
+                'photos': clean_photos,
+                'videos': resolved_videos,
+                'hasVideo': len(resolved_videos) > 0,
+                'hasPath': len(clean_path) > 0,
+                'hasExecution': bool(active_exec and fd),
+                'updatedAt': task_dict.get('updatedAt'),
+                'createdAt': task_dict.get('createdAt'),
+            }
+
+        # 1. Fetch all authorized Green Survey tasks with hierarchy
+        cache_key = f"green_survey_meta:{user.id if user else 'anon'}:{req_state}"
+        raw_tasks = None
+        if not force_refresh:
+            raw_tasks = ttl_get(cache_key)
+
+        if not raw_tasks:
+            try:
+                scoped_data = get_user_authorized_tasks(
+                    user=user,
+                    request=request,
+                    task_type='GREEN_SURVEY',
+                    page=0,
+                    size=100,
+                    expand_hierarchy=True,
+                    include_telemetry=False
+                )
+                raw_tasks = scoped_data.get('results', []) if isinstance(scoped_data, dict) else []
+                ttl_set(cache_key, raw_tasks, ttl_seconds=900)
+            except Exception as e:
+                logger.error("[IlyncGreenSurveyMapView] Error loading authorized tasks: %s", e)
+                raw_tasks = []
+
+        all_tasks_dict = {}
+        all_tasks_meta = []
+        districts_map = defaultdict(set)
+
+        for t in raw_tasks:
+            if not isinstance(t, dict):
+                continue
+            tid = t.get('id')
+            if not tid:
+                continue
+            all_tasks_dict[str(tid)] = t
+            all_tasks_dict[str(t.get('taskCode'))] = t
+
+            loc = t.get('locationSnapshot') or t.get('location') or {}
+            rs = t.get('routeSnapshot') or {}
+            d = str(t.get('district') or loc.get('district') or '').strip().upper()
+            b = str(t.get('block') or loc.get('blockName') or loc.get('block') or '').strip().upper()
+            if d:
+                districts_map[d].add(b)
+
+            lvl = str(rs.get('level') or '').upper()
+            is_leaf = lvl == 'SEGMENT' or t.get('depth') == 2 or (t.get('totalSegments') == 0 and t.get('depth', 0) >= 1) or rs.get('path')
+            if is_leaf:
+                all_tasks_meta.append({
+                    'id': tid,
+                    'taskCode': t.get('taskCode'),
+                    'displayName': rs.get('routeName') or t.get('displayName') or t.get('name') or 'Green Survey',
+                    'taskName': t.get('name') or rs.get('routeName') or t.get('displayName') or 'Green Survey',
+                    'state': str(t.get('state') or loc.get('state') or loc.get('circle') or '').strip().upper(),
+                    'district': d,
+                    'block': b,
+                    'lengthKm': round(float(rs.get('lengthKm') or t.get('totalLengthKm') or 0), 3),
+                    'status': t.get('status') or 'COMPLETED',
+                    'approvalStatus': t.get('approvalStatus') or 'APPROVED',
+                    'hasPath': bool(rs.get('path') or len(rs.get('nodes', [])) > 0),
+                    'hasVideo': bool((rs.get('routeMedia') or {}).get('videos')),
+                })
+
+        # Apply District and Block filters
+        filtered_tasks = all_tasks_meta
+        if req_district and req_district not in ('all', 'other'):
+            filtered_tasks = [t for t in filtered_tasks if t['district'].lower() == req_district]
+        if req_block and req_block not in ('all', 'other'):
+            clean_b = req_block.replace('-boq', '').replace('-block', '').strip()
+            filtered_tasks = [t for t in filtered_tasks if clean_b in t['block'].lower()]
+
+        # Identify target selected task
+        selected_raw_task = None
+        clean_tid = str(target_task_id).replace('_route_', '').split('_')[0] if target_task_id else ''
+
+        if clean_tid:
+            selected_raw_task = all_tasks_dict.get(clean_tid)
+            if not selected_raw_task:
+                try:
+                    t_res = client.get_task_detail(clean_tid)
+                    selected_raw_task = t_res.get('data') if isinstance(t_res, dict) else t_res
+                except Exception:
+                    selected_raw_task = None
+
+        if not selected_raw_task and filtered_tasks:
+            # Prefer task with video and path
+            fav = next((t for t in filtered_tasks if t['hasVideo'] and t['hasPath']), filtered_tasks[0])
+            selected_raw_task = all_tasks_dict.get(str(fav['id']))
+
+        if not selected_raw_task and all_tasks_meta:
+            selected_raw_task = all_tasks_dict.get(str(all_tasks_meta[0]['id']))
+
+        resolved_selected_task = None
+        if selected_raw_task:
+            sel_id = selected_raw_task.get('id')
+            exec_cache_key = f"green_exec_detail:{sel_id}"
+            sel_exec = None
+            if not force_refresh:
+                sel_exec = ttl_get(exec_cache_key)
+
+            if not sel_exec and sel_id:
+                try:
+                    e_res = client.get_task_execution(sel_id, timeout=(3.0, 6.0))
+                    sel_exec = e_res.get('data') if isinstance(e_res, dict) else None
+                    if not sel_exec:
+                        # Check children if parent has no execution
+                        c_res = client.get_task_children(sel_id)
+                        c_data = c_res.get('data') if isinstance(c_res, dict) else []
+                        if isinstance(c_data, list) and c_data:
+                            for ch in c_data:
+                                ch_id = ch.get('id')
+                                if ch_id:
+                                    try:
+                                        ch_e = client.get_task_execution(ch_id, timeout=(2.0, 4.0)).get('data')
+                                        if ch_e:
+                                            selected_raw_task = ch
+                                            sel_exec = ch_e
+                                            break
+                                    except Exception:
+                                        pass
+                    if sel_exec:
+                        ttl_set(exec_cache_key, sel_exec, ttl_seconds=1800)
+                except Exception as exc:
+                    logger.warning("[IlyncGreenSurveyMapView] Failed fetching execution for task %s: %s", sel_id, exc)
+
+            resolved_selected_task = build_green_task_payload(selected_raw_task, sel_exec)
+
+        # Prepare summary & geography options
+        all_dist_list = sorted(list(districts_map.keys()))
+        if req_district and req_district.upper() in districts_map:
+            active_block_list = sorted(list(districts_map[req_district.upper()]))
+        else:
+            active_block_list = sorted(list({b for bs in districts_map.values() for b in bs if b}))
+
+        total_distance = sum(t['lengthKm'] for t in filtered_tasks)
+        video_count = sum(1 for t in filtered_tasks if t['hasVideo'])
+
+        response_payload = {
+            'selectedTask': resolved_selected_task,
+            'tasks': filtered_tasks,
+            'total': len(filtered_tasks),
+            'districts': all_dist_list,
+            'blocks': active_block_list,
+            'summary': {
+                'totalTasks': len(filtered_tasks),
+                'totalDistanceKm': round(total_distance, 3),
+                'videoTasksCount': video_count,
+                'districts': all_dist_list,
+                'blocks': active_block_list
+            },
+            'is_live': True
+        }
+
+        return success_response(data=response_payload, message="Green survey map data resolved successfully")
+
+
+class IlyncGreenSurveyVideoStreamView(IlyncBaseView):
+    """
+    Virtual Range Streaming Proxy for Chunked Green Survey Videos.
+    Stitches S3 chunked byte-range slices into a continuous MP4 stream
+    so HTML5 video elements can seek, buffer, and play seamlessly.
+    100% in-memory streaming with zero DB writes.
+    """
+    def get(self, request):
+        import json
+        import urllib.request
+        from django.http import HttpResponse
+        from apps.common.ttl_cache import ttl_get, ttl_set
+
+        q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
+        manifest_key = q_params.get('manifest') or q_params.get('manifestKey') or q_params.get('key')
+        if not manifest_key:
+            return HttpResponse("Missing manifest parameter", status=400)
+
+        cache_key = f"green_manifest:{manifest_key}"
+        manifest_data = ttl_get(cache_key)
+        client = IlyncClient(request=request)
+
+        if not manifest_data:
+            m_res = client.get_survey_photo_urls([manifest_key])
+            m_url = (m_res.get('data') or {}).get(manifest_key)
+            if not m_url:
+                return HttpResponse("Manifest not found", status=404)
+            req = urllib.request.Request(m_url, headers={'User-Agent': 'NetInfra/1.0'})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                manifest_data = json.loads(resp.read().decode('utf-8'))
+            ttl_set(cache_key, manifest_data, ttl_seconds=3600)
+
+        raw_chunks = manifest_data.get('chunks') or []
+        if not raw_chunks:
+            return HttpResponse("No chunks in manifest", status=404)
+
+        total_bytes = manifest_data.get('totalBytes') or (raw_chunks[-1].get('byteEnd', 0))
+        if not total_bytes:
+            return HttpResponse("Invalid video size", status=500)
+
+        # Parse HTTP Range header
+        range_header = request.META.get('HTTP_RANGE', '').strip()
+        start = 0
+        end = total_bytes - 1
+
+        if range_header.startswith('bytes='):
+            parts = range_header.replace('bytes=', '').split('-')
+            if parts[0]:
+                start = int(parts[0])
+            if len(parts) > 1 and parts[1]:
+                end = int(parts[1])
+            else:
+                end = min(start + (2 * 1024 * 1024) - 1, total_bytes - 1)
+
+        if start >= total_bytes:
+            res = HttpResponse(status=416)
+            res['Content-Range'] = f'bytes */{total_bytes}'
+            return res
+
+        end = min(end, total_bytes - 1)
+
+        # Pre-sign S3 URLs for all chunks
+        chunk_keys = [c.get('s3Key') or c.get('AWSPath') for c in raw_chunks]
+        chunk_url_cache_key = f"green_chunk_urls:{manifest_key}"
+        chunk_url_map = ttl_get(chunk_url_cache_key)
+        if not chunk_url_map:
+            c_res = client.get_survey_photo_urls(chunk_keys)
+            chunk_url_map = (c_res.get('data') or {}) if isinstance(c_res, dict) else {}
+            ttl_set(chunk_url_cache_key, chunk_url_map, ttl_seconds=3600)
+
+        # Locate chunk(s) covering [start, end]
+        content_bytes = bytearray()
+        cur_pos = start
+        while cur_pos <= end:
+            matching_chunk = None
+            for c in raw_chunks:
+                b_start = c.get('byteStart', 0)
+                b_end = c.get('byteEnd', 0)
+                if b_start <= cur_pos < b_end:
+                    matching_chunk = c
+                    break
+
+            if not matching_chunk:
+                break
+
+            b_start = matching_chunk.get('byteStart', 0)
+            b_end = matching_chunk.get('byteEnd', 0)
+            k = matching_chunk.get('s3Key') or matching_chunk.get('AWSPath')
+            s3_url = chunk_url_map.get(k)
+
+            if not s3_url:
+                break
+
+            chunk_req_start = cur_pos - b_start
+            chunk_req_end = min(end - b_start, (b_end - b_start) - 1)
+
+            req = urllib.request.Request(s3_url, headers={'Range': f'bytes={chunk_req_start}-{chunk_req_end}'})
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    piece = resp.read()
+                    content_bytes.extend(piece)
+                    cur_pos += len(piece)
+            except Exception as e:
+                logger.error("[IlyncGreenSurveyVideoStreamView] Failed fetching chunk byte range: %s", e)
+                break
+
+        actual_len = len(content_bytes)
+        actual_end = start + actual_len - 1
+
+        response = HttpResponse(bytes(content_bytes), status=206, content_type='video/mp4')
+        response['Content-Range'] = f'bytes {start}-{actual_end}/{total_bytes}'
+        response['Content-Length'] = str(actual_len)
+        response['Accept-Ranges'] = 'bytes'
+        response['Access-Control-Allow-Origin'] = '*'
+        response['Access-Control-Allow-Headers'] = 'Range, Origin, Content-Type'
+        response['Cache-Control'] = 'public, max-age=3600'
+        return response
+
+
 class IlyncTrenchingDashboardSummaryView(IlyncBaseView):
     """
     Live Trenching & Ducting (T&D) Execution Dashboard Summary API.

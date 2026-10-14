@@ -6,7 +6,7 @@ import {
   LucideLayoutDashboard, LucideTruck, LucideNavigation, LucideCheckSquare, LucideUsers, LucideCalendarCheck,
   LucideDollarSign, LucideFuel, LucideRepeat, LucideFileText, LucideWrench, LucideAlertOctagon, LucideAlertTriangle,
   LucidePackage, LucideBuilding, LucideUserCheck, LucideShieldCheck, LucideBell, LucideSettings, LucideX, LucideGlobe,
-  LucideLayers, LucideTag, LucideLineChart, LucideArrowLeftRight, LucideBookOpen, LucideChevronDown
+  LucideLayers, LucideTag, LucideLineChart, LucideArrowLeftRight, LucideBookOpen, LucideChevronDown, LucideCompass
 } from 'lucide-react';
 
 export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) => {
@@ -58,7 +58,8 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
       title: 'Map View',
       items: [
         { label: 'Dashboard', path: '/map-view', icon: LucideLayoutDashboard, perm: 'mapview.dashboard' },
-        { label: 'Trenching', path: '/map-view/trenching', icon: LucideGlobe, perm: 'mapview.view' }
+        { label: 'Trenching', path: '/map-view/trenching', icon: LucideGlobe, perm: 'mapview.view' },
+        { label: 'Green Survey', path: '/map-view/green', icon: LucideCompass, perm: 'mapview.view' }
       ]
     },
     {

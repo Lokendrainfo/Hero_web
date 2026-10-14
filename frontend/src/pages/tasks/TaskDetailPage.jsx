@@ -28,7 +28,8 @@ import {
   LucideCheckCircle2,
   LucideTruck,
   LucideFilter,
-  LucideX
+  LucideX,
+  LucideCompass
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 import { vendorService } from '../../services/vendorService';
@@ -676,9 +677,15 @@ export const TaskDetailPage = () => {
             <button type="button" className="btn-primary" onClick={() => setEditJobOpen(true)} title="Edit Job">
               <LucideWrench size={14} /> Edit Job
             </button>
-            <a className="btn-secondary" href={`/map-view/${taskId}`} target="_blank" rel="noopener noreferrer">
-              <LucideExternalLink size={14} /> Open map
-            </a>
+            {typeStr === 'GREEN_SURVEY' ? (
+              <a className="btn-primary" href={`/map-view/green?taskId=${taskId}`} target="_blank" rel="noopener noreferrer" style={{ background: '#059669', borderColor: '#10b981' }}>
+                <LucideCompass size={14} /> Open Green Map & Video
+              </a>
+            ) : (
+              <a className="btn-secondary" href={`/map-view/${taskId}`} target="_blank" rel="noopener noreferrer">
+                <LucideExternalLink size={14} /> Open map
+              </a>
+            )}
             <button type="button" className="btn-secondary" onClick={fetchTaskDetails}>
               <LucideRefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
             </button>
