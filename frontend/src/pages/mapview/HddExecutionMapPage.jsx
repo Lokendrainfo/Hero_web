@@ -8,6 +8,7 @@ import {
   LucideMaximize2,
   LucideMinimize2,
   Globe,
+  LucideRuler,
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 import { useAuth } from '../../hooks/useAuth';
@@ -323,6 +324,45 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
   const plannerLayerRef = useRef(null);
   const tileLayerRef = useRef(null);
   const wrapperRef = useRef(null);
+
+  // Ruler / Interactive Distance Measurement Tool
+  const [isMeasuring, setIsMeasuring] = useState(false);
+  const [measurePoints, setMeasurePoints] = useState([]);
+  const [measureTotalDist, setMeasureTotalDist] = useState(0);
+  const measureLayerRef = useRef(null);
+  const rubberBandLineRef = useRef(null);
+
+  const toggleMeasurementRuler = useCallback(() => {
+    setIsMeasuring((prev) => {
+      const next = !prev;
+      if (!next) {
+        if (rubberBandLineRef.current && mapInstanceRef.current) {
+          try { mapInstanceRef.current.removeLayer(rubberBandLineRef.current); } catch (e) { }
+          rubberBandLineRef.current = null;
+        }
+        if (mapContainerRef.current) {
+          mapContainerRef.current.style.cursor = '';
+        }
+      } else {
+        if (mapContainerRef.current) {
+          mapContainerRef.current.style.cursor = 'crosshair';
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  const clearMeasurement = useCallback(() => {
+    setMeasurePoints([]);
+    setMeasureTotalDist(0);
+    if (measureLayerRef.current) {
+      measureLayerRef.current.clearLayers();
+    }
+    if (rubberBandLineRef.current && mapInstanceRef.current) {
+      try { mapInstanceRef.current.removeLayer(rubberBandLineRef.current); } catch (e) { }
+      rubberBandLineRef.current = null;
+    }
+  }, []);
 
   // Live Machines State from FiberForce / Fiber HDD Portal API
   const [liveMachines, setLiveMachines] = useState([]);
@@ -1130,6 +1170,8 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
         pitLayerRef.current = null;
         depthLayerRef.current = null;
         tileLayerRef.current = null;
+        measureLayerRef.current = null;
+        scaleControlRef.current = null;
         isInitialFitDoneRef.current = false;
       }
       return;
@@ -1165,6 +1207,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
       pitLayerRef.current = L.featureGroup().addTo(map);
       depthLayerRef.current = L.featureGroup().addTo(map);
       plannerLayerRef.current = L.featureGroup().addTo(map);
+      measureLayerRef.current = L.featureGroup().addTo(map);
     }
 
     if (Array.isArray(activePlansList) && activePlansList.length > 0 && mapInstanceRef.current) {
@@ -1864,6 +1907,128 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
     layer.bringToFront();
   }, [isBharatNetMap, userFilteredMachines, showLiveMachines]);
 
+  // Interactive Measurement Ruler Map Click & Move Listener
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    if (!isMeasuring) {
+      if (mapContainerRef.current) {
+        mapContainerRef.current.style.cursor = '';
+      }
+      if (rubberBandLineRef.current) {
+        try { map.removeLayer(rubberBandLineRef.current); } catch (e) { }
+        rubberBandLineRef.current = null;
+      }
+      return;
+    }
+
+    if (mapContainerRef.current) {
+      mapContainerRef.current.style.cursor = 'crosshair';
+    }
+
+    const onMapClick = (e) => {
+      const latlng = e.latlng;
+      if (!latlng) return;
+
+      if (!measureLayerRef.current) {
+        measureLayerRef.current = L.featureGroup().addTo(map);
+      }
+      const layer = measureLayerRef.current;
+
+      setMeasurePoints((prev) => {
+        const newPts = [...prev, latlng];
+        let cumDist = 0;
+        for (let i = 1; i < newPts.length; i++) {
+          cumDist += newPts[i - 1].distanceTo(newPts[i]);
+        }
+        setMeasureTotalDist(cumDist);
+
+        const ptIdx = newPts.length;
+        const formattedDist = cumDist >= 1000 ? `${(cumDist / 1000).toFixed(2)} km` : `${cumDist.toFixed(1)} m`;
+
+        // Circle marker for point
+        const marker = L.circleMarker(latlng, {
+          radius: 6,
+          color: '#ffffff',
+          weight: 2.5,
+          fillColor: ptIdx === 1 ? '#10b981' : '#38bdf8',
+          fillOpacity: 1,
+          zIndexOffset: 3000
+        });
+
+        const labelText = ptIdx === 1 ? 'Start' : formattedDist;
+        marker.bindTooltip(labelText, {
+          permanent: true,
+          direction: 'top',
+          offset: [0, -10],
+          className: 'gis-ruler-tooltip'
+        });
+        layer.addLayer(marker);
+
+        // Connect previous point to this point
+        if (newPts.length >= 2) {
+          const prevPt = newPts[newPts.length - 2];
+          const segDist = prevPt.distanceTo(latlng);
+          const segFormatted = segDist >= 1000 ? `${(segDist / 1000).toFixed(2)} km` : `${segDist.toFixed(1)} m`;
+
+          const line = L.polyline([prevPt, latlng], {
+            color: '#38bdf8',
+            weight: 3.5,
+            dashArray: '6, 6',
+            opacity: 0.95,
+            zIndexOffset: 2500
+          });
+          layer.addLayer(line);
+
+          // Midpoint distance badge
+          const midLat = (prevPt.lat + latlng.lat) / 2;
+          const midLng = (prevPt.lng + latlng.lng) / 2;
+          const midMarker = L.circleMarker([midLat, midLng], {
+            radius: 0.1,
+            opacity: 0,
+            fillOpacity: 0
+          });
+          midMarker.bindTooltip(`+${segFormatted}`, {
+            permanent: true,
+            direction: 'center',
+            className: 'gis-ruler-seg-tooltip'
+          });
+          layer.addLayer(midMarker);
+        }
+
+        layer.bringToFront();
+        return newPts;
+      });
+    };
+
+    const onMouseMove = (e) => {
+      if (measurePoints.length === 0) return;
+      const lastPt = measurePoints[measurePoints.length - 1];
+      const currentLatLng = e.latlng;
+      if (!lastPt || !currentLatLng) return;
+
+      if (!rubberBandLineRef.current) {
+        rubberBandLineRef.current = L.polyline([lastPt, currentLatLng], {
+          color: '#f59e0b',
+          weight: 2.5,
+          dashArray: '4, 6',
+          opacity: 0.85
+        }).addTo(map);
+      } else {
+        rubberBandLineRef.current.setLatLngs([lastPt, currentLatLng]);
+      }
+    };
+
+    map.on('click', onMapClick);
+    map.on('mousemove', onMouseMove);
+
+    return () => {
+      map.off('click', onMapClick);
+      map.off('mousemove', onMouseMove);
+    };
+  }, [isMeasuring, measurePoints]);
+
   const closeMap = () => {
     if (window.opener && !window.opener.closed) {
       window.close();
@@ -2098,6 +2263,25 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
                 : `Live Machines (${userFilteredMachines.length})`}
             </button>
           )}
+          <button
+            type="button"
+            className={`gis-map-icon-btn ${isMeasuring ? 'is-active' : ''}`}
+            onClick={toggleMeasurementRuler}
+            title={isMeasuring ? 'Exit measurement ruler' : 'Measure distance on map (Ruler)'}
+            style={{
+              background: isMeasuring ? '#0284c7' : undefined,
+              color: isMeasuring ? '#ffffff' : undefined,
+              borderColor: isMeasuring ? '#38bdf8' : undefined,
+              boxShadow: isMeasuring ? '0 0 12px rgba(56, 189, 248, 0.45)' : undefined,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontWeight: 650
+            }}
+          >
+            <LucideRuler size={15} />
+            <span>Ruler</span>
+          </button>
           <button type="button" className="gis-map-icon-btn" onClick={fitRouteBounds} title="Fit to trench">
             <Globe size={15} /> Fit route
           </button>
@@ -2105,6 +2289,93 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
             {isFullscreen ? <LucideMinimize2 size={16} /> : <LucideMaximize2 size={16} />}
           </button>
         </div>
+
+        {/* Interactive Measurement Ruler Floating HUD */}
+        {isMeasuring && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 16,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 500,
+              background: 'rgba(15, 23, 42, 0.95)',
+              backdropFilter: 'blur(12px)',
+              border: '1px solid #38bdf8',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.7), 0 0 16px rgba(56, 189, 248, 0.35)',
+              borderRadius: 12,
+              padding: '8px 16px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              color: '#ffffff',
+              fontSize: '0.82rem',
+              pointerEvents: 'auto',
+              whiteSpace: 'nowrap',
+              maxWidth: 'calc(100% - 32px)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, color: '#38bdf8' }}>
+              <LucideRuler size={16} />
+              <span>Measurement Ruler</span>
+            </div>
+
+            <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.2)' }} />
+
+            {measurePoints.length === 0 ? (
+              <span style={{ color: '#cbd5e1' }}>Click anywhere on the map to start measuring</span>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ color: '#94a3b8' }}>
+                  Points: <strong style={{ color: '#f8fafc' }}>{measurePoints.length}</strong>
+                </span>
+                <span style={{ color: '#94a3b8' }}>
+                  Total Distance:{' '}
+                  <strong style={{ color: '#4ade80', fontSize: '0.92rem' }}>
+                    {measureTotalDist >= 1000 ? `${(measureTotalDist / 1000).toFixed(2)} km` : `${measureTotalDist.toFixed(1)} m`}
+                  </strong>
+                </span>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {measurePoints.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearMeasurement}
+                  style={{
+                    background: 'rgba(239, 68, 68, 0.2)',
+                    border: '1px solid rgba(239, 68, 68, 0.5)',
+                    color: '#fca5a5',
+                    borderRadius: 6,
+                    padding: '4px 10px',
+                    fontSize: '0.74rem',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={toggleMeasurementRuler}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.1)',
+                  border: '1px solid rgba(255, 255, 255, 0.25)',
+                  color: '#ffffff',
+                  borderRadius: 6,
+                  padding: '4px 10px',
+                  fontSize: '0.74rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Exit
+              </button>
+            </div>
+          </div>
+        )}
 
         {viewMode === '3d' ? (
           <Map3dBoundary>
@@ -2151,7 +2422,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
           </div>
         )}
 
-        {/* Live Machines Horizontal Bar (ONLY for assigned machines belonging to this user / block, NEVER on BharatNet map) */}
+        {/* Live Machines Bar (ONLY for assigned machines belonging to this user / block, NEVER on BharatNet map) */}
         {!isBharatNetMap && showLiveMachines && userFilteredMachines.length > 0 && (
           <div
             className="gis-map-machines-bar"
@@ -2159,13 +2430,14 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
               position: 'absolute',
               bottom: 12,
               left: 12,
-              right: 12,
               zIndex: 400,
               display: 'flex',
               alignItems: 'center',
               gap: 8,
+              width: 'max-content',
+              maxWidth: 'calc(100% - 24px)',
               overflowX: 'auto',
-              padding: '8px 12px',
+              padding: '6px 12px',
               background: 'rgba(15, 23, 42, 0.9)',
               backdropFilter: 'blur(10px)',
               borderRadius: 10,

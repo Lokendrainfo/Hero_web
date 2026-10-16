@@ -24,8 +24,8 @@ export const formatImageUrl = (url) => {
 export const isMongoHexId = (val) => typeof val === 'string' && /^[0-9a-fA-F]{24}$/.test(val.trim());
 
 export const formatAccuracyM = (acc) => {
-  if (acc === undefined || acc === null || acc === '' || acc === 'N/A' || acc === 'null') {
-    return 'Not available';
+  if (acc === undefined || acc === null || acc === '' || acc === 'N/A' || acc === 'null' || acc === '-') {
+    return '-';
   }
   if (typeof acc === 'string') {
     const clean = acc.replace(/m$/i, '').trim();
@@ -39,7 +39,7 @@ export const formatAccuracyM = (acc) => {
   if (!isNaN(num) && isFinite(num)) {
     return `${num.toFixed(2)} m`;
   }
-  return 'Not available';
+  return '-';
 };
 
 export const PhotoLightbox = ({
@@ -636,10 +636,10 @@ export const PhotoLightbox = ({
             <LucideCrosshair size={13} color="#a78bfa" />
             <span>
               Accuracy:{' '}
-              {formattedAccuracy !== 'Not available' ? (
+              {formattedAccuracy && formattedAccuracy !== '-' && formattedAccuracy !== 'Not available' ? (
                 <strong style={{ color: '#c084fc' }}>{formattedAccuracy}</strong>
               ) : (
-                <span style={{ color: '#94a3b8' }}>Not available</span>
+                <span style={{ color: '#94a3b8' }}>-</span>
               )}
             </span>
           </div>

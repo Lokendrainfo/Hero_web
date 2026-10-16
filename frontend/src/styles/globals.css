@@ -1053,4 +1053,48 @@ h1 {
   border-radius: 50%;
   box-shadow: 0 0 6px #38bdf8;
   margin-top: -3px;
+}
+
+/* Leaflet Ground Metric Scale Ruler */
+.leaflet-control-scale-line {
+  background: rgba(15, 23, 42, 0.88) !important;
+  border: 1.5px solid rgba(255, 255, 255, 0.8) !important;
+  border-top: none !important;
+  color: #f8fafc !important;
+  font-weight: 700 !important;
+  font-size: 11px !important;
+  letter-spacing: 0.3px !important;
+  padding: 2px 8px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6) !important;
+  border-radius: 0 0 4px 4px !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+/* Interactive GIS Ruler Tooltips */
+.gis-ruler-tooltip {
+  background: rgba(15, 23, 42, 0.95) !important;
+  border: 1px solid #38bdf8 !important;
+  color: #38bdf8 !important;
+  font-weight: 700 !important;
+  font-size: 11px !important;
+  padding: 3px 8px !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6) !important;
+}
+.gis-ruler-tooltip::before {
+  border-top-color: #38bdf8 !important;
+}
+
+.gis-ruler-seg-tooltip {
+  background: rgba(15, 23, 42, 0.9) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  color: #fbbf24 !important;
+  font-weight: 700 !important;
+  font-size: 10px !important;
+  padding: 2px 6px !important;
+  border-radius: 4px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5) !important;
+}
+.gis-ruler-seg-tooltip::before {
+  display: none !important;
 }
