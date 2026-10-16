@@ -10,7 +10,8 @@ import {
   LucideFileText,
   LucideMaximize2,
   LucideMinimize2,
-  LucideCompass
+  LucideCompass,
+  LucideCrosshair
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 
@@ -21,6 +22,25 @@ export const formatImageUrl = (url) => {
 };
 
 export const isMongoHexId = (val) => typeof val === 'string' && /^[0-9a-fA-F]{24}$/.test(val.trim());
+
+export const formatAccuracyM = (acc) => {
+  if (acc === undefined || acc === null || acc === '' || acc === 'N/A' || acc === 'null') {
+    return 'Not available';
+  }
+  if (typeof acc === 'string') {
+    const clean = acc.replace(/m$/i, '').trim();
+    const num = parseFloat(clean);
+    if (!isNaN(num) && isFinite(num)) {
+      return `${num.toFixed(2)} m`;
+    }
+    return acc;
+  }
+  const num = Number(acc);
+  if (!isNaN(num) && isFinite(num)) {
+    return `${num.toFixed(2)} m`;
+  }
+  return 'Not available';
+};
 
 export const PhotoLightbox = ({
   photos = [],
@@ -194,6 +214,21 @@ export const PhotoLightbox = ({
       }
     } catch (e) { }
   }
+
+  const rawAccuracy = currentPhoto.accuracy ??
+    currentPhoto.gpsAccuracy ??
+    currentPhoto.gps_accuracy ??
+    currentPhoto.accuracyMeters ??
+    currentPhoto.accuracy_meters ??
+    currentPhoto.photo?.accuracy ??
+    currentPhoto.photo?.gpsAccuracy ??
+    currentPhoto.photo?.gps_accuracy ??
+    currentPhoto.photo?.accuracyMeters ??
+    currentPhoto.photo?.accuracy_meters ??
+    currentPhoto.metadata?.accuracy ??
+    null;
+
+  const formattedAccuracy = formatAccuracyM(rawAccuracy);
 
   // Floating side panel styles vs Expanded full screen styles
   const containerStyle = isExpanded
@@ -589,12 +624,26 @@ export const PhotoLightbox = ({
           </div>
         )}
 
-        {currentPhoto.latitude && currentPhoto.longitude && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-            <LucideMapPin size={13} color="#34d399" />
-            <span>GPS: <strong>{Number(currentPhoto.latitude).toFixed(6)}, {Number(currentPhoto.longitude).toFixed(6)}</strong></span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'flex-start' }}>
+          {currentPhoto.latitude && currentPhoto.longitude && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <LucideMapPin size={13} color="#34d399" />
+              <span>GPS: <strong>{Number(currentPhoto.latitude).toFixed(6)}, {Number(currentPhoto.longitude).toFixed(6)}</strong></span>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }} title="GPS Accuracy">
+            <LucideCrosshair size={13} color="#a78bfa" />
+            <span>
+              Accuracy:{' '}
+              {formattedAccuracy !== 'Not available' ? (
+                <strong style={{ color: '#c084fc' }}>{formattedAccuracy}</strong>
+              ) : (
+                <span style={{ color: '#94a3b8' }}>Not available</span>
+              )}
+            </span>
           </div>
-        )}
+        </div>
 
         {currentPhoto.remarks && (
           <div style={{ width: '100%', color: '#fef08a', fontStyle: 'italic', marginTop: '2px', fontSize: '0.72rem' }}>

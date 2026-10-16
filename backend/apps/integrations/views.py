@@ -829,12 +829,29 @@ def _clean_media(m, default_label=''):
     url = m.get('photoUrl') or m.get('url') or m.get('key') or m.get('s3Key')
     if not url:
         return None
+
+    accuracy = m.get('accuracy')
+    if accuracy is None:
+        accuracy = m.get('gpsAccuracy')
+    if accuracy is None:
+        accuracy = m.get('gps_accuracy')
+    if accuracy is None:
+        accuracy = m.get('accuracyMeters')
+    if accuracy is None:
+        accuracy = m.get('accuracy_meters')
+
+    altitude = m.get('altitude')
+    if altitude is None:
+        altitude = m.get('alt')
+
     return {
         'photoUrl': url,
         'key': url,
         'url': url,
         'latitude': m.get('latitude'),
         'longitude': m.get('longitude'),
+        'accuracy': accuracy,
+        'altitude': altitude,
         'capturedAt': m.get('capturedAt') or m.get('createdAt'),
         'label': m.get('label') or default_label,
         'remarks': m.get('remarks'),
@@ -914,15 +931,37 @@ def prune_execution_telemetry(exec_data):
                     if not isinstance(dp, dict):
                         continue
 
+                    dp_accuracy = dp.get('accuracy')
+                    if dp_accuracy is None:
+                        dp_accuracy = dp.get('gpsAccuracy')
+                    if dp_accuracy is None:
+                        dp_accuracy = dp.get('gps_accuracy')
+                    if dp_accuracy is None:
+                        dp_accuracy = dp.get('accuracyMeters')
+                    if dp_accuracy is None:
+                        dp_accuracy = dp.get('accuracy_meters')
+
+                    clean_img = _clean_media(dp.get('depthoMeterImage'), 'Depth Meter Photo')
+                    if dp_accuracy is None and clean_img:
+                        dp_accuracy = clean_img.get('accuracy')
+
+                    dp_altitude = dp.get('altitude')
+                    if dp_altitude is None:
+                        dp_altitude = dp.get('alt')
+                    if dp_altitude is None and clean_img:
+                        dp_altitude = clean_img.get('altitude')
+
                     pruned_dps.append({
                         'id': dp.get('id') or dp.get('depthPointId'),
                         'depth': dp.get('depth'),
                         'latitude': dp.get('latitude'),
                         'longitude': dp.get('longitude'),
+                        'accuracy': dp_accuracy,
+                        'altitude': dp_altitude,
                         'capturedAt': dp.get('capturedAt') or dp.get('createdAt') or dp.get('depthCaptureStartTime'),
                         'depthCaptureStartTime': dp.get('depthCaptureStartTime'),
                         'depthCaptureEndTime': dp.get('depthCaptureEndTime'),
-                        'depthoMeterImage': _clean_media(dp.get('depthoMeterImage'), 'Depth Meter Photo')
+                        'depthoMeterImage': clean_img
                     })
 
             pruned_shots.append({

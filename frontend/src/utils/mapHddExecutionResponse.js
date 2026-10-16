@@ -414,6 +414,9 @@ export const mapHddExecutionResponse = (task, execution = null) => {
     const mediaRing = (rawMedia && (rawMedia.ring || rawMedia.ringId || rawMedia.ringCode)) || ringVal;
     const mediaSegName = (rawMedia && (rawMedia.segmentName || rawMedia.taskName || rawMedia.task_name)) || segmentNameVal;
 
+    const mediaAccuracy = (rawMedia && (rawMedia.accuracy ?? rawMedia.gpsAccuracy ?? rawMedia.gps_accuracy ?? rawMedia.accuracyMeters ?? rawMedia.accuracy_meters)) ?? null;
+    const mediaAltitude = (rawMedia && (rawMedia.altitude ?? rawMedia.alt)) ?? null;
+
     return {
       id: (rawMedia && rawMedia.id) || urlKey,
       key: urlKey,
@@ -430,6 +433,8 @@ export const mapHddExecutionResponse = (task, execution = null) => {
       capturedAt: (rawMedia && rawMedia.capturedAt) || null,
       latitude: rawMedia && rawMedia.latitude ? Number(rawMedia.latitude) : null,
       longitude: rawMedia && rawMedia.longitude ? Number(rawMedia.longitude) : null,
+      accuracy: mediaAccuracy,
+      altitude: mediaAltitude,
       remarks: rawMedia && rawMedia.remarks,
       isVideo: isVid
     };
@@ -563,6 +568,9 @@ export const mapHddExecutionResponse = (task, execution = null) => {
       const photoObj = dp.depthoMeterImage || dp.photo || dp.photoUrl || dp.image || null;
       const lat = parseFloat(dp.latitude || (photoObj && photoObj.latitude) || 0);
       const lng = parseFloat(dp.longitude || (photoObj && photoObj.longitude) || 0);
+      const accuracy = dp.accuracy ?? dp.gpsAccuracy ?? dp.gps_accuracy ?? dp.accuracyMeters ?? dp.accuracy_meters ??
+        (photoObj && (photoObj.accuracy ?? photoObj.gpsAccuracy ?? photoObj.gps_accuracy ?? photoObj.accuracyMeters ?? photoObj.accuracy_meters)) ?? null;
+      const altitude = dp.altitude ?? dp.alt ?? (photoObj && (photoObj.altitude ?? photoObj.alt)) ?? null;
       const capturedAt = dp.capturedAt || dp.createdAt || dp.createdTime || dp.timestamp || dp.time || dp.date || (photoObj && photoObj.capturedAt) || null;
       const dpDate = parseDateToYMD(capturedAt) || executionDate;
       if (dpDate) availableDatesSet.add(dpDate);
@@ -580,6 +588,8 @@ export const mapHddExecutionResponse = (task, execution = null) => {
         if (!dpMedia.latitude) dpMedia.latitude = lat;
         if (!dpMedia.longitude) dpMedia.longitude = lng;
         if (!dpMedia.capturedAt) dpMedia.capturedAt = capturedAt;
+        if (dpMedia.accuracy == null) dpMedia.accuracy = accuracy;
+        if (dpMedia.altitude == null) dpMedia.altitude = altitude;
         dpPhotos.push(dpMedia);
       }
 
@@ -609,6 +619,8 @@ export const mapHddExecutionResponse = (task, execution = null) => {
         offset: dp.offsetFromCenterOfRoad,
         lat,
         lng,
+        accuracy,
+        altitude,
         capturedAt,
         executionDate: dpDate,
         photo: photoObj,

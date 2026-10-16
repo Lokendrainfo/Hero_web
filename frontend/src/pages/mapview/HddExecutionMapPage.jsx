@@ -1269,6 +1269,8 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
         capturedAt: dp.capturedAt,
         latitude: dp.lat,
         longitude: dp.lng,
+        accuracy: dp.accuracy ?? photoObj.accuracy ?? dp.photo?.accuracy ?? dp.depthoMeterImage?.accuracy ?? dp.gpsAccuracy ?? photoObj.gpsAccuracy ?? dp.gps_accuracy ?? photoObj.gps_accuracy ?? dp.accuracyMeters ?? photoObj.accuracyMeters ?? null,
+        altitude: dp.altitude ?? photoObj.altitude ?? dp.photo?.altitude ?? dp.depthoMeterImage?.altitude ?? dp.alt ?? photoObj.alt ?? null,
         pointNo: dp.pointNo || idx + 1
       };
     });
@@ -1305,7 +1307,9 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
               taskId: photoCode,
               taskCode: photoCode,
               taskName: photoName,
-              depth: shot.depth
+              depth: shot.depth,
+              accuracy: ph.accuracy ?? null,
+              altitude: ph.altitude ?? null,
             };
           });
           openLightbox(enrichedShotPhotos, 0);
