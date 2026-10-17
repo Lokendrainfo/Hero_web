@@ -6,7 +6,8 @@ import {
   LucideLayoutDashboard, LucideTruck, LucideNavigation, LucideCheckSquare, LucideUsers, LucideCalendarCheck,
   LucideDollarSign, LucideFuel, LucideRepeat, LucideFileText, LucideWrench, LucideAlertOctagon, LucideAlertTriangle,
   LucidePackage, LucideBuilding, LucideUserCheck, LucideShieldCheck, LucideBell, LucideSettings, LucideX, LucideGlobe,
-  LucideLayers, LucideTag, LucideLineChart, LucideArrowLeftRight, LucideBookOpen, LucideChevronDown, LucideCompass
+  LucideLayers, LucideTag, LucideLineChart, LucideArrowLeftRight, LucideBookOpen, LucideChevronDown, LucideCompass,
+  LucideNetwork, LucideFileCheck
 } from 'lucide-react';
 
 export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) => {
@@ -48,10 +49,18 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
         { label: 'Machines', path: '/machines', icon: LucideTruck, perm: 'machines.view' },
         { label: 'Live Tracking', path: '/tracking', icon: LucideNavigation, perm: 'tracking.view' },
         { label: 'Refuel', path: '/refuel', icon: LucideFuel, perm: 'refuel.view' },
-        { label: 'Tasks', path: '/tasks', icon: LucideCheckSquare, perm: 'tasks.view' },
         { label: 'Machine Shift Request', path: '/machine-shift', icon: LucideArrowLeftRight, perm: 'machine_shift.view' },
         { label: 'Depth View', path: '/chart-view', icon: LucideLineChart, perm: 'chartview.view' },
         { label: 'Attendance', path: '/attendance', icon: LucideCalendarCheck, perm: 'attendance.view' }
+      ]
+    },
+    {
+      title: 'TASK',
+      items: [
+        { label: 'Execution', path: '/tasks', icon: LucideCheckSquare, perm: 'tasks.view' },
+        { label: 'Hindrance', path: '/tasks/hindrance', icon: LucideAlertTriangle, perm: 'tasks.view' },
+        { label: 'OTN', path: '/tasks/otn', icon: LucideNetwork, perm: 'tasks.view' },
+        { label: 'CCN', path: '/tasks/ccn', icon: LucideFileCheck, perm: 'tasks.view' }
       ]
     },
     {
@@ -173,7 +182,8 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
                         <NavLink
                           key={item.path}
                           to={item.path}
-                          className={`nav-link-item ${isActive ? 'active' : ''}`}
+                          end={item.path === '/tasks' || item.path === '/dashboard'}
+                          className={() => `nav-link-item ${isActive ? 'active' : ''}`}
                           onClick={() => {
                             if (isMobileOpen && onClose) onClose();
                           }}

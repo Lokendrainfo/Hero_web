@@ -25,6 +25,9 @@ const RefuelHistory = lazyComponent(() => import('../pages/refuel/RefuelHistory'
 const RefuelDetails = lazyComponent(() => import('../pages/refuel/RefuelDetails'), 'RefuelDetails');
 const Tasks = lazyComponent(() => import('../pages/tasks/Tasks'), 'Tasks');
 const TaskDetailPage = lazyComponent(() => import('../pages/tasks/TaskDetailPage'), 'TaskDetailPage');
+const TaskHindrancePage = lazyComponent(() => import('../pages/tasks/TaskHindrancePage'), 'TaskHindrancePage');
+const TaskOtnPage = lazyComponent(() => import('../pages/tasks/TaskOtnPage'), 'TaskOtnPage');
+const TaskCcnPage = lazyComponent(() => import('../pages/tasks/TaskCcnPage'), 'TaskCcnPage');
 const MapViewPage = lazyComponent(() => import('../pages/mapview/MapViewPage'), 'MapViewPage');
 const TrenchingMapViewPage = lazyComponent(() => import('../pages/mapview/TrenchingMapViewPage'), 'TrenchingMapViewPage');
 const HddExecutionMapPage = lazyComponent(() => import('../pages/mapview/HddExecutionMapPage'), 'HddExecutionMapPage');
@@ -104,6 +107,10 @@ export const AppRoutes = () => {
             <Route path="/machines/:machineId/refuel/history" element={<RefuelHistory />} />
             <Route path="/refuel/:id" element={<RefuelDetails />} />
             <Route path="/tasks" element={<Tasks />} />
+            <Route path="/tasks/execution" element={<Tasks />} />
+            <Route path="/tasks/hindrance" element={<TaskHindrancePage />} />
+            <Route path="/tasks/otn" element={<TaskOtnPage />} />
+            <Route path="/tasks/ccn" element={<TaskCcnPage />} />
             <Route path="/tasks/:taskId" element={<TaskDetailPage />} />
             <Route path="/tasks/detail/:taskId" element={<TaskDetailPage />} />
             <Route path="/machine-shift" element={<MachineShiftList />} />

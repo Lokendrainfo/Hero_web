@@ -8,5 +8,10 @@ export const isNavPathActive = (arg1, arg2) => {
   if (arg1 === arg2) return true;
   if (path === '/dashboard') return current === '/dashboard' || current === '/';
   if (path === '/map-view') return current === '/map-view';
+  if (path === '/tasks') {
+    if (current === '/tasks' || current === '/tasks/execution') return true;
+    if (current.startsWith('/tasks/hindrance') || current.startsWith('/tasks/otn') || current.startsWith('/tasks/ccn')) return false;
+    return current.startsWith('/tasks/');
+  }
   return current === path || current.startsWith(`${path}/`);
 };

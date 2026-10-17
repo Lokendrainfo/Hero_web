@@ -632,6 +632,7 @@ export const PhotoLightbox = ({
             </div>
           )}
 
+          {/* GPS Accuracy temporarily disabled as requested - uncomment to re-enable
           <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }} title="GPS Accuracy">
             <LucideCrosshair size={13} color="#a78bfa" />
             <span>
@@ -643,6 +644,7 @@ export const PhotoLightbox = ({
               )}
             </span>
           </div>
+          */}
         </div>
 
         {currentPhoto.remarks && (
