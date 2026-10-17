@@ -46,6 +46,7 @@ const Alerts = lazyComponent(() => import('../pages/alerts/Alerts'), 'Alerts');
 const Stock = lazyComponent(() => import('../pages/stock/Stock'), 'Stock');
 const Vendors = lazyComponent(() => import('../pages/vendors/Vendors'), 'Vendors');
 const Users = lazyComponent(() => import('../pages/users/Users'), 'Users');
+const UserDetails = lazyComponent(() => import('../pages/users/UserDetails'), 'UserDetails');
 const Roles = lazyComponent(() => import('../pages/roles/Roles'), 'Roles');
 const MachineShiftList = lazyComponent(() => import('../pages/machine_shift/MachineShiftList'), 'MachineShiftList');
 const MachineShiftCreate = lazyComponent(() => import('../pages/machine_shift/MachineShiftCreate'), 'MachineShiftCreate');
@@ -128,6 +129,7 @@ export const AppRoutes = () => {
             <Route path="/stock" element={<Stock />} />
             <Route path="/vendors" element={<Vendors />} />
             <Route path="/users" element={<Users />} />
+            <Route path="/users/:id" element={<UserDetails />} />
             <Route path="/roles" element={<Roles />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/settings" element={<Profile />} />

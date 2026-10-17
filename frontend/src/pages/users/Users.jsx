@@ -1,20 +1,42 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { userService } from '../../services/userService';
 import { roleService } from '../../services/roleService';
+import { vendorService } from '../../services/vendorService';
 import { useAuth } from '../../hooks/useAuth';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
-import {
-  LucideUserCheck, LucideSearch, LucideRefreshCw, LucideShieldCheck,
-  LucideCheckCircle2, LucideXCircle, LucideChevronRight, LucideFilter, LucideShield,
-  LucideEdit3, LucidePower, LucideX, LucidePlus
-} from 'lucide-react';
-
-import { vendorService } from '../../services/vendorService';
 import { SearchableSelect } from '../../components/common/Select';
 import { roleBadgeClass } from '../../utils/roleBadge';
 
+import { UserEditModal } from './components/UserEditModal';
+import { UserPermissionsModal } from './components/UserPermissionsModal';
+import { AssignVendorModal } from './components/AssignVendorModal';
+import { CreateUserModal } from './components/CreateUserModal';
+import { UserVendorsQuickViewModal } from './components/UserVendorsQuickViewModal';
+
+import {
+  LucideUserCheck,
+  LucideSearch,
+  LucideRefreshCw,
+  LucideShield,
+  LucideCheckCircle2,
+  LucideXCircle,
+  LucideChevronRight,
+  LucideFilter,
+  LucideEdit3,
+  LucideX,
+  LucidePlus,
+  LucideEye,
+  LucideBuilding,
+  LucideMapPin,
+  LucideUsers,
+  LucideLayers
+} from 'lucide-react';
+
 export const Users = () => {
+  const navigate = useNavigate();
   const { hasPermission } = useAuth();
+
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [ilyncRoles, setIlyncRoles] = useState([]);
@@ -22,139 +44,20 @@ export const Users = () => {
   const [allSystemUsers, setAllSystemUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+
   const [search, setSearch] = useState('');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState('ALL');
-  const [inspectUser, setInspectUser] = useState(null);
-  const [assignModalUser, setAssignModalUser] = useState(null);
-  const [selectedVendorToAssign, setSelectedVendorToAssign] = useState('');
-  const [vendorSearchInModal, setVendorSearchInModal] = useState('');
-  const [vendorSearchInEditModal, setVendorSearchInEditModal] = useState('');
-  const [managerSearchInEditModal, setManagerSearchInEditModal] = useState('');
-
-  // Geography Master State
-  const [masterCircles, setMasterCircles] = useState([]);
-  const [createDistricts, setCreateDistricts] = useState([]);
-  const [createBlocks, setCreateBlocks] = useState([]);
-  const [editDistricts, setEditDistricts] = useState([]);
-  const [editBlocks, setEditBlocks] = useState([]);
-
-  // Create User State
-  const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [vendorSearchInCreateModal, setVendorSearchInCreateModal] = useState('');
-  const [managerSearchInCreateModal, setManagerSearchInCreateModal] = useState('');
-  const [createForm, setCreateForm] = useState({
-    username: '',
-    first_name: '',
-    last_name: '',
-    email: '',
-    phone_number: '',
-    employee_id: '',
-    external_user_id: '',
-    role: 'VIEWER',
-    reporting_manager_id: '',
-    vendor_id: '',
-    password: '',
-    user_type: 'NORMAL',
-    advance_scope_type: 'CIRCLE',
-    selected_circle_id: '',
-    selected_district_id: '',
-    selected_block_id: ''
-  });
-
-  const [editUser, setEditUser] = useState(null);
-  const [editForm, setEditForm] = useState({
-    first_name: '',
-    last_name: '',
-    email: '',
-    phone_number: '',
-    external_user_id: '',
-    role: 'VIEWER',
-    reporting_manager_id: '',
-    vendor_id: '',
-    user_type: 'NORMAL',
-    advance_scope_type: 'CIRCLE',
-    selected_circle_id: '',
-    selected_district_id: '',
-    selected_block_id: '',
-    is_active: true
-  });
-  const [statusMessage, setStatusMessage] = useState(null);
   const [activeTab, setActiveTab] = useState('Internal'); // Internal | External
   const [originCounts, setOriginCounts] = useState({ INTERNAL: 0, EXTERNAL: 0 });
 
-  const parseList = (res) => {
-    if (!res) return [];
-    if (Array.isArray(res)) return res;
-    if (Array.isArray(res.data)) return res.data;
-    if (Array.isArray(res.results)) return res.results;
-    if (Array.isArray(res.content)) return res.content;
-    if (Array.isArray(res.data?.results)) return res.data.results;
-    return [];
-  };
+  const [statusMessage, setStatusMessage] = useState(null);
 
-  const fetchCircles = async () => {
-    try {
-      const res = await userService.getCircles();
-      setMasterCircles(parseList(res));
-    } catch (err) {
-      console.error("Failed to fetch circles:", err);
-    }
-  };
-
-  const fetchDistrictsForCreate = async (circleId) => {
-    if (!circleId) {
-      setCreateDistricts([]);
-      setCreateBlocks([]);
-      return;
-    }
-    try {
-      const res = await userService.getDistricts(circleId);
-      setCreateDistricts(parseList(res));
-    } catch (err) {
-      console.error("Failed to fetch districts:", err);
-    }
-  };
-
-  const fetchBlocksForCreate = async (districtId) => {
-    if (!districtId) {
-      setCreateBlocks([]);
-      return;
-    }
-    try {
-      const res = await userService.getBlocks(districtId);
-      setCreateBlocks(parseList(res));
-    } catch (err) {
-      console.error("Failed to fetch blocks:", err);
-    }
-  };
-
-  const fetchDistrictsForEdit = async (circleId) => {
-    if (!circleId) {
-      setEditDistricts([]);
-      setEditBlocks([]);
-      return;
-    }
-    try {
-      const res = await userService.getDistricts(circleId);
-      setEditDistricts(parseList(res));
-    } catch (err) {
-      console.error("Failed to fetch districts for edit:", err);
-    }
-  };
-
-  const fetchBlocksForEdit = async (districtId) => {
-    if (!districtId) {
-      setEditBlocks([]);
-      return;
-    }
-    try {
-      const res = await userService.getBlocks(districtId);
-      setEditBlocks(parseList(res));
-    } catch (err) {
-      console.error("Failed to fetch blocks for edit:", err);
-    }
-  };
+  // Modals state
+  const [inspectUser, setInspectUser] = useState(null);
+  const [editUser, setEditUser] = useState(null);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [assignModalUser, setAssignModalUser] = useState(null);
+  const [quickViewVendorUser, setQuickViewVendorUser] = useState(null);
 
   const [pagination, setPagination] = useState({
     page: 0,
@@ -169,7 +72,7 @@ export const Users = () => {
     const tab = tabOverride || activeTab;
     const origin = tab === 'External' ? 'external' : 'internal';
     try {
-      const [userRes, roleRes, vendorRes, allUsersRes, ilyncRoleRes] = await Promise.all([
+      const [userRes, roleRes, vendorRes] = await Promise.all([
         userService.getAll({
           page,
           size,
@@ -177,30 +80,27 @@ export const Users = () => {
           role: selectedRoleFilter !== 'ALL' ? selectedRoleFilter : '',
           origin
         }),
-        roleService.getRoles(),
-        vendorService.getIntegrationsVendors({ size: 100 }).catch(() => vendorService.getVendors({ page: 0, size: 100 }).catch(() => ({ data: [] }))),
-        userService.getAll({ size: 'all' }).catch(() => ({ data: [] })),
-        roleService.getIlyncRoles().catch(() => ({ data: [] }))
+        roleService.getRoles().catch(() => ({ data: [] })),
+        vendorService.getIntegrationsVendors({ size: 100 }).catch(() => vendorService.getVendors({ page: 0, size: 100 }).catch(() => ({ data: [] })))
       ]);
 
       const payload = userRes.data || userRes;
       const userList = payload.results || (Array.isArray(payload) ? payload : (payload.data?.results || payload.data || []));
       const roleList = Array.isArray(roleRes.data) ? roleRes.data : (roleRes.results || roleRes || []);
-      
-      const ilyncPayload = ilyncRoleRes.data || ilyncRoleRes;
-      const ilyncRoleList = Array.isArray(ilyncPayload) ? ilyncPayload : (ilyncPayload.results || ilyncPayload.data || []);
 
       const vPayload = vendorRes.data?.data || vendorRes.data || vendorRes;
       const vendorList = vPayload.results || vPayload.content || vPayload.vendors || (Array.isArray(vPayload) ? vPayload : []);
 
-      const allUsersPayload = allUsersRes.data || allUsersRes;
-      const allUsersList = allUsersPayload.results || (Array.isArray(allUsersPayload) ? allUsersPayload : (allUsersPayload.data?.results || allUsersPayload.data || []));
-
       setUsers(userList);
       setRoles(roleList);
-      setIlyncRoles(ilyncRoleList);
       setSystemVendors(vendorList);
-      setAllSystemUsers(allUsersList);
+
+      // Fetch manager candidates in background so table is not delayed
+      userService.getAll({ size: 200 }).then(res => {
+        const p = res.data || res;
+        const list = p.results || (Array.isArray(p) ? p : (p.data?.results || p.data || []));
+        setAllSystemUsers(list);
+      }).catch(() => {});
 
       const counts = payload.origin_counts || payload.data?.origin_counts || null;
       if (counts) {
@@ -221,7 +121,7 @@ export const Users = () => {
         total_pages: totalPages
       });
     } catch (err) {
-      console.error("Error fetching users/roles/vendors:", err);
+      console.error('Error fetching users/roles/vendors:', err);
     } finally {
       setLoading(false);
     }
@@ -229,7 +129,6 @@ export const Users = () => {
 
   useEffect(() => {
     fetchUsers(0, pagination.size);
-    fetchCircles();
   }, [selectedRoleFilter, activeTab]);
 
   const handleSync = async () => {
@@ -272,238 +171,28 @@ export const Users = () => {
     }
   };
 
-  const handleAssignVendor = async () => {
-    if (!assignModalUser || !selectedVendorToAssign) return;
-    try {
-      const res = await userService.assignVendor(assignModalUser.id, selectedVendorToAssign);
-      const updatedUser = res.data;
-      setUsers(prev => prev.map(u => u.id === assignModalUser.id ? updatedUser : u));
-      setStatusMessage({ type: 'success', text: `Vendor assigned successfully to ${assignModalUser.username}` });
-      setAssignModalUser(null);
-      setSelectedVendorToAssign('');
-    } catch (err) {
-      setStatusMessage({ type: 'error', text: 'Failed to assign vendor.' });
-    }
-  };
-
   const handleRemoveVendor = async (userId, vendorId) => {
     try {
       const res = await userService.removeVendor(userId, vendorId);
       const updatedUser = res.data;
       setUsers(prev => prev.map(u => u.id === userId ? updatedUser : u));
+      if (quickViewVendorUser && quickViewVendorUser.id === userId) {
+        setQuickViewVendorUser(updatedUser);
+      }
       setStatusMessage({ type: 'success', text: 'Vendor assignment removed successfully.' });
     } catch (err) {
       setStatusMessage({ type: 'error', text: 'Failed to remove vendor assignment.' });
     }
   };
 
-  const handleEditClick = async (u) => {
-    setEditUser(u);
-    setVendorSearchInEditModal('');
-    setManagerSearchInEditModal('');
-    fetchCircles();
-
-    const currentRole = (u.roles && u.roles.length > 0) ? u.roles[0] : (u.role || 'VIEWER');
-    const firstAssignedVendorId = (u.vendors && u.vendors.length > 0) ? (u.vendors[0].id || u.vendors[0].external_vendor_id) : (u.vendor || u.vendor_id || '');
-
-    const uType = u.user_type || 'NORMAL';
-    const scopeType = u.advance_scope_type || 'CIRCLE';
-    const cId = u.selected_circle ? (u.selected_circle.id || u.selected_circle) : (u.selected_circle_id || '');
-    const dId = u.selected_district ? (u.selected_district.id || u.selected_district) : (u.selected_district_id || '');
-    const bId = u.selected_block ? (u.selected_block.id || u.selected_block) : (u.selected_block_id || '');
-
-    let firstName = u.first_name || '';
-    let lastName = u.last_name || '';
-    if (!firstName && !lastName && u.name) {
-      const parts = u.name.trim().split(/\s+/);
-      firstName = parts[0] || '';
-      lastName = parts.slice(1).join(' ') || '';
-    }
-
-    setEditForm({
-      first_name: firstName,
-      last_name: lastName,
-      email: u.email || '',
-      phone_number: u.phone_number || '',
-      external_user_id: u.external_user_id || u.employee_id || '',
-      role: currentRole,
-      reporting_manager_id: u.reporting_manager_id || (u.reporting_manager && (u.reporting_manager.id || u.reporting_manager)) || '',
-      vendor_id: firstAssignedVendorId || '',
-      user_type: uType,
-      advance_scope_type: scopeType,
-      selected_circle_id: cId,
-      selected_district_id: dId,
-      selected_block_id: bId,
-      is_active: u.is_active !== undefined ? u.is_active : true
-    });
-
-    if (cId) {
-      fetchDistrictsForEdit(cId);
-    }
-    if (dId) {
-      fetchBlocksForEdit(dId);
-    }
-  };
-
-  const handleSaveEditUser = async () => {
-    if (!editUser) return;
-    try {
-      const extId = editForm.external_user_id ? editForm.external_user_id.trim() : '';
-      const payload = {
-        first_name: editForm.first_name ? editForm.first_name.trim() : '',
-        last_name: editForm.last_name ? editForm.last_name.trim() : '',
-        email: editForm.email && editForm.email.trim() ? editForm.email.trim() : '',
-        phone_number: editForm.phone_number && editForm.phone_number.trim() ? editForm.phone_number.trim() : '',
-        external_user_id: extId && !['none', 'null', '—', 'n/a', '-'].includes(extId.toLowerCase()) ? extId : null,
-        role: editForm.role || 'VIEWER',
-        is_active: editForm.is_active !== undefined ? editForm.is_active : true,
-        reporting_manager_id: editForm.reporting_manager_id ? Number(editForm.reporting_manager_id) : null,
-        vendor_id: editForm.vendor_id ? editForm.vendor_id : null,
-        user_type: editForm.user_type || 'NORMAL',
-        advance_scope_type: editForm.user_type === 'ADVANCE' ? editForm.advance_scope_type : null,
-        selected_circle_id: editForm.user_type === 'ADVANCE' ? editForm.selected_circle_id || null : null,
-        selected_district_id: editForm.user_type === 'ADVANCE' && (editForm.advance_scope_type === 'DISTRICT' || editForm.advance_scope_type === 'BLOCK') ? editForm.selected_district_id || null : null,
-        selected_block_id: editForm.user_type === 'ADVANCE' && editForm.advance_scope_type === 'BLOCK' ? editForm.selected_block_id || null : null,
-      };
-
-      await userService.updateUser(editUser.id, payload);
-      
-      // Update role & status if changed
-      if (editForm.role || editForm.is_active !== undefined) {
-        await userService.updateRole(editUser.id, { role: editForm.role, is_active: editForm.is_active }).catch(() => {});
-      }
-
-      // If vendor_id is specified, assign vendor scope as well
-      if (editForm.vendor_id) {
-        await userService.assignVendor(editUser.id, editForm.vendor_id).catch(() => {});
-      }
-
-      await fetchUsers(pagination.page, pagination.size);
-      setStatusMessage({ type: 'success', text: `User ${editUser.username} updated successfully!` });
-      setEditUser(null);
-    } catch (err) {
-      console.error("Failed to update user:", err);
-      let errMsg = 'Failed to save user updates.';
-      if (err.response?.data) {
-        const d = err.response.data;
-        if (d.message) {
-          errMsg = d.message;
-          if (d.errors && typeof d.errors === 'object' && Object.keys(d.errors).length > 0) {
-            const fieldErrs = Object.entries(d.errors)
-              .map(([f, msgs]) => `${f}: ${Array.isArray(msgs) ? msgs.join(', ') : msgs}`)
-              .join('; ');
-            if (fieldErrs && !errMsg.includes(fieldErrs)) {
-              errMsg += ` (${fieldErrs})`;
-            }
-          }
-        } else if (d.detail) {
-          errMsg = d.detail;
-        } else if (typeof d === 'object') {
-          const fieldErrs = Object.entries(d)
-            .map(([f, msgs]) => `${f}: ${Array.isArray(msgs) ? msgs.join(', ') : msgs}`)
-            .join('; ');
-          if (fieldErrs) errMsg = fieldErrs;
-        }
-      } else if (err.message) {
-        errMsg = err.message;
-      }
-      setStatusMessage({ type: 'error', text: errMsg });
-    }
-  };
-
-  const handleCreateUserSubmit = async (e) => {
-    if (e) e.preventDefault();
-    const rawUsername = createForm.username.trim();
-    if (!rawUsername) {
-      setStatusMessage({ type: 'error', text: 'Username is required to create a user.' });
-      return;
-    }
-
-    // Auto-convert spaces in username to underscores
-    const sanitizedUsername = rawUsername.replace(/\s+/g, '_');
-
-    setCreating(true);
-    setStatusMessage(null);
-    try {
-      const payload = {
-        username: sanitizedUsername,
-        first_name: createForm.first_name.trim(),
-        last_name: createForm.last_name.trim(),
-        email: createForm.email.trim(),
-        phone_number: createForm.phone_number.trim(),
-        employee_id: createForm.employee_id.trim(),
-        // Keep internal users without external_user_id so they stay on the Internal tab
-        external_user_id: createForm.external_user_id.trim() || null,
-        role: createForm.role || 'VIEWER',
-        reporting_manager_id: createForm.reporting_manager_id ? Number(createForm.reporting_manager_id) : null,
-        vendor_id: createForm.vendor_id ? (isNaN(Number(createForm.vendor_id)) ? createForm.vendor_id : Number(createForm.vendor_id)) : null,
-        password: createForm.password.trim() || undefined,
-        user_type: createForm.user_type || 'NORMAL',
-        advance_scope_type: createForm.user_type === 'ADVANCE' ? createForm.advance_scope_type : null,
-        selected_circle_id: createForm.user_type === 'ADVANCE' ? createForm.selected_circle_id || null : null,
-        selected_district_id: createForm.user_type === 'ADVANCE' && (createForm.advance_scope_type === 'DISTRICT' || createForm.advance_scope_type === 'BLOCK') ? createForm.selected_district_id || null : null,
-        selected_block_id: createForm.user_type === 'ADVANCE' && createForm.advance_scope_type === 'BLOCK' ? createForm.selected_block_id || null : null,
-      };
-
-      await userService.createUser(payload);
-
-      await fetchUsers(0, pagination.size);
-      setStatusMessage({ type: 'success', text: `User "${sanitizedUsername}" created successfully!` });
-      setCreateModalOpen(false);
-      setCreateForm({
-        username: '',
-        first_name: '',
-        last_name: '',
-        email: '',
-        phone_number: '',
-        employee_id: '',
-        external_user_id: '',
-        role: 'VIEWER',
-        reporting_manager_id: '',
-        vendor_id: '',
-        password: '',
-        user_type: 'NORMAL',
-        advance_scope_type: 'CIRCLE',
-        selected_circle_id: '',
-        selected_district_id: '',
-        selected_block_id: ''
-      });
-    } catch (err) {
-      console.error("Failed to create user:", err);
-      const resData = err?.response?.data || err;
-      let errMsg = 'Failed to create new user.';
-      if (resData) {
-        if (resData.errors && typeof resData.errors === 'object' && Object.keys(resData.errors).length > 0) {
-          errMsg = Object.entries(resData.errors)
-            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : (typeof v === 'object' ? JSON.stringify(v) : v)}`)
-            .join(' | ');
-        } else if (resData.message) {
-          errMsg = typeof resData.message === 'string' ? resData.message : JSON.stringify(resData.message);
-        } else if (resData.detail) {
-          errMsg = typeof resData.detail === 'string' ? resData.detail : JSON.stringify(resData.detail);
-        } else if (typeof resData === 'object') {
-          const filteredEntries = Object.entries(resData).filter(([k]) => k !== 'status_code' && k !== 'success');
-          if (filteredEntries.length > 0) {
-            errMsg = filteredEntries
-              .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : (typeof v === 'object' ? JSON.stringify(v) : v)}`)
-              .join(' | ');
-          }
-        }
-      }
-      setStatusMessage({ type: 'error', text: errMsg });
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const roleOptions = React.useMemo(() => {
+  const roleOptions = useMemo(() => {
     const defaultLocal = ['ADMIN', 'PROJECT_MANAGER', 'ENGINEER', 'SUPERVISOR', 'OPERATOR', 'VENDOR', 'VIEWER', 'ALL_VIEWER'];
     const fetchedLocal = (roles || []).map(r => r.name || r.code).filter(Boolean);
     const fetchedIlync = (ilyncRoles || []).map(r => r.key || r.name || r.code).filter(Boolean);
     return Array.from(new Set([...defaultLocal, ...fetchedLocal, ...fetchedIlync]));
   }, [roles, ilyncRoles]);
 
-  const filteredUsers = React.useMemo(() => {
+  const filteredUsers = useMemo(() => {
     if (!search || !search.trim()) return users;
     const q = search.toLowerCase().trim();
     return users.filter(u => {
@@ -532,46 +221,27 @@ export const Users = () => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%', boxSizing: 'border-box' }}>
       {/* Top Title Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <LucideUserCheck size={24} color="#111827" />
-            <h1 className="page-title">Users</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: '#f3f4f6', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#111827' }}>
+              <LucideUserCheck size={22} />
+            </div>
+            <div>
+              <h1 className="page-title" style={{ margin: 0, fontSize: '1.35rem', fontWeight: '700' }}>Users Directory</h1>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '2px 0 0' }}>
+                {activeTab === 'Internal'
+                  ? 'Manage internal users, enterprise access roles, and assigned scopes'
+                  : 'Users synchronized from external partner APIs (iLync)'}
+              </p>
+            </div>
           </div>
-          <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: '2px' }}>
-            {activeTab === 'Internal'
-              ? 'Users created in HERO'
-              : 'Users synced from external APIs (iLync)'}
-          </p>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           {activeTab === 'Internal' && (
             <button
-              onClick={() => {
-                fetchCircles();
-                setCreateForm({
-                  username: '',
-                  first_name: '',
-                  last_name: '',
-                  email: '',
-                  phone_number: '',
-                  employee_id: '',
-                  external_user_id: '',
-                  role: 'VIEWER',
-                  reporting_manager_id: '',
-                  vendor_id: '',
-                  password: '',
-                  user_type: 'NORMAL',
-                  advance_scope_type: 'CIRCLE',
-                  selected_circle_id: '',
-                  selected_district_id: '',
-                  selected_block_id: ''
-                });
-                setVendorSearchInCreateModal('');
-                setManagerSearchInCreateModal('');
-                setCreateModalOpen(true);
-              }}
+              onClick={() => setCreateModalOpen(true)}
               className="btn-primary"
               style={{
                 padding: '8px 16px',
@@ -603,6 +273,7 @@ export const Users = () => {
         </div>
       </div>
 
+      {/* Tabs Filter Row */}
       <div className="filter-row">
         {[
           { label: 'Internal', count: originCounts.INTERNAL },
@@ -613,28 +284,40 @@ export const Users = () => {
             type="button"
             className={`filter-chip ${activeTab === tab.label ? 'active' : ''}`}
             onClick={() => setActiveTab(tab.label)}
+            style={{ cursor: 'pointer', fontWeight: '600', padding: '6px 14px' }}
           >
-            {tab.label} {tab.count}
+            {tab.label} ({tab.count})
           </button>
         ))}
       </div>
 
       {statusMessage && (
-        <div style={{
-          padding: '10px 14px',
-          borderRadius: '8px',
-          fontSize: '0.85rem',
-          fontWeight: '500',
-          background: statusMessage.type === 'error' ? '#fef2f2' : '#ecfdf5',
-          color: statusMessage.type === 'error' ? '#dc2626' : '#047857',
-          border: `1px solid ${statusMessage.type === 'error' ? '#fecaca' : '#a7f3d0'}`
-        }}>
-          {statusMessage.text}
+        <div
+          style={{
+            padding: '10px 14px',
+            borderRadius: '8px',
+            fontSize: '0.85rem',
+            fontWeight: '500',
+            background: statusMessage.type === 'error' ? '#fef2f2' : '#ecfdf5',
+            color: statusMessage.type === 'error' ? '#dc2626' : '#047857',
+            border: `1px solid ${statusMessage.type === 'error' ? '#fecaca' : '#a7f3d0'}`,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}
+        >
+          <span>{statusMessage.text}</span>
+          <button
+            onClick={() => setStatusMessage(null)}
+            style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 'bold' }}
+          >
+            ✕
+          </button>
         </div>
       )}
 
       {/* Search & Filter Bar */}
-      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', background: 'var(--bg-surface)', padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--border)' }}>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -650,15 +333,15 @@ export const Users = () => {
               onChange={(e) => setSearch(e.target.value)}
               style={{
                 width: '100%',
-                padding: '10px 34px 10px 38px',
+                padding: '9px 34px 9px 38px',
                 borderRadius: '8px',
-                border: '1px solid #d1d5db',
-                fontSize: '0.85rem',
+                border: '1px solid var(--border-strong)',
+                fontSize: '0.84rem',
                 outline: 'none',
                 boxSizing: 'border-box'
               }}
             />
-            <LucideSearch size={16} color="#9ca3af" style={{ position: 'absolute', left: '12px', top: '12px' }} />
+            <LucideSearch size={16} color="#9ca3af" style={{ position: 'absolute', left: '12px', top: '11px' }} />
             {search && (
               <button
                 type="button"
@@ -696,23 +379,24 @@ export const Users = () => {
               whiteSpace: 'nowrap'
             }}
           >
-            <LucideSearch size={14} /> Search User
+            <LucideSearch size={14} /> Search
           </button>
         </form>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <LucideFilter size={15} color="#6b7280" />
-          <span style={{ fontSize: '0.8rem', fontWeight: '600', color: '#374151' }}>Role:</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <LucideFilter size={15} color="var(--text-muted)" />
+          <span style={{ fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)' }}>Role:</span>
           <SearchableSelect
             value={selectedRoleFilter}
             onChange={(e) => setSelectedRoleFilter(e.target.value)}
             style={{
               padding: '8px 12px',
               borderRadius: '8px',
-              border: '1px solid #d1d5db',
+              border: '1px solid var(--border-strong)',
               fontSize: '0.82rem',
               outline: 'none',
-              background: '#ffffff'
+              background: '#ffffff',
+              minWidth: '140px'
             }}
           >
             <option value="ALL">All Roles</option>
@@ -723,8 +407,8 @@ export const Users = () => {
         </div>
 
         {/* Page Size Selector */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: '600', color: '#374151' }}>Page Size:</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-secondary)' }}>Show:</span>
           <SearchableSelect
             value={pagination.size}
             onChange={(e) => {
@@ -734,7 +418,7 @@ export const Users = () => {
             style={{
               padding: '8px 12px',
               borderRadius: '8px',
-              border: '1px solid #d1d5db',
+              border: '1px solid var(--border-strong)',
               fontSize: '0.82rem',
               outline: 'none',
               background: '#ffffff',
@@ -742,43 +426,51 @@ export const Users = () => {
               fontWeight: '600'
             }}
           >
-            <option value={20}>20 Per Page</option>
-            <option value={50}>50 Per Page</option>
-            <option value={100}>100 Per Page</option>
-            <option value="all">Show All ({pagination.total || users.length} Users)</option>
+            <option value={20}>20 rows</option>
+            <option value={50}>50 rows</option>
+            <option value={100}>100 rows</option>
+            <option value="all">All ({pagination.total || users.length})</option>
           </SearchableSelect>
         </div>
       </div>
 
       {/* Users Table */}
-      <div className="app-card" style={{ padding: '0', overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+      <div className="table-container" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: '10px' }}>
+        <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.84rem' }}>
           <thead>
-            <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb', color: '#4b5563', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            <tr style={{ background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               <th style={{ padding: '12px 16px' }}>User Details</th>
-              <th style={{ padding: '12px 16px' }}>External User ID</th>
-              <th style={{ padding: '12px 16px' }}>HERO Role</th>
-              <th style={{ padding: '12px 16px' }}>User Type</th>
-              <th style={{ padding: '12px 16px' }}>Access Scope</th>
-              <th style={{ padding: '12px 16px' }}>Reporting Manager</th>
-              <th style={{ padding: '12px 16px' }}>Assigned Vendors Scope</th>
-              <th style={{ padding: '12px 16px' }}>Status</th>
+              <th style={{ padding: '12px 14px' }}>External ID</th>
+              <th style={{ padding: '12px 14px' }}>HERO Role</th>
+              <th style={{ padding: '12px 14px' }}>User Type</th>
+              <th style={{ padding: '12px 14px' }}>Access Scope</th>
+              <th style={{ padding: '12px 14px' }}>Reporting Manager</th>
+              <th style={{ padding: '12px 16px' }}>Assigned Vendors</th>
+              <th style={{ padding: '12px 14px' }}>Status</th>
               <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={9} style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
-                  Loading HERO platform users...
+                <td colSpan={9} style={{ padding: '48px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                    <LucideRefreshCw size={18} className="animate-spin" /> Loading HERO platform users...
+                  </div>
                 </td>
               </tr>
             ) : filteredUsers.length === 0 ? (
               <tr>
-                <td colSpan={9} style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
-                  {activeTab === 'Internal'
-                    ? 'No internal users found. Use Add New User to create one.'
-                    : 'No external users found. Use Sync External Users to pull from the API.'}
+                <td colSpan={9} style={{ padding: '48px 16px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: '1.2rem', marginBottom: '6px' }}>👤</div>
+                  <div style={{ fontWeight: '600', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                    {search ? `No users matching "${search}"` : 'No users found in this tab'}
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.8rem' }}>
+                    {activeTab === 'Internal'
+                      ? 'Use "Add New User" above to create a new internal account.'
+                      : 'Click "Sync External Users" to fetch users from external APIs.'}
+                  </p>
                 </td>
               </tr>
             ) : (
@@ -786,21 +478,76 @@ export const Users = () => {
                 const currentRole = (u.roles && u.roles.length > 0) ? u.roles[0] : (u.role || 'VIEWER');
                 const extId = u.external_user_id || u.employee_id || u.id;
                 const assignedVendors = Array.isArray(u.vendors) ? u.vendors : [];
+                const isAdmin = u.is_superuser || currentRole.toUpperCase() === 'ADMIN';
+
+                const fullName = u.name || `${u.first_name || ''} ${u.last_name || ''}`.trim() || u.username;
+                const initials = fullName
+                  .split(' ')
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map(p => p[0].toUpperCase())
+                  .join('');
 
                 return (
-                  <tr key={u.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                  <tr
+                    key={u.id}
+                    onClick={() => navigate(`/users/${u.id}`)}
+                    style={{
+                      borderBottom: '1px solid var(--border)',
+                      transition: 'background 0.15s ease',
+                      cursor: 'pointer'
+                    }}
+                    title="Click row to view user details"
+                  >
+                    {/* User Details */}
                     <td style={{ padding: '12px 16px' }}>
-                      <div style={{ fontWeight: '600', color: '#111827' }}>{u.name || u.first_name || u.username}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>{u.email}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div
+                          style={{
+                            width: '34px',
+                            height: '34px',
+                            borderRadius: '50%',
+                            background: '#111827',
+                            color: '#ffffff',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '0.78rem',
+                            fontWeight: '700',
+                            flexShrink: 0
+                          }}
+                        >
+                          {initials || <LucideUserCheck size={16} />}
+                        </div>
+                        <div>
+                          <div
+                            style={{
+                              fontWeight: '600',
+                              color: 'var(--text-primary)',
+                              fontSize: '0.86rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}
+                          >
+                            <span>{fullName}</span>
+                          </div>
+                          <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+                            {u.email || `@${u.username}`}
+                          </div>
+                        </div>
+                      </div>
                     </td>
 
-                    <td style={{ padding: '12px 16px' }}>
-                      <code style={{ background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: '600' }}>
+                    {/* External ID */}
+                    <td style={{ padding: '12px 14px' }}>
+                      <code style={{ background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', padding: '2px 7px', borderRadius: '4px', fontSize: '0.74rem', fontWeight: '600' }}>
                         {extId}
                       </code>
                     </td>
 
-                    <td style={{ padding: '12px 16px' }}>
+                    {/* HERO Role */}
+                    <td style={{ padding: '12px 14px' }} onClick={(e) => e.stopPropagation()}>
                       <SearchableSelect
                         value={currentRole}
                         onChange={(e) => handleRoleChange(u.id, e.target.value)}
@@ -822,107 +569,158 @@ export const Users = () => {
                     </td>
 
                     {/* User Type */}
-                    <td style={{ padding: '12px 16px' }}>
+                    <td style={{ padding: '12px 14px' }}>
                       {u.user_type === 'ADVANCE' ? (
-                        <span style={{ fontSize: '0.75rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', padding: '3px 8px', borderRadius: '4px', fontWeight: '700' }}>
+                        <span style={{ fontSize: '0.72rem', background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', padding: '2px 7px', borderRadius: '4px', fontWeight: '700' }}>
                           Advance
                         </span>
                       ) : (
-                        <span style={{ fontSize: '0.75rem', background: '#f3f4f6', color: '#374151', border: '1px solid #e5e7eb', padding: '3px 8px', borderRadius: '4px', fontWeight: '600' }}>
+                        <span style={{ fontSize: '0.72rem', background: '#f3f4f6', color: '#4b5563', border: '1px solid #e5e7eb', padding: '2px 7px', borderRadius: '4px', fontWeight: '600' }}>
                           Normal
                         </span>
                       )}
                     </td>
 
                     {/* Access Scope */}
-                    <td style={{ padding: '12px 16px' }}>
+                    <td style={{ padding: '12px 14px' }}>
                       {u.user_type === 'ADVANCE' ? (
-                        <div style={{ fontSize: '0.78rem', color: '#1e293b', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '3px 8px', borderRadius: '6px' }}>
-                          <span>📍</span> {u.advance_scope_display || u.advance_scope_type || 'Advance'}
+                        <div style={{ fontSize: '0.76rem', color: '#1e293b', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#f8fafc', border: '1px solid #e2e8f0', padding: '2px 8px', borderRadius: '6px' }}>
+                          <LucideMapPin size={12} color="#2563eb" />
+                          <span>{u.advance_scope_display || u.advance_scope_type || 'Advance'}</span>
                         </div>
                       ) : (
-                        <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>-</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>—</span>
                       )}
                     </td>
 
-                    <td style={{ padding: '12px 16px' }}>
+                    {/* Reporting Manager */}
+                    <td style={{ padding: '12px 14px' }}>
                       {u.reporting_manager_name ? (
-                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.78rem', background: '#f3f4f6', color: '#1f2937', padding: '3px 8px', borderRadius: '6px', fontWeight: '600', border: '1px solid #e5e7eb' }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.76rem', background: 'var(--bg-subtle)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: '6px', fontWeight: '600', border: '1px solid var(--border)' }}>
                           <span>👔</span> {u.reporting_manager_name}
                         </div>
                       ) : (
-                        <span style={{ fontSize: '0.75rem', color: '#9ca3af', fontStyle: 'italic' }}>
-                          No Manager Assigned
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                          No Manager
                         </span>
                       )}
                     </td>
 
-                    <td style={{ padding: '12px 16px' }}>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
-                        {currentRole === 'ADMIN' ? (
-                          <span style={{ fontSize: '0.72rem', background: '#e0e7ff', color: '#3730a3', border: '1px solid #c7d2fe', padding: '2px 8px', borderRadius: '4px', fontWeight: '600' }}>
-                            🌐 All Vendors (Admin)
-                          </span>
-                        ) : assignedVendors.length > 0 ? (
-                          assignedVendors.map(v => (
-                            <span key={v.id} style={{ fontSize: '0.72rem', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '2px 8px', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                              {v.name}
-                              <button
-                                onClick={() => handleRemoveVendor(u.id, v.id)}
-                                style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '0.8rem', padding: '0 2px' }}
-                                title="Remove Vendor Access"
-                              >
-                                ✕
-                              </button>
-                            </span>
-                          ))
-                        ) : (
-                          <span style={{ fontSize: '0.72rem', color: '#ef4444', background: '#fef2f2', border: '1px solid #fecaca', padding: '2px 6px', borderRadius: '4px' }}>
-                            ⚠️ No Vendor Assigned
-                          </span>
-                        )}
-                      </div>
+                    {/* Assigned Vendors Scope - Compact Summary (Requirement 1 & 4) */}
+                    <td style={{ padding: '12px 16px' }} onClick={(e) => e.stopPropagation()}>
+                      {isAdmin ? (
+                        <span style={{ fontSize: '0.74rem', background: '#e0e7ff', color: '#3730a3', border: '1px solid #c7d2fe', padding: '3px 8px', borderRadius: '4px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          🌐 All Vendors (Admin)
+                        </span>
+                      ) : assignedVendors.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setQuickViewVendorUser(u)}
+                          style={{
+                            background: '#ecfdf5',
+                            color: '#047857',
+                            border: '1px solid #a7f3d0',
+                            padding: '3px 10px',
+                            borderRadius: '12px',
+                            fontSize: '0.75rem',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            transition: 'all 0.15s ease'
+                          }}
+                          title="Click to view all assigned vendors"
+                        >
+                          <LucideBuilding size={13} />
+                          <span>{assignedVendors.length} {assignedVendors.length === 1 ? 'Vendor' : 'Vendors'}</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setAssignModalUser(u)}
+                          style={{
+                            fontSize: '0.72rem',
+                            color: '#dc2626',
+                            background: '#fef2f2',
+                            border: '1px solid #fecaca',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                          title="Click to assign vendor"
+                        >
+                          <span>⚠️ No Vendor Assigned</span>
+                        </button>
+                      )}
                     </td>
 
-                    <td style={{ padding: '12px 16px' }}>
+                    {/* Status */}
+                    <td style={{ padding: '12px 14px' }} onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => handleStatusToggle(u)}
                         style={{
                           border: 'none',
                           background: u.is_active ? '#ecfdf5' : '#fef2f2',
                           color: u.is_active ? '#047857' : '#dc2626',
-                          padding: '4px 10px',
+                          padding: '3px 9px',
                           borderRadius: '12px',
-                          fontSize: '0.75rem',
+                          fontSize: '0.74rem',
                           fontWeight: '600',
                           cursor: 'pointer',
                           display: 'inline-flex',
                           alignItems: 'center',
-                          gap: '4px'
+                          gap: '4px',
+                          border: `1px solid ${u.is_active ? '#a7f3d0' : '#fecaca'}`
                         }}
                       >
-                        {u.is_active ? <LucideCheckCircle2 size={13} /> : <LucideXCircle size={13} />}
+                        {u.is_active ? <LucideCheckCircle2 size={12} /> : <LucideXCircle size={12} />}
                         {u.is_active ? 'Active' : 'Inactive'}
                       </button>
                     </td>
 
-                    <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                    {/* Actions */}
+                    <td style={{ padding: '12px 16px', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
                       <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
                         <button
-                          onClick={() => handleEditClick(u)}
+                          onClick={() => navigate(`/users/${u.id}`)}
                           style={{
-                            background: '#eff6ff',
-                            color: '#2563eb',
-                            border: '1px solid #bfdbfe',
-                            padding: '4px 10px',
+                            background: '#f3f4f6',
+                            color: '#111827',
+                            border: '1px solid var(--border)',
+                            padding: '4px 9px',
                             borderRadius: '6px',
-                            fontSize: '0.75rem',
+                            fontSize: '0.74rem',
                             fontWeight: '600',
                             cursor: 'pointer',
                             display: 'inline-flex',
                             alignItems: 'center',
                             gap: '4px'
                           }}
+                          title="View dedicated user details page"
+                        >
+                          <LucideEye size={13} /> View
+                        </button>
+
+                        <button
+                          onClick={() => setEditUser(u)}
+                          style={{
+                            background: '#eff6ff',
+                            color: '#2563eb',
+                            border: '1px solid #bfdbfe',
+                            padding: '4px 9px',
+                            borderRadius: '6px',
+                            fontSize: '0.74rem',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                          title="Edit user details"
                         >
                           <LucideEdit3 size={13} /> Edit
                         </button>
@@ -930,20 +728,21 @@ export const Users = () => {
                         <button
                           onClick={() => setInspectUser(u)}
                           style={{
-                            background: '#f3f4f6',
-                            color: '#374151',
-                            border: '1px solid #d1d5db',
-                            padding: '4px 10px',
+                            background: '#f8fafc',
+                            color: '#475569',
+                            border: '1px solid #cbd5e1',
+                            padding: '4px 9px',
                             borderRadius: '6px',
-                            fontSize: '0.75rem',
+                            fontSize: '0.74rem',
                             fontWeight: '600',
                             cursor: 'pointer',
                             display: 'inline-flex',
                             alignItems: 'center',
                             gap: '4px'
                           }}
+                          title="View user permissions"
                         >
-                          <LucideShield size={13} /> Permissions
+                          <LucideShield size={13} /> Perms
                         </button>
                       </div>
                     </td>
@@ -957,20 +756,22 @@ export const Users = () => {
 
       {/* Pagination Controls Bar */}
       {pagination.total > 0 && (
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '10px',
-          padding: '12px 16px',
-          background: '#ffffff',
-          borderRadius: '10px',
-          border: '1px solid #e5e7eb',
-          fontSize: '0.82rem'
-        }}>
-          <div style={{ color: '#4b5563', fontWeight: '500' }}>
-            Showing <strong>{users.length}</strong> of <strong>{pagination.total}</strong> Total Users
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '10px',
+            padding: '12px 16px',
+            background: 'var(--bg-surface)',
+            borderRadius: '10px',
+            border: '1px solid var(--border)',
+            fontSize: '0.82rem'
+          }}
+        >
+          <div style={{ color: 'var(--text-secondary)', fontWeight: '500' }}>
+            Showing <strong>{filteredUsers.length}</strong> of <strong>{pagination.total}</strong> Total Users
             {pagination.size !== 'all' && (
               <span> (Page <strong>{pagination.page + 1}</strong> of <strong>{pagination.total_pages}</strong>)</span>
             )}
@@ -982,11 +783,11 @@ export const Users = () => {
                 disabled={pagination.page <= 0}
                 onClick={() => fetchUsers(0, pagination.size)}
                 style={{
-                  padding: '6px 12px',
+                  padding: '5px 10px',
                   borderRadius: '6px',
-                  border: '1px solid #d1d5db',
-                  background: pagination.page <= 0 ? '#f3f4f6' : '#ffffff',
-                  color: pagination.page <= 0 ? '#9ca3af' : '#374151',
+                  border: '1px solid var(--border-strong)',
+                  background: pagination.page <= 0 ? 'var(--bg-subtle)' : '#ffffff',
+                  color: pagination.page <= 0 ? 'var(--text-muted)' : 'var(--text-primary)',
                   cursor: pagination.page <= 0 ? 'not-allowed' : 'pointer',
                   fontWeight: '600'
                 }}
@@ -998,11 +799,11 @@ export const Users = () => {
                 disabled={pagination.page <= 0}
                 onClick={() => fetchUsers(pagination.page - 1, pagination.size)}
                 style={{
-                  padding: '6px 12px',
+                  padding: '5px 10px',
                   borderRadius: '6px',
-                  border: '1px solid #d1d5db',
-                  background: pagination.page <= 0 ? '#f3f4f6' : '#ffffff',
-                  color: pagination.page <= 0 ? '#9ca3af' : '#374151',
+                  border: '1px solid var(--border-strong)',
+                  background: pagination.page <= 0 ? 'var(--bg-subtle)' : '#ffffff',
+                  color: pagination.page <= 0 ? 'var(--text-muted)' : 'var(--text-primary)',
                   cursor: pagination.page <= 0 ? 'not-allowed' : 'pointer',
                   fontWeight: '600'
                 }}
@@ -1010,7 +811,7 @@ export const Users = () => {
                 ◀ Prev
               </button>
 
-              <span style={{ padding: '0 8px', fontWeight: '700', color: '#111827' }}>
+              <span style={{ padding: '0 8px', fontWeight: '700', color: 'var(--text-primary)' }}>
                 Page {pagination.page + 1} / {pagination.total_pages}
               </span>
 
@@ -1018,11 +819,11 @@ export const Users = () => {
                 disabled={pagination.page >= pagination.total_pages - 1}
                 onClick={() => fetchUsers(pagination.page + 1, pagination.size)}
                 style={{
-                  padding: '6px 12px',
+                  padding: '5px 10px',
                   borderRadius: '6px',
-                  border: '1px solid #d1d5db',
-                  background: pagination.page >= pagination.total_pages - 1 ? '#f3f4f6' : '#ffffff',
-                  color: pagination.page >= pagination.total_pages - 1 ? '#9ca3af' : '#374151',
+                  border: '1px solid var(--border-strong)',
+                  background: pagination.page >= pagination.total_pages - 1 ? 'var(--bg-subtle)' : '#ffffff',
+                  color: pagination.page >= pagination.total_pages - 1 ? 'var(--text-muted)' : 'var(--text-primary)',
                   cursor: pagination.page >= pagination.total_pages - 1 ? 'not-allowed' : 'pointer',
                   fontWeight: '600'
                 }}
@@ -1034,11 +835,11 @@ export const Users = () => {
                 disabled={pagination.page >= pagination.total_pages - 1}
                 onClick={() => fetchUsers(pagination.total_pages - 1, pagination.size)}
                 style={{
-                  padding: '6px 12px',
+                  padding: '5px 10px',
                   borderRadius: '6px',
-                  border: '1px solid #d1d5db',
-                  background: pagination.page >= pagination.total_pages - 1 ? '#f3f4f6' : '#ffffff',
-                  color: pagination.page >= pagination.total_pages - 1 ? '#9ca3af' : '#374151',
+                  border: '1px solid var(--border-strong)',
+                  background: pagination.page >= pagination.total_pages - 1 ? 'var(--bg-subtle)' : '#ffffff',
+                  color: pagination.page >= pagination.total_pages - 1 ? 'var(--text-muted)' : 'var(--text-primary)',
                   cursor: pagination.page >= pagination.total_pages - 1 ? 'not-allowed' : 'pointer',
                   fontWeight: '600'
                 }}
@@ -1050,1054 +851,58 @@ export const Users = () => {
         </div>
       )}
 
-      {/* Inspect User Permissions Modal */}
-      {inspectUser && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          padding: '16px'
-        }}>
-          <div className="app-card" style={{ width: '100%', maxWidth: '520px', padding: '24px', maxHeight: '85vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #e5e7eb', paddingBottom: '12px' }}>
-              <div>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#111827' }}>
-                  {inspectUser.name || inspectUser.username}
-                </h3>
-                <div style={{ fontSize: '0.78rem', color: '#6b7280' }}>
-                  External ID: <code style={{ color: '#047857' }}>{inspectUser.external_user_id || inspectUser.id}</code>
-                </div>
-              </div>
-              <button
-                onClick={() => setInspectUser(null)}
-                style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#6b7280' }}
-              >
-                ✕
-              </button>
-            </div>
+      {/* Reusable Modals */}
+      <CreateUserModal
+        isOpen={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
+        onSuccess={(newUser, msg) => {
+          setStatusMessage({ type: 'success', text: msg || 'User created successfully!' });
+          fetchUsers(0, pagination.size);
+        }}
+        systemVendors={systemVendors}
+        allSystemUsers={allSystemUsers}
+        roleOptions={roleOptions}
+      />
 
-            <div style={{ marginBottom: '16px' }}>
-              <div style={{ fontSize: '0.8rem', color: '#374151', fontWeight: '600', marginBottom: '6px' }}>
-                Assigned HERO Role:
-              </div>
-              <span className={`badge-pill ${roleBadgeClass(inspectUser.role || 'VIEWER')}`}>
-                {inspectUser.role || 'VIEWER'}
-              </span>
-            </div>
+      <UserEditModal
+        isOpen={!!editUser}
+        user={editUser}
+        onClose={() => setEditUser(null)}
+        onSuccess={(updatedUser, msg) => {
+          setUsers(prev => prev.map(u => u.id === updatedUser.id ? { ...u, ...updatedUser } : u));
+          setStatusMessage({ type: 'success', text: msg || 'User updated successfully!' });
+          fetchUsers(pagination.page, pagination.size);
+        }}
+        systemVendors={systemVendors}
+        allSystemUsers={allSystemUsers}
+        roleOptions={roleOptions}
+      />
 
-            <div>
-              <div style={{ fontSize: '0.8rem', color: '#374151', fontWeight: '600', marginBottom: '8px' }}>
-                Inherited Permissions ({inspectUser.permissions?.length || 0}):
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {inspectUser.permissions && inspectUser.permissions.length > 0 ? (
-                  inspectUser.permissions.map(p => (
-                    <span key={p} className="badge-pill badge-neutral">
-                      {p}
-                    </span>
-                  ))
-                ) : (
-                  <span style={{ fontSize: '0.78rem', color: '#9ca3af' }}>No active permissions assigned.</span>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <UserPermissionsModal
+        isOpen={!!inspectUser}
+        user={inspectUser}
+        onClose={() => setInspectUser(null)}
+      />
 
-      {/* Assign Vendor Modal */}
-      {assignModalUser && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          padding: '16px'
-        }}>
-          <div className="app-card" style={{ width: '100%', maxWidth: '440px', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #e5e7eb', paddingBottom: '12px' }}>
-              <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#111827' }}>
-                Assign Vendor Scope to {assignModalUser.name || assignModalUser.username}
-              </h3>
-              <button onClick={() => setAssignModalUser(null)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#6b7280' }}>
-                ✕
-              </button>
-            </div>
+      <AssignVendorModal
+        isOpen={!!assignModalUser}
+        user={assignModalUser}
+        onClose={() => setAssignModalUser(null)}
+        onSuccess={(updatedUser, msg) => {
+          setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
+          setStatusMessage({ type: 'success', text: msg || 'Vendor assigned successfully!' });
+          fetchUsers(pagination.page, pagination.size);
+        }}
+        systemVendors={systemVendors}
+      />
 
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '700', color: '#111827', marginBottom: '6px' }}>
-                Select Vendor from System Registry ({systemVendors.length} Vendors):
-              </label>
-
-              {/* Searchable Input Bar */}
-              <div style={{ position: 'relative', marginBottom: '8px' }}>
-                <input
-                  type="text"
-                  placeholder="🔍 Type to search vendor by name, code, contact..."
-                  value={vendorSearchInModal}
-                  onChange={(e) => setVendorSearchInModal(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '8px 12px 8px 32px',
-                    borderRadius: '8px',
-                    border: '1px solid #d1d5db',
-                    fontSize: '0.82rem',
-                    outline: 'none',
-                    boxSizing: 'border-box'
-                  }}
-                />
-                <LucideSearch size={15} color="#9ca3af" style={{ position: 'absolute', left: '10px', top: '9px' }} />
-              </div>
-
-              {/* Filtered Scrollable List of Vendors */}
-              <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #d1d5db', borderRadius: '8px', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '2px', padding: '4px' }}>
-                {systemVendors
-                  .filter(v => {
-                    if (!vendorSearchInModal.trim()) return true;
-                    const q = vendorSearchInModal.toLowerCase();
-                    const name = (v.partnerName || v.name || '').toLowerCase();
-                    const code = (v.code || v.external_vendor_id || v.external_id || v.id || '').toLowerCase();
-                    const contact = (v.contactName || v.contact_person || '').toLowerCase();
-                    return name.includes(q) || code.includes(q) || contact.includes(q);
-                  })
-                  .map(v => {
-                    const targetVal = v.id || v.external_vendor_id;
-                    const isSelected = String(selectedVendorToAssign) === String(targetVal);
-                    const name = v.partnerName || v.name;
-                    const contact = v.contactName || v.contact_person || 'N/A';
-                    const code = v.legalEntityType || v.code || v.external_vendor_id || 'VENDOR';
-
-                    return (
-                      <div
-                        key={v.id || v.external_vendor_id}
-                        onClick={() => setSelectedVendorToAssign(targetVal)}
-                        style={{
-                          padding: '8px 12px',
-                          borderRadius: '6px',
-                          cursor: 'pointer',
-                          background: isSelected ? '#ecfdf5' : '#ffffff',
-                          border: isSelected ? '1px solid #059669' : '1px solid #f3f4f6',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          transition: 'background 0.15s ease'
-                        }}
-                      >
-                        <div>
-                          <div style={{ fontWeight: '700', fontSize: '0.85rem', color: isSelected ? '#065f46' : '#111827' }}>
-                            {name}
-                          </div>
-                          <div style={{ fontSize: '0.72rem', color: '#6b7280' }}>
-                            Contact: {contact} • <span style={{ background: '#f3f4f6', padding: '1px 5px', borderRadius: '3px', fontWeight: '600' }}>{code}</span>
-                          </div>
-                        </div>
-                        {isSelected && (
-                          <span style={{ fontSize: '0.8rem', color: '#059669', fontWeight: 'bold' }}>✓ Selected</span>
-                        )}
-                      </div>
-                    );
-                  })
-                }
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button
-                onClick={() => setAssignModalUser(null)}
-                style={{ padding: '8px 16px', background: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '0.82rem', fontWeight: '600', cursor: 'pointer' }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAssignVendor}
-                disabled={!selectedVendorToAssign}
-                className="btn-primary"
-                style={{ padding: '8px 16px', fontSize: '0.82rem' }}
-              >
-                Confirm Assignment
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Edit User Profile Modal */}
-      {editUser && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          padding: '16px'
-        }}>
-          <div className="app-card" style={{ width: '100%', maxWidth: '560px', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #e5e7eb', paddingBottom: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <LucideEdit3 size={18} color="#1d4ed8" />
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: '#111827' }}>
-                  Edit User Profile: {editUser.username}
-                </h3>
-              </div>
-              <button onClick={() => setEditUser(null)} style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#6b7280' }}>
-                ✕
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '0.85rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>First Name:</label>
-                  <input
-                    type="text"
-                    value={editForm.first_name}
-                    onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>Last Name:</label>
-                  <input
-                    type="text"
-                    value={editForm.last_name}
-                    onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none' }}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>Email Address:</label>
-                <input
-                  type="email"
-                  value={editForm.email}
-                  onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none' }}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>Phone / Mobile:</label>
-                  <input
-                    type="text"
-                    value={editForm.phone_number}
-                    onChange={(e) => setEditForm({ ...editForm, phone_number: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>External User ID:</label>
-                  <input
-                    type="text"
-                    value={editForm.external_user_id}
-                    onChange={(e) => setEditForm({ ...editForm, external_user_id: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none' }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>HERO Role:</label>
-                  <SearchableSelect
-                    value={editForm.role}
-                    onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff' }}
-                  >
-                    {roleOptions.map(r => (
-                      <option key={r} value={r}>{r}</option>
-                    ))}
-                  </SearchableSelect>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>User Status:</label>
-                  <SearchableSelect
-                    value={editForm.is_active ? 'active' : 'inactive'}
-                    onChange={(e) => setEditForm({ ...editForm, is_active: e.target.value === 'active' })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff' }}
-                  >
-                    <option value="active">Active</option>
-                    <option value="inactive">Inactive / Disabled</option>
-                  </SearchableSelect>
-                </div>
-              </div>
-
-              {/* User Type & Geographical Access Scope */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  <div>
-                    <label style={{ display: 'block', fontWeight: '700', color: '#1e293b', marginBottom: '4px' }}>User Type:</label>
-                    <SearchableSelect
-                      value={editForm.user_type}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setEditForm(prev => ({
-                          ...prev,
-                          user_type: val,
-                          advance_scope_type: val === 'ADVANCE' ? 'CIRCLE' : '',
-                          selected_circle_id: '',
-                          selected_district_id: '',
-                          selected_block_id: ''
-                        }));
-                        if (val === 'ADVANCE') {
-                          fetchCircles();
-                        }
-                      }}
-                      style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff' }}
-                    >
-                      <option value="NORMAL">Normal</option>
-                      <option value="ADVANCE">Advance</option>
-                    </SearchableSelect>
-                  </div>
-
-                  {editForm.user_type === 'ADVANCE' && (
-                    <div>
-                      <label style={{ display: 'block', fontWeight: '700', color: '#1e293b', marginBottom: '4px' }}>Access Scope:</label>
-                      <SearchableSelect
-                        value={editForm.advance_scope_type}
-                        onChange={(e) => {
-                          const scope = e.target.value;
-                          setEditForm(prev => ({
-                            ...prev,
-                            advance_scope_type: scope,
-                            selected_district_id: scope === 'CIRCLE' ? '' : prev.selected_district_id,
-                            selected_block_id: scope === 'BLOCK' ? prev.selected_block_id : ''
-                          }));
-                        }}
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff' }}
-                      >
-                        <option value="CIRCLE">Circle</option>
-                        <option value="DISTRICT">District</option>
-                        <option value="BLOCK">Block</option>
-                      </SearchableSelect>
-                    </div>
-                  )}
-                </div>
-
-                {editForm.user_type === 'ADVANCE' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: '#eff6ff', padding: '10px', borderRadius: '6px', border: '1px solid #bfdbfe', marginTop: '4px' }}>
-                    <div>
-                      <label style={{ display: 'block', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>Circle / State:</label>
-                      <SearchableSelect
-                        value={editForm.selected_circle_id}
-                        onChange={(e) => {
-                          const cId = e.target.value;
-                          setEditForm(prev => ({
-                            ...prev,
-                            selected_circle_id: cId,
-                            selected_district_id: '',
-                            selected_block_id: ''
-                          }));
-                          fetchDistrictsForEdit(cId);
-                        }}
-                        options={[
-                          { value: '', label: '-- Select Circle --' },
-                          ...masterCircles.map(c => ({ value: c.id, label: c.name }))
-                        ]}
-                        style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: '#fff', fontSize: '0.82rem' }}
-                      />
-                    </div>
-
-                    {(editForm.advance_scope_type === 'DISTRICT' || editForm.advance_scope_type === 'BLOCK') && (
-                      <div>
-                        <label style={{ display: 'block', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>District:</label>
-                        <SearchableSelect
-                          value={editForm.selected_district_id}
-                          disabled={!editForm.selected_circle_id}
-                          onChange={(e) => {
-                            const dId = e.target.value;
-                            setEditForm(prev => ({
-                              ...prev,
-                              selected_district_id: dId,
-                              selected_block_id: ''
-                            }));
-                            fetchBlocksForEdit(dId);
-                          }}
-                          options={[
-                            { value: '', label: '-- Select District --' },
-                            ...editDistricts.map(d => ({ value: d.id, label: d.name }))
-                          ]}
-                          style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: !editForm.selected_circle_id ? '#f3f4f6' : '#fff', fontSize: '0.82rem' }}
-                        />
-                      </div>
-                    )}
-
-                    {editForm.advance_scope_type === 'BLOCK' && (
-                      <div>
-                        <label style={{ display: 'block', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>Block:</label>
-                        <SearchableSelect
-                          value={editForm.selected_block_id}
-                          disabled={!editForm.selected_district_id}
-                          onChange={(e) => {
-                            setEditForm(prev => ({
-                              ...prev,
-                              selected_block_id: e.target.value
-                            }));
-                          }}
-                          options={[
-                            { value: '', label: '-- Select Block --' },
-                            ...editBlocks.map(b => ({ value: b.id, label: b.name }))
-                          ]}
-                          style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: !editForm.selected_district_id ? '#f3f4f6' : '#fff', fontSize: '0.82rem' }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Search & Select Vendor Scope & Reporting Manager */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                {/* Search & Select Vendor */}
-                <div>
-                  <label style={{ display: 'block', fontWeight: '700', color: '#111827', marginBottom: '4px' }}>
-                    🏢 Assign Vendor Scope:
-                  </label>
-                  <div style={{ position: 'relative', marginBottom: '6px' }}>
-                    <input
-                      type="text"
-                      placeholder="🔍 Search vendor..."
-                      value={vendorSearchInEditModal}
-                      onChange={(e) => setVendorSearchInEditModal(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '6px 10px 6px 28px',
-                        borderRadius: '6px',
-                        border: '1px solid #d1d5db',
-                        fontSize: '0.78rem',
-                        outline: 'none',
-                        boxSizing: 'border-box'
-                      }}
-                    />
-                    <LucideSearch size={13} color="#9ca3af" style={{ position: 'absolute', left: '8px', top: '8px' }} />
-                  </div>
-                  <div style={{ maxHeight: '140px', overflowY: 'auto', border: '1px solid #d1d5db', borderRadius: '6px', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '2px', padding: '4px' }}>
-                    <div
-                      onClick={() => setEditForm({ ...editForm, vendor_id: '' })}
-                      style={{
-                        padding: '6px 8px',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        background: !editForm.vendor_id ? '#f3f4f6' : '#ffffff',
-                        fontSize: '0.75rem',
-                        color: !editForm.vendor_id ? '#1f2937' : '#6b7280',
-                        fontWeight: !editForm.vendor_id ? '700' : 'normal'
-                      }}
-                    >
-                      -- No Vendor Scope --
-                    </div>
-                    {systemVendors
-                      .filter(v => {
-                        if (!vendorSearchInEditModal.trim()) return true;
-                        const q = vendorSearchInEditModal.toLowerCase();
-                        const name = (v.partnerName || v.name || '').toLowerCase();
-                        const code = (v.code || v.external_vendor_id || '').toLowerCase();
-                        return name.includes(q) || code.includes(q);
-                      })
-                      .map(v => {
-                        const val = v.id || v.external_vendor_id;
-                        const isSelected = String(editForm.vendor_id) === String(val);
-                        const name = v.partnerName || v.name;
-                        return (
-                          <div
-                            key={val}
-                            onClick={() => setEditForm({ ...editForm, vendor_id: val })}
-                            style={{
-                              padding: '6px 8px',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              background: isSelected ? '#ecfdf5' : '#ffffff',
-                              border: isSelected ? '1px solid #059669' : '1px solid #f3f4f6',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              fontSize: '0.78rem'
-                            }}
-                          >
-                            <span style={{ fontWeight: isSelected ? '700' : '500', color: isSelected ? '#065f46' : '#111827' }}>
-                              {name}
-                            </span>
-                            {isSelected && <span style={{ fontSize: '0.7rem', color: '#059669', fontWeight: 'bold' }}>✓</span>}
-                          </div>
-                        );
-                      })
-                    }
-                  </div>
-                </div>
-
-                {/* Search & Select Reporting Manager */}
-                <div>
-                  <label style={{ display: 'block', fontWeight: '700', color: '#111827', marginBottom: '4px' }}>
-                    👔 Reporting Manager:
-                  </label>
-                  <div style={{ position: 'relative', marginBottom: '6px' }}>
-                    <input
-                      type="text"
-                      placeholder="🔍 Search manager..."
-                      value={managerSearchInEditModal}
-                      onChange={(e) => setManagerSearchInEditModal(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '6px 10px 6px 28px',
-                        borderRadius: '6px',
-                        border: '1px solid #d1d5db',
-                        fontSize: '0.78rem',
-                        outline: 'none',
-                        boxSizing: 'border-box'
-                      }}
-                    />
-                    <LucideSearch size={13} color="#9ca3af" style={{ position: 'absolute', left: '8px', top: '8px' }} />
-                  </div>
-                  <div style={{ maxHeight: '140px', overflowY: 'auto', border: '1px solid #d1d5db', borderRadius: '6px', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '2px', padding: '4px' }}>
-                    <div
-                      onClick={() => setEditForm({ ...editForm, reporting_manager_id: '' })}
-                      style={{
-                        padding: '6px 8px',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        background: !editForm.reporting_manager_id ? '#f3f4f6' : '#ffffff',
-                        fontSize: '0.75rem',
-                        color: !editForm.reporting_manager_id ? '#1f2937' : '#6b7280',
-                        fontWeight: !editForm.reporting_manager_id ? '700' : 'normal'
-                      }}
-                    >
-                      -- No Reporting Manager --
-                    </div>
-                    {allSystemUsers
-                      .filter(mgr => mgr.id !== editUser?.id)
-                      .filter(mgr => {
-                        if (!managerSearchInEditModal.trim()) return true;
-                        const q = managerSearchInEditModal.toLowerCase();
-                        const name = (mgr.name || mgr.first_name || mgr.username || '').toLowerCase();
-                        const email = (mgr.email || '').toLowerCase();
-                        const role = (mgr.role || '').toLowerCase();
-                        return name.includes(q) || email.includes(q) || role.includes(q);
-                      })
-                      .map(mgr => {
-                        const isSelected = String(editForm.reporting_manager_id) === String(mgr.id);
-                        return (
-                          <div
-                            key={mgr.id}
-                            onClick={() => setEditForm({ ...editForm, reporting_manager_id: mgr.id })}
-                            style={{
-                              padding: '6px 8px',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              background: isSelected ? '#eff6ff' : '#ffffff',
-                              border: isSelected ? '1px solid #3b82f6' : '1px solid #f3f4f6',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              fontSize: '0.78rem'
-                            }}
-                          >
-                            <div>
-                              <div style={{ fontWeight: isSelected ? '700' : '500', color: isSelected ? '#1e40af' : '#111827' }}>
-                                {mgr.name || mgr.first_name || mgr.username}
-                              </div>
-                              <div style={{ fontSize: '0.7rem', color: '#6b7280' }}>
-                                {mgr.role || 'User'}
-                              </div>
-                            </div>
-                            {isSelected && <span style={{ fontSize: '0.7rem', color: '#2563eb', fontWeight: 'bold' }}>✓</span>}
-                          </div>
-                        );
-                      })
-                    }
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
-              <button
-                onClick={() => setEditUser(null)}
-                style={{ padding: '8px 16px', background: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '0.82rem', fontWeight: '600', cursor: 'pointer' }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSaveEditUser}
-                className="btn-primary"
-                style={{ padding: '8px 16px', fontSize: '0.82rem' }}
-              >
-                Save User Profile
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Create New User Modal */}
-      {createModalOpen && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0,0,0,0.5)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          padding: '16px'
-        }}>
-          <div className="app-card" style={{ width: '100%', maxWidth: '600px', padding: '24px', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #e5e7eb', paddingBottom: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div style={{ background: '#ecfdf5', color: '#047857', borderRadius: '50%', padding: '6px', display: 'flex' }}>
-                  <LucidePlus size={20} />
-                </div>
-                <h3 style={{ fontSize: '1.15rem', fontWeight: '700', color: '#111827' }}>
-                  Create New User
-                </h3>
-              </div>
-              <button
-                onClick={() => setCreateModalOpen(false)}
-                style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#6b7280' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateUserSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '0.85rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
-                    Username <span style={{ color: '#dc2626' }}>*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. john_doe or Abhishek Sir"
-                    value={createForm.username}
-                    onChange={(e) => setCreateForm({ ...createForm, username: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', boxSizing: 'border-box' }}
-                  />
-                  <span style={{ fontSize: '0.7rem', color: '#6b7280', display: 'block', marginTop: '2px' }}>
-                    Spaces will auto-convert to underscores (e.g., Abhishek_Sir)
-                  </span>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>
-                    Password <span style={{ fontSize: '0.72rem', color: '#6b7280', fontWeight: 'normal' }}>(Default: 123456)</span>
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="Leave blank for default (123456)"
-                    value={createForm.password}
-                    onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', boxSizing: 'border-box' }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>First Name</label>
-                  <input
-                    type="text"
-                    placeholder="First Name"
-                    value={createForm.first_name}
-                    onChange={(e) => setCreateForm({ ...createForm, first_name: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', boxSizing: 'border-box' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>Last Name</label>
-                  <input
-                    type="text"
-                    placeholder="Last Name"
-                    value={createForm.last_name}
-                    onChange={(e) => setCreateForm({ ...createForm, last_name: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', boxSizing: 'border-box' }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>Email Address</label>
-                  <input
-                    type="email"
-                    placeholder="email@example.com"
-                    value={createForm.email}
-                    onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', boxSizing: 'border-box' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>Phone Number</label>
-                  <input
-                    type="text"
-                    placeholder="Mobile / Phone"
-                    value={createForm.phone_number}
-                    onChange={(e) => setCreateForm({ ...createForm, phone_number: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', boxSizing: 'border-box' }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>Employee ID</label>
-                  <input
-                    type="text"
-                    placeholder="EMP001"
-                    value={createForm.employee_id}
-                    onChange={(e) => setCreateForm({ ...createForm, employee_id: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', boxSizing: 'border-box' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>External User ID</label>
-                  <input
-                    type="text"
-                    placeholder="Ext User ID"
-                    value={createForm.external_user_id}
-                    onChange={(e) => setCreateForm({ ...createForm, external_user_id: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', boxSizing: 'border-box' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontWeight: '600', color: '#374151', marginBottom: '4px' }}>HERO Role</label>
-                  <SearchableSelect
-                    value={createForm.role}
-                    onChange={(e) => setCreateForm({ ...createForm, role: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
-                  >
-                    {roleOptions.map(r => (
-                      <option key={r} value={r}>{r}</option>
-                    ))}
-                  </SearchableSelect>
-                </div>
-              </div>
-
-              {/* User Type & Geographical Access Scope */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  <div>
-                    <label style={{ display: 'block', fontWeight: '700', color: '#1e293b', marginBottom: '4px' }}>
-                      User Type <span style={{ color: '#dc2626' }}>*</span>
-                    </label>
-                    <SearchableSelect
-                      value={createForm.user_type}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCreateForm(prev => ({
-                          ...prev,
-                          user_type: val,
-                          advance_scope_type: val === 'ADVANCE' ? 'CIRCLE' : '',
-                          selected_circle_id: '',
-                          selected_district_id: '',
-                          selected_block_id: ''
-                        }));
-                        if (val === 'ADVANCE') {
-                          fetchCircles();
-                        }
-                      }}
-                      style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
-                    >
-                      <option value="NORMAL">Normal</option>
-                      <option value="ADVANCE">Advance</option>
-                    </SearchableSelect>
-                  </div>
-
-                  {createForm.user_type === 'ADVANCE' && (
-                    <div>
-                      <label style={{ display: 'block', fontWeight: '700', color: '#1e293b', marginBottom: '4px' }}>
-                        Access Scope <span style={{ color: '#dc2626' }}>*</span>
-                      </label>
-                      <SearchableSelect
-                        value={createForm.advance_scope_type}
-                        onChange={(e) => {
-                          const scope = e.target.value;
-                          setCreateForm(prev => ({
-                            ...prev,
-                            advance_scope_type: scope,
-                            selected_district_id: scope === 'CIRCLE' ? '' : prev.selected_district_id,
-                            selected_block_id: scope === 'BLOCK' ? prev.selected_block_id : ''
-                          }));
-                        }}
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid #d1d5db', outline: 'none', background: '#fff', boxSizing: 'border-box' }}
-                      >
-                        <option value="CIRCLE">Circle</option>
-                        <option value="DISTRICT">District</option>
-                        <option value="BLOCK">Block</option>
-                      </SearchableSelect>
-                    </div>
-                  )}
-                </div>
-
-                {createForm.user_type === 'ADVANCE' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: '#eff6ff', padding: '10px', borderRadius: '6px', border: '1px solid #bfdbfe', marginTop: '4px' }}>
-                    <div>
-                      <label style={{ display: 'block', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>
-                        Circle / State <span style={{ color: '#dc2626' }}>*</span>
-                      </label>
-                      <SearchableSelect
-                        value={createForm.selected_circle_id}
-                        onChange={(e) => {
-                          const cId = e.target.value;
-                          setCreateForm(prev => ({
-                            ...prev,
-                            selected_circle_id: cId,
-                            selected_district_id: '',
-                            selected_block_id: ''
-                          }));
-                          fetchDistrictsForCreate(cId);
-                        }}
-                        options={[
-                          { value: '', label: '-- Select Circle --' },
-                          ...masterCircles.map(c => ({ value: c.id, label: c.name }))
-                        ]}
-                        style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
-                      />
-                    </div>
-
-                    {(createForm.advance_scope_type === 'DISTRICT' || createForm.advance_scope_type === 'BLOCK') && (
-                      <div>
-                        <label style={{ display: 'block', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>
-                          District <span style={{ color: '#dc2626' }}>*</span>
-                        </label>
-                        <SearchableSelect
-                          value={createForm.selected_district_id}
-                          disabled={!createForm.selected_circle_id}
-                          onChange={(e) => {
-                            const dId = e.target.value;
-                            setCreateForm(prev => ({
-                              ...prev,
-                              selected_district_id: dId,
-                              selected_block_id: ''
-                            }));
-                            fetchBlocksForCreate(dId);
-                          }}
-                          options={[
-                            { value: '', label: '-- Select District --' },
-                            ...createDistricts.map(d => ({ value: d.id, label: d.name }))
-                          ]}
-                          style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: !createForm.selected_circle_id ? '#f3f4f6' : '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
-                        />
-                      </div>
-                    )}
-
-                    {createForm.advance_scope_type === 'BLOCK' && (
-                      <div>
-                        <label style={{ display: 'block', fontWeight: '600', color: '#1e40af', marginBottom: '4px' }}>
-                          Block <span style={{ color: '#dc2626' }}>*</span>
-                        </label>
-                        <SearchableSelect
-                          value={createForm.selected_block_id}
-                          disabled={!createForm.selected_district_id}
-                          onChange={(e) => {
-                            setCreateForm(prev => ({
-                              ...prev,
-                              selected_block_id: e.target.value
-                            }));
-                          }}
-                          options={[
-                            { value: '', label: '-- Select Block --' },
-                            ...createBlocks.map(b => ({ value: b.id, label: b.name }))
-                          ]}
-                          style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', border: '1px solid #93c5fd', outline: 'none', background: !createForm.selected_district_id ? '#f3f4f6' : '#fff', fontSize: '0.82rem', boxSizing: 'border-box' }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Vendor Scope & Reporting Manager Selection */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                {/* Search & Select Vendor */}
-                <div>
-                  <label style={{ display: 'block', fontWeight: '700', color: '#111827', marginBottom: '4px' }}>
-                    🏢 Assign Vendor Scope:
-                  </label>
-                  <div style={{ position: 'relative', marginBottom: '6px' }}>
-                    <input
-                      type="text"
-                      placeholder="🔍 Search vendor..."
-                      value={vendorSearchInCreateModal}
-                      onChange={(e) => setVendorSearchInCreateModal(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '6px 10px 6px 28px',
-                        borderRadius: '6px',
-                        border: '1px solid #d1d5db',
-                        fontSize: '0.78rem',
-                        outline: 'none',
-                        boxSizing: 'border-box'
-                      }}
-                    />
-                    <LucideSearch size={13} color="#9ca3af" style={{ position: 'absolute', left: '8px', top: '8px' }} />
-                  </div>
-                  <div style={{ maxHeight: '130px', overflowY: 'auto', border: '1px solid #d1d5db', borderRadius: '6px', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '2px', padding: '4px' }}>
-                    <div
-                      onClick={() => setCreateForm({ ...createForm, vendor_id: '' })}
-                      style={{
-                        padding: '6px 8px',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        background: !createForm.vendor_id ? '#f3f4f6' : '#ffffff',
-                        fontSize: '0.75rem',
-                        color: !createForm.vendor_id ? '#1f2937' : '#6b7280',
-                        fontWeight: !createForm.vendor_id ? '700' : 'normal'
-                      }}
-                    >
-                      -- No Vendor Scope --
-                    </div>
-                    {systemVendors
-                      .filter(v => {
-                        if (!vendorSearchInCreateModal.trim()) return true;
-                        const q = vendorSearchInCreateModal.toLowerCase();
-                        const name = (v.partnerName || v.name || '').toLowerCase();
-                        const code = (v.code || v.external_vendor_id || '').toLowerCase();
-                        return name.includes(q) || code.includes(q);
-                      })
-                      .map(v => {
-                        const val = v.id || v.external_vendor_id;
-                        const isSelected = String(createForm.vendor_id) === String(val);
-                        const name = v.partnerName || v.name;
-                        return (
-                          <div
-                            key={val}
-                            onClick={() => setCreateForm({ ...createForm, vendor_id: val })}
-                            style={{
-                              padding: '6px 8px',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              background: isSelected ? '#ecfdf5' : '#ffffff',
-                              border: isSelected ? '1px solid #059669' : '1px solid #f3f4f6',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              fontSize: '0.78rem'
-                            }}
-                          >
-                            <span style={{ fontWeight: isSelected ? '700' : '500', color: isSelected ? '#065f46' : '#111827' }}>
-                              {name}
-                            </span>
-                            {isSelected && <span style={{ fontSize: '0.7rem', color: '#059669', fontWeight: 'bold' }}>✓</span>}
-                          </div>
-                        );
-                      })
-                    }
-                  </div>
-                </div>
-
-                {/* Search & Select Reporting Manager */}
-                <div>
-                  <label style={{ display: 'block', fontWeight: '700', color: '#111827', marginBottom: '4px' }}>
-                    👔 Reporting Manager:
-                  </label>
-                  <div style={{ position: 'relative', marginBottom: '6px' }}>
-                    <input
-                      type="text"
-                      placeholder="🔍 Search manager..."
-                      value={managerSearchInCreateModal}
-                      onChange={(e) => setManagerSearchInCreateModal(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '6px 10px 6px 28px',
-                        borderRadius: '6px',
-                        border: '1px solid #d1d5db',
-                        fontSize: '0.78rem',
-                        outline: 'none',
-                        boxSizing: 'border-box'
-                      }}
-                    />
-                    <LucideSearch size={13} color="#9ca3af" style={{ position: 'absolute', left: '8px', top: '8px' }} />
-                  </div>
-                  <div style={{ maxHeight: '130px', overflowY: 'auto', border: '1px solid #d1d5db', borderRadius: '6px', background: '#ffffff', display: 'flex', flexDirection: 'column', gap: '2px', padding: '4px' }}>
-                    <div
-                      onClick={() => setCreateForm({ ...createForm, reporting_manager_id: '' })}
-                      style={{
-                        padding: '6px 8px',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                        background: !createForm.reporting_manager_id ? '#f3f4f6' : '#ffffff',
-                        fontSize: '0.75rem',
-                        color: !createForm.reporting_manager_id ? '#1f2937' : '#6b7280',
-                        fontWeight: !createForm.reporting_manager_id ? '700' : 'normal'
-                      }}
-                    >
-                      -- No Reporting Manager --
-                    </div>
-                    {allSystemUsers
-                      .filter(mgr => {
-                        if (!managerSearchInCreateModal.trim()) return true;
-                        const q = managerSearchInCreateModal.toLowerCase();
-                        const name = (mgr.name || mgr.first_name || mgr.username || '').toLowerCase();
-                        const email = (mgr.email || '').toLowerCase();
-                        const role = (mgr.role || '').toLowerCase();
-                        return name.includes(q) || email.includes(q) || role.includes(q);
-                      })
-                      .map(mgr => {
-                        const isSelected = String(createForm.reporting_manager_id) === String(mgr.id);
-                        return (
-                          <div
-                            key={mgr.id}
-                            onClick={() => setCreateForm({ ...createForm, reporting_manager_id: mgr.id })}
-                            style={{
-                              padding: '6px 8px',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                              background: isSelected ? '#eff6ff' : '#ffffff',
-                              border: isSelected ? '1px solid #3b82f6' : '1px solid #f3f4f6',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              fontSize: '0.78rem'
-                            }}
-                          >
-                            <div>
-                              <div style={{ fontWeight: isSelected ? '700' : '500', color: isSelected ? '#1e40af' : '#111827' }}>
-                                {mgr.name || mgr.first_name || mgr.username}
-                              </div>
-                              <div style={{ fontSize: '0.7rem', color: '#6b7280' }}>
-                                {mgr.role || 'User'}
-                              </div>
-                            </div>
-                            {isSelected && <span style={{ fontSize: '0.7rem', color: '#2563eb', fontWeight: 'bold' }}>✓</span>}
-                          </div>
-                        );
-                      })
-                    }
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
-                <button
-                  type="button"
-                  onClick={() => setCreateModalOpen(false)}
-                  style={{ padding: '8px 16px', background: '#f3f4f6', color: '#374151', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '0.82rem', fontWeight: '600', cursor: 'pointer' }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating}
-                  className="btn-primary"
-                  style={{ padding: '8px 18px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#059669', borderColor: '#059669' }}
-                >
-                  <LucidePlus size={16} />
-                  {creating ? 'Creating User...' : 'Create User'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <UserVendorsQuickViewModal
+        isOpen={!!quickViewVendorUser}
+        user={quickViewVendorUser}
+        onClose={() => setQuickViewVendorUser(null)}
+        onRemoveVendor={handleRemoveVendor}
+        onOpenAssignModal={(u) => setAssignModalUser(u)}
+      />
     </div>
   );
 };
