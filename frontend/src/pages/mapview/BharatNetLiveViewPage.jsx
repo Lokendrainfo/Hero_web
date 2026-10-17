@@ -49,6 +49,7 @@ export const BharatNetLiveViewPage = () => {
         date: parsed.d || '',
         mode: 'user',
         isBharatNetMap: 'true',
+        isBharatNet: 'true',
         source: 'bharatnet'
       }).toString();
       window.location.replace(`/map-view/${parsed.tid}?${query}`);
@@ -72,6 +73,7 @@ export const BharatNetLiveViewPage = () => {
             date: d.date || '',
             mode: 'user',
             isBharatNetMap: 'true',
+            isBharatNet: 'true',
             source: 'bharatnet'
           }).toString();
           window.location.replace(`/map-view/${targetId}?${query}`);

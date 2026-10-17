@@ -91,6 +91,7 @@ const getTargetUrl = (userObj) => {
     const isRel = target.startsWith('/');
     const urlObj = isRel ? new URL(target, window.location.origin) : new URL(target);
     urlObj.searchParams.set('isBharatNetMap', 'true');
+    urlObj.searchParams.set('isBharatNet', 'true');
     urlObj.searchParams.set('source', 'bharatnet');
     if (userObj.machineId) {
       urlObj.searchParams.set('machineId', userObj.machineId);
@@ -102,9 +103,9 @@ const getTargetUrl = (userObj) => {
     return isRel ? `${urlObj.pathname}${urlObj.search}` : urlObj.toString();
   } catch (e) {
     if (target.includes('?')) {
-      return `${target}&isBharatNetMap=true&source=bharatnet`;
+      return `${target}&isBharatNetMap=true&isBharatNet=true&source=bharatnet`;
     }
-    return `${target}?isBharatNetMap=true&source=bharatnet`;
+    return `${target}?isBharatNetMap=true&isBharatNet=true&source=bharatnet`;
   }
 };
 

@@ -289,7 +289,8 @@ class BharatNetTDMonitoringView(APIView):
                             f"district={quote_plus(str(task_district or ''))}&"
                             f"state={quote_plus(str(task_circle or ''))}&"
                             f"date={quote_plus(str(date_param or ''))}&"
-                            f"mode=user"
+                            f"mode=user&"
+                            f"isBharatNet=true"
                             f"{f'&machineId={quote_plus(str(machine_id))}' if machine_id else ''}"
                         )
 

@@ -275,14 +275,13 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
 
   const isBharatNetMap = Boolean(
     isBharatNetMapProp ||
-    searchParams.get('isBharatNetMap') === 'true' ||
-    searchParams.get('isBharatNetMap') === '1' ||
-    searchParams.get('bharatnet') === 'true' ||
-    searchParams.get('bharatnet') === '1' ||
-    searchParams.get('source') === 'bharatnet' ||
-    searchParams.get('source') === 'td-monitoring' ||
-    searchParams.get('source') === 'td_monitoring' ||
-    (typeof window !== 'undefined' && window.location.pathname.includes('/bharatnet')) ||
+    ['true', '1'].includes((searchParams.get('isBharatNetMap') || '').toLowerCase()) ||
+    ['true', '1'].includes((searchParams.get('isBharatNet') || '').toLowerCase()) ||
+    ['true', '1'].includes((searchParams.get('is_bharatnet') || '').toLowerCase()) ||
+    ['true', '1'].includes((searchParams.get('is_bharat_net') || '').toLowerCase()) ||
+    ['true', '1'].includes((searchParams.get('bharatnet') || '').toLowerCase()) ||
+    ['bharatnet', 'td-monitoring', 'td_monitoring'].includes((searchParams.get('source') || '').toLowerCase()) ||
+    (typeof window !== 'undefined' && window.location.pathname.toLowerCase().includes('/bharatnet')) ||
     (searchParams.get('mode') === 'user' && searchParams.get('source') !== 'trenching')
   );
 
@@ -333,6 +332,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
   const rubberBandLineRef = useRef(null);
 
   const toggleMeasurementRuler = useCallback(() => {
+    if (isBharatNetMap) return;
     setIsMeasuring((prev) => {
       const next = !prev;
       if (!next) {
@@ -350,7 +350,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
       }
       return next;
     });
-  }, []);
+  }, [isBharatNetMap]);
 
   const clearMeasurement = useCallback(() => {
     setMeasurePoints([]);
@@ -363,6 +363,14 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
       rubberBandLineRef.current = null;
     }
   }, []);
+
+  // Disable and clean up measurement ruler on BharatNet map
+  useEffect(() => {
+    if (isBharatNetMap && isMeasuring) {
+      setIsMeasuring(false);
+      clearMeasurement();
+    }
+  }, [isBharatNetMap, isMeasuring, clearMeasurement]);
 
   // Live Machines State from FiberForce / Fiber HDD Portal API
   const [liveMachines, setLiveMachines] = useState([]);
@@ -2225,11 +2233,13 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
               </button>
             </div>
           )}
-          <AlignPlanMapButton
-            currentPlanId={executionData?.planId || executionData?.plan_id || ''}
-            onAlignMultiPlans={handleAlignMultiPlans}
-            onAlignPlan={handleAlignPlan}
-          />
+          {!isBharatNetMap && (
+            <AlignPlanMapButton
+              currentPlanId={executionData?.planId || executionData?.plan_id || ''}
+              onAlignMultiPlans={handleAlignMultiPlans}
+              onAlignPlan={handleAlignPlan}
+            />
+          )}
           {!isBharatNetMap && userFilteredMachines.length > 0 && (
             <button
               type="button"
@@ -2263,25 +2273,27 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
                 : `Live Machines (${userFilteredMachines.length})`}
             </button>
           )}
-          <button
-            type="button"
-            className={`gis-map-icon-btn ${isMeasuring ? 'is-active' : ''}`}
-            onClick={toggleMeasurementRuler}
-            title={isMeasuring ? 'Exit measurement ruler' : 'Measure distance on map (Ruler)'}
-            style={{
-              background: isMeasuring ? '#0284c7' : undefined,
-              color: isMeasuring ? '#ffffff' : undefined,
-              borderColor: isMeasuring ? '#38bdf8' : undefined,
-              boxShadow: isMeasuring ? '0 0 12px rgba(56, 189, 248, 0.45)' : undefined,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              fontWeight: 650
-            }}
-          >
-            <LucideRuler size={15} />
-            <span>Ruler</span>
-          </button>
+          {!isBharatNetMap && (
+            <button
+              type="button"
+              className={`gis-map-icon-btn ${isMeasuring ? 'is-active' : ''}`}
+              onClick={toggleMeasurementRuler}
+              title={isMeasuring ? 'Exit measurement ruler' : 'Measure distance on map (Ruler)'}
+              style={{
+                background: isMeasuring ? '#0284c7' : undefined,
+                color: isMeasuring ? '#ffffff' : undefined,
+                borderColor: isMeasuring ? '#38bdf8' : undefined,
+                boxShadow: isMeasuring ? '0 0 12px rgba(56, 189, 248, 0.45)' : undefined,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                fontWeight: 650
+              }}
+            >
+              <LucideRuler size={15} />
+              <span>Ruler</span>
+            </button>
+          )}
           <button type="button" className="gis-map-icon-btn" onClick={fitRouteBounds} title="Fit to trench">
             <Globe size={15} /> Fit route
           </button>
@@ -2291,7 +2303,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
         </div>
 
         {/* Interactive Measurement Ruler Floating HUD */}
-        {isMeasuring && (
+        {!isBharatNetMap && isMeasuring && (
           <div
             style={{
               position: 'absolute',

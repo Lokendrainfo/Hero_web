@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   LucideCompass,
   LucideLoader2,
@@ -23,6 +24,22 @@ export const AlignPlanMapButton = ({
   className = '',
   style = {}
 }) => {
+  const [searchParams] = useSearchParams();
+  const isBharatNet = Boolean(
+    ['true', '1'].includes((searchParams.get('isBharatNetMap') || '').toLowerCase()) ||
+    ['true', '1'].includes((searchParams.get('isBharatNet') || '').toLowerCase()) ||
+    ['true', '1'].includes((searchParams.get('is_bharatnet') || '').toLowerCase()) ||
+    ['true', '1'].includes((searchParams.get('is_bharat_net') || '').toLowerCase()) ||
+    ['true', '1'].includes((searchParams.get('bharatnet') || '').toLowerCase()) ||
+    ['bharatnet', 'td-monitoring', 'td_monitoring'].includes((searchParams.get('source') || '').toLowerCase()) ||
+    (typeof window !== 'undefined' && window.location.pathname.toLowerCase().includes('/bharatnet')) ||
+    (searchParams.get('mode') === 'user' && searchParams.get('source') !== 'trenching')
+  );
+
+  if (isBharatNet) {
+    return null;
+  }
+
   const toast = useToast();
   const showToast = toast?.showToast || ((msg) => console.log('[Toast]', msg));
 
