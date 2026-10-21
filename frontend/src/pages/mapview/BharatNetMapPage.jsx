@@ -135,7 +135,9 @@ export const BharatNetMapPage = () => {
     setLoading(true);
     setError(null);
     try {
-      const params = {};
+      const params = {
+        include_details: 'true',
+      };
       if (selectedDate) params.date = selectedDate;
       if (selectedState && selectedState !== 'ALL') params.circle = selectedState;
 
@@ -157,7 +159,11 @@ export const BharatNetMapPage = () => {
 
   // Available states for filter dropdown
   const availableStates = useMemo(() => {
-    const set = new Set(['Rajasthan', 'UPW', 'Punjab', 'Haryana', 'ALL']);
+    const defaultList = ['ALL', 'Assam', 'Rajasthan', 'Haryana', 'Punjab', 'UPW'];
+    const set = new Set(defaultList);
+    (apiResponse?.available_circles || []).forEach((c) => {
+      if (c) set.add(c);
+    });
     (apiResponse?.results?.circles || []).forEach((c) => {
       if (c.circle_name) set.add(c.circle_name);
     });
@@ -295,14 +301,14 @@ export const BharatNetMapPage = () => {
 
     return {
       state: selectedState || 'Rajasthan',
-      date: selectedDate,
+      date: apiResponse?.date || selectedDate,
       totalRecords: filteredBlocks.length,
       districts: districtsSet.size,
       blocks: blocksSet.size,
       activeUsers: totalUsers,
       lastFetched: lastFetchedTime || 'Just now',
     };
-  }, [filteredBlocks, selectedState, selectedDate, lastFetchedTime]);
+  }, [filteredBlocks, selectedState, selectedDate, apiResponse, lastFetchedTime]);
 
   const renderSortIndicator = (columnKey) => {
     if (sortColumn !== columnKey) {
@@ -579,9 +585,30 @@ export const BharatNetMapPage = () => {
           <div style={{ padding: '40px 20px' }}>
             <EmptyState
               title="No monitoring data available"
-              subtitle={`No trenching or ducting captures reported for ${selectedState} on ${selectedDate}.`}
-              actionLabel="Clear Search"
-              onAction={() => setSearchQuery('')}
+              subtitle={
+                searchQuery
+                  ? `No monitoring records match your search "${searchQuery}".`
+                  : apiResponse?.latest_available_date && apiResponse.latest_available_date !== selectedDate
+                  ? `No captures reported for ${selectedState} on ${selectedDate}. Latest active trenching was recorded on ${apiResponse.latest_available_date}.`
+                  : `No trenching or ducting captures reported for ${selectedState} on ${selectedDate}.`
+              }
+              actionLabel={
+                searchQuery
+                  ? 'Clear Search'
+                  : apiResponse?.latest_available_date && apiResponse.latest_available_date !== selectedDate
+                  ? `View Latest Activity (${apiResponse.latest_available_date})`
+                  : 'Refresh Data'
+              }
+              onAction={() => {
+                if (searchQuery) {
+                  setSearchQuery('');
+                } else if (apiResponse?.latest_available_date && apiResponse.latest_available_date !== selectedDate) {
+                  setSelectedDate(apiResponse.latest_available_date);
+                  setSearchParams({ date: apiResponse.latest_available_date, circle: selectedState });
+                } else {
+                  fetchMonitoringData();
+                }
+              }}
             />
           </div>
         ) : (

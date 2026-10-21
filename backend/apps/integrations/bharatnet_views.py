@@ -12,6 +12,7 @@ from rest_framework.renderers import JSONRenderer
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from apps.common.task_scope import get_user_authorized_tasks
+from apps.common.ttl_cache import ttl_get, ttl_set
 from .bharatnet_auth import BharatNetBasicAuthentication
 from .bharatnet_token import generate_bharatnet_live_token, verify_bharatnet_live_token
 from .ilync_client import IlyncClient
@@ -20,6 +21,23 @@ logger = logging.getLogger(__name__)
 
 # Indian Standard Time (UTC+05:30)
 IST = timezone(timedelta(hours=5, minutes=30))
+
+CIRCLE_ALIASES = {
+    'AS': 'ASSAM',
+    'ASSAM': 'ASSAM',
+    'RJ': 'RAJASTHAN',
+    'RAJASTHAN': 'RAJASTHAN',
+    'HR': 'HARYANA',
+    'HARYANA': 'HARYANA',
+    'PB': 'PUNJAB',
+    'PUNJAB': 'PUNJAB',
+    'UPW': 'UPW',
+    'UP WEST': 'UPW',
+    'UP-WEST': 'UPW',
+    'UP_WEST': 'UPW',
+    'DL': 'DELHI',
+    'DELHI': 'DELHI',
+}
 
 
 def parse_capture_timestamp_to_ist(c_at):
@@ -102,12 +120,22 @@ class BharatNetTDMonitoringView(APIView):
         )
 
     def get(self, request):
-        # 1. Circle & State filter (case-insensitive)
-        circle_param = (
+        import sys
+        now_ist = datetime.now(IST)
+        today_str = now_ist.strftime('%Y-%m-%d')
+
+        # 1. Circle & State filter (case-insensitive with alias resolution)
+        raw_circle = (
             request.query_params.get('circle')
             or request.query_params.get('state')
             or ''
         ).strip()
+
+        circle_param_clean = raw_circle.upper()
+        if circle_param_clean in ('ALL', '*', ''):
+            req_circle_upper = None
+        else:
+            req_circle_upper = CIRCLE_ALIASES.get(circle_param_clean, circle_param_clean)
 
         # Optional district, block, and user filters
         district_param = (request.query_params.get('district') or '').strip().upper()
@@ -115,56 +143,71 @@ class BharatNetTDMonitoringView(APIView):
         user_param = (request.query_params.get('userId') or request.query_params.get('user_id') or '').strip().upper()
 
         # 2. Date parameter validation
-        date_param = (request.query_params.get('date') or '').strip()
+        raw_date_param = (request.query_params.get('date') or '').strip()
         date_from_param = (request.query_params.get('date_from') or '').strip()
         date_to_param = (request.query_params.get('date_to') or '').strip()
 
-        # If date parameter is missing, default to date_from or today's date in IST
-        now_ist = datetime.now(IST)
-        if not date_param:
-            if date_from_param:
-                date_param = date_from_param
-            else:
-                date_param = now_ist.strftime('%Y-%m-%d')
+        is_explicit_date = bool(raw_date_param) and raw_date_param.lower() not in ('latest', 'auto', 'recent', 'none')
+        is_date_range = bool(date_from_param and date_to_param)
 
-        # Validate date format YYYY-MM-DD
-        try:
-            target_date_dt = datetime.strptime(date_param, '%Y-%m-%d')
-        except ValueError:
-            return Response(
-                {
-                    "status": "ERROR",
-                    "message": f"Invalid date format: '{date_param}'. Expected YYYY-MM-DD format."
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Do not return future timestamps if date is strictly in the future
-        if target_date_dt.date() > now_ist.date():
-            return Response(
-                {
-                    "status": "OK",
-                    "message": f"0 blocks reported captures on {date_param}",
-                    "results": {
-                        "circles": []
-                    }
-                },
-                status=status.HTTP_200_OK
-            )
-
-        # 3. Security: Check circle authorization for this service account
-        service_user = request.user
-        if hasattr(service_user, 'is_circle_allowed') and circle_param:
-            if not service_user.is_circle_allowed(circle_param):
+        target_date_dt = None
+        if is_explicit_date:
+            try:
+                target_date_dt = datetime.strptime(raw_date_param, '%Y-%m-%d')
+            except ValueError:
                 return Response(
                     {
                         "status": "ERROR",
-                        "message": f"Access denied for requested circle: '{circle_param}'."
+                        "message": f"Invalid date format: '{raw_date_param}'. Expected YYYY-MM-DD format."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Do not return future timestamps if date is strictly in the future
+            if target_date_dt.date() > now_ist.date():
+                return Response(
+                    {
+                        "status": "OK",
+                        "message": f"0 blocks reported captures on {raw_date_param}",
+                        "results": {
+                            "circles": []
+                        }
+                    },
+                    status=status.HTTP_200_OK
+                )
+
+        # 3. Security: Check circle authorization for this service account
+        service_user = request.user
+        if hasattr(service_user, 'is_circle_allowed') and req_circle_upper:
+            if not service_user.is_circle_allowed(req_circle_upper):
+                return Response(
+                    {
+                        "status": "ERROR",
+                        "message": f"Access denied for requested circle: '{raw_circle}'."
                     },
                     status=status.HTTP_403_FORBIDDEN
                 )
 
-        # 4. Fetch live task hierarchy directly using existing architecture
+        # 4. TTL Cache check for ultra-fast response
+        include_extra = (
+            request.query_params.get('verbose') == 'true'
+            or request.query_params.get('include_details') == 'true'
+        )
+        force_refresh = (
+            request.query_params.get('refresh') == 'true'
+            or request.query_params.get('nocache') == 'true'
+        )
+        is_testing = 'test' in sys.argv or getattr(settings, 'TESTING', False)
+        if is_testing:
+            force_refresh = True
+
+        cache_key = f"bharatnet_td:{req_circle_upper}:{district_param}:{block_param}:{user_param}:{raw_date_param}:{date_from_param}:{date_to_param}:{include_extra}"
+        if not force_refresh:
+            cached_res = ttl_get(cache_key)
+            if cached_res is not None:
+                return Response(cached_res, status=status.HTTP_200_OK)
+
+        # 5. Fetch live task hierarchy directly using existing architecture
         extra_params = {
             'live': 'true',
             'telemetry': 'true'
@@ -189,22 +232,25 @@ class BharatNetTDMonitoringView(APIView):
 
         tasks = scoped_tasks.get('results', []) if isinstance(scoped_tasks, dict) else []
 
-        # 5. Extract depth captures for the requested date and circle
-        req_circle_upper = circle_param.upper() if circle_param else None
-
-        # Data structure: hierarchy[circle_name][district_name][block_name] -> dict of key -> latest_record
-        hierarchy = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+        # 6. Extract depth captures and track available dates per circle
         hero_base_url = getattr(settings, 'HERO_PUBLIC_URL', 'https://hero.pramaanu.co.in').rstrip('/')
+
+        candidate_records = []
+        available_dates_per_circle = defaultdict(set)
+        all_available_dates = set()
 
         for t in tasks:
             loc = t.get('location') or t.get('locationSnapshot') or {}
             task_circle = str(loc.get('circle') or t.get('circle') or loc.get('state') or t.get('state') or 'RAJASTHAN').strip()
+            task_circle_clean = task_circle.upper()
+            task_circle_norm = CIRCLE_ALIASES.get(task_circle_clean, task_circle_clean)
             task_district = str(loc.get('district') or t.get('district') or 'OTHER').strip()
             task_block = str(loc.get('blockName') or loc.get('block') or t.get('block') or 'OTHER').strip()
 
-            # Circle filtering (case-insensitive)
-            if req_circle_upper and task_circle.upper() != req_circle_upper:
-                continue
+            # Circle filtering (case-insensitive with alias resolution)
+            if req_circle_upper:
+                if task_circle_clean != req_circle_upper and task_circle_norm != req_circle_upper:
+                    continue
 
             # District & Block filtering
             if district_param and task_district.upper() != district_param:
@@ -229,7 +275,6 @@ class BharatNetTDMonitoringView(APIView):
             if user_param and op_id.upper() != user_param and op_name.upper() != user_param:
                 continue
 
-            # Each machine or operator key within this block
             group_key = f"{machine_id}_{op_id}"
 
             for s in shots:
@@ -251,94 +296,134 @@ class BharatNetTDMonitoringView(APIView):
                     img = dp.get('depthoMeterImage') if isinstance(dp.get('depthoMeterImage'), dict) else {}
                     c_at_raw = img.get('capturedAt') or dp.get('capturedAt') or dp.get('depthCaptureStartTime')
                     cap_dt = parse_capture_timestamp_to_ist(c_at_raw)
-                    if not cap_dt:
+                    if not cap_dt or cap_dt > now_ist:
                         continue
 
-                    # Do not return future timestamps
-                    if cap_dt > now_ist:
-                        continue
-
-                    # Check capture date matches requested date
                     cap_date_str = cap_dt.strftime('%Y-%m-%d')
-                    if cap_date_str != date_param:
-                        # Also check date range if date_from and date_to are provided
-                        if date_from_param and date_to_param:
-                            if cap_date_str < date_from_param or cap_date_str > date_to_param:
-                                continue
-                        else:
-                            continue
+                    available_dates_per_circle[task_circle_norm].add(cap_date_str)
+                    available_dates_per_circle[task_circle].add(cap_date_str)
+                    all_available_dates.add(cap_date_str)
 
-                    # ISO 8601 timestamp with +05:30
-                    iso_time = cap_dt.strftime('%Y-%m-%dT%H:%M:%S+05:30')
+                    dp_lat = (
+                        dp.get('latitude')
+                        or img.get('latitude')
+                        or s.get('latitude')
+                        or loc.get('latitude')
+                    )
+                    dp_lng = (
+                        dp.get('longitude')
+                        or img.get('longitude')
+                        or s.get('longitude')
+                        or loc.get('longitude')
+                    )
+                    try:
+                        dp_lat = float(dp_lat) if dp_lat is not None else None
+                        dp_lng = float(dp_lng) if dp_lng is not None else None
+                    except (ValueError, TypeError):
+                        dp_lat = None
+                        dp_lng = None
 
-                    # Check if this is later than currently recorded capture for this operator/machine
-                    existing = hierarchy[task_circle][task_district][task_block].get(group_key)
-                    if not existing or cap_dt > existing['_dt']:
-                        secure_token = generate_bharatnet_live_token(
-                            task_id=task_id,
-                            machine_id=machine_id,
-                            user_id=op_id,
-                            date_str=date_param
-                        )
-                        from urllib.parse import quote_plus
-                        dynamic_map_url = (
-                            f"{hero_base_url}/map-view/{task_id}?"
-                            f"userId={quote_plus(str(op_id or ''))}&"
-                            f"userName={quote_plus(str(op_name or ''))}&"
-                            f"block={quote_plus(str(task_block or ''))}&"
-                            f"district={quote_plus(str(task_district or ''))}&"
-                            f"state={quote_plus(str(task_circle or ''))}&"
-                            f"date={quote_plus(str(date_param or ''))}&"
-                            f"mode=user&"
-                            f"isBharatNet=true"
-                            f"{f'&machineId={quote_plus(str(machine_id))}' if machine_id else ''}"
-                        )
+                    if (dp_lat is None or dp_lat == 0) and tr.get('pitDetails'):
+                        pits_list = tr.get('pitDetails')
+                        if isinstance(pits_list, list) and len(pits_list) > 0 and isinstance(pits_list[0], dict):
+                            try:
+                                dp_lat = float(pits_list[0].get('latitude')) if pits_list[0].get('latitude') is not None else None
+                                dp_lng = float(pits_list[0].get('longitude')) if pits_list[0].get('longitude') is not None else None
+                            except (ValueError, TypeError):
+                                pass
 
-                        dp_lat = (
-                            dp.get('latitude')
-                            or img.get('latitude')
-                            or s.get('latitude')
-                            or loc.get('latitude')
-                        )
-                        dp_lng = (
-                            dp.get('longitude')
-                            or img.get('longitude')
-                            or s.get('longitude')
-                            or loc.get('longitude')
-                        )
-                        try:
-                            dp_lat = float(dp_lat) if dp_lat is not None else None
-                            dp_lng = float(dp_lng) if dp_lng is not None else None
-                        except (ValueError, TypeError):
-                            dp_lat = None
-                            dp_lng = None
+                    candidate_records.append({
+                        'circle': task_circle,
+                        'circle_norm': task_circle_norm,
+                        'district': task_district,
+                        'block': task_block,
+                        'group_key': group_key,
+                        'task_id': task_id,
+                        'machine_id': machine_id,
+                        'op_name': op_name,
+                        'op_id': op_id,
+                        'depth_meters': depth_meters,
+                        'cap_dt': cap_dt,
+                        'cap_date_str': cap_date_str,
+                        'latitude': dp_lat,
+                        'longitude': dp_lng,
+                    })
 
-                        if (dp_lat is None or dp_lat == 0) and tr.get('pitDetails'):
-                            pits_list = tr.get('pitDetails')
-                            if isinstance(pits_list, list) and len(pits_list) > 0 and isinstance(pits_list[0], dict):
-                                try:
-                                    dp_lat = float(pits_list[0].get('latitude')) if pits_list[0].get('latitude') is not None else None
-                                    dp_lng = float(pits_list[0].get('longitude')) if pits_list[0].get('longitude') is not None else None
-                                except (ValueError, TypeError):
-                                    pass
+        # 7. Filter captures by target date per circle
+        hierarchy = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
 
-                        hierarchy[task_circle][task_district][task_block][group_key] = {
-                            '_dt': cap_dt,
-                            'url': f"{hero_base_url}/live-view/{secure_token}",
-                            'map_url': dynamic_map_url,
-                            'lastDepthCapturedAt': iso_time,
-                            'userName': op_name,
-                            'userId': op_id,
-                            'machineId': machine_id,
-                            'depthMeters': depth_meters,
-                            'latitude': dp_lat,
-                            'longitude': dp_lng,
-                            'state': task_circle,
-                            'district': task_district,
-                            'block': task_block,
-                        }
+        for rec in candidate_records:
+            c_norm = rec['circle_norm']
+            c_raw = rec['circle']
+            cap_date_str = rec['cap_date_str']
 
-        # 6. Build Schema A output
+            if is_date_range:
+                if cap_date_str < date_from_param or cap_date_str > date_to_param:
+                    continue
+            elif is_explicit_date and target_date_dt.date() != now_ist.date():
+                # Strict historical date match (e.g. 2025-01-01, 2026-10-02, 2026-10-01)
+                if cap_date_str != raw_date_param:
+                    continue
+            else:
+                # Either no date passed, or date passed is today (or date=latest)
+                # Find effective date for this circle
+                c_dates = available_dates_per_circle.get(c_norm) or available_dates_per_circle.get(c_raw) or set()
+                if today_str in c_dates:
+                    effective_circle_date = today_str
+                elif c_dates:
+                    effective_circle_date = max(c_dates)
+                else:
+                    effective_circle_date = today_str
+
+                if cap_date_str != effective_circle_date:
+                    continue
+
+            task_circle = rec['circle']
+            task_district = rec['district']
+            task_block = rec['block']
+            group_key = rec['group_key']
+            cap_dt = rec['cap_dt']
+
+            existing = hierarchy[task_circle][task_district][task_block].get(group_key)
+            if not existing or cap_dt > existing['_dt']:
+                iso_time = cap_dt.strftime('%Y-%m-%dT%H:%M:%S+05:30')
+                secure_token = generate_bharatnet_live_token(
+                    task_id=rec['task_id'],
+                    machine_id=rec['machine_id'],
+                    user_id=rec['op_id'],
+                    date_str=cap_date_str
+                )
+                from urllib.parse import quote_plus
+                dynamic_map_url = (
+                    f"{hero_base_url}/map-view/{rec['task_id']}?"
+                    f"userId={quote_plus(str(rec['op_id'] or ''))}&"
+                    f"userName={quote_plus(str(rec['op_name'] or ''))}&"
+                    f"block={quote_plus(str(task_block or ''))}&"
+                    f"district={quote_plus(str(task_district or ''))}&"
+                    f"state={quote_plus(str(task_circle or ''))}&"
+                    f"date={quote_plus(str(cap_date_str or ''))}&"
+                    f"mode=user&"
+                    f"isBharatNet=true"
+                    f"{f'&machineId={quote_plus(str(rec['machine_id']))}' if rec['machine_id'] else ''}"
+                )
+
+                hierarchy[task_circle][task_district][task_block][group_key] = {
+                    '_dt': cap_dt,
+                    'url': f"{hero_base_url}/live-view/{secure_token}",
+                    'map_url': dynamic_map_url,
+                    'lastDepthCapturedAt': iso_time,
+                    'userName': rec['op_name'],
+                    'userId': rec['op_id'],
+                    'machineId': rec['machine_id'],
+                    'depthMeters': rec['depth_meters'],
+                    'latitude': rec['latitude'],
+                    'longitude': rec['longitude'],
+                    'state': task_circle,
+                    'district': task_district,
+                    'block': task_block,
+                }
+
+        # 8. Build Schema A output
         circles_list = []
         total_blocks_count = 0
 
@@ -351,27 +436,22 @@ class BharatNetTDMonitoringView(APIView):
                     if not users_dict:
                         continue
                     total_blocks_count += 1
-                    # Extract latest record per operator/machine, sorted by latest capture
                     sorted_records = sorted(
                         users_dict.values(),
                         key=lambda x: x['_dt'],
                         reverse=True
                     )
                     user_urls = []
-                    include_extra = (
-                        request.query_params.get('verbose') == 'true'
-                        or request.query_params.get('include_details') == 'true'
-                    )
-                    for rec in sorted_records:
+                    for r in sorted_records:
                         if include_extra:
-                            clean_rec = dict(rec)
+                            clean_rec = dict(r)
                             clean_rec.pop('_dt', None)
                         else:
                             clean_rec = {
-                                'userName': rec.get('userName'),
-                                'lastDepthCapturedAt': rec.get('lastDepthCapturedAt'),
-                                'url': rec.get('url'),
-                                'map_url': rec.get('map_url'),
+                                'userName': r.get('userName'),
+                                'lastDepthCapturedAt': r.get('lastDepthCapturedAt'),
+                                'url': r.get('url'),
+                                'map_url': r.get('map_url'),
                             }
                         user_urls.append(clean_rec)
 
@@ -392,16 +472,51 @@ class BharatNetTDMonitoringView(APIView):
                     "districts": districts_list
                 })
 
-        return Response(
-            {
-                "status": "OK",
-                "message": f"{total_blocks_count} blocks reported captures on {date_param}",
-                "results": {
-                    "circles": circles_list
-                }
-            },
-            status=status.HTTP_200_OK
-        )
+        # 9. Format response metadata
+        if req_circle_upper and (req_circle_upper in available_dates_per_circle):
+            latest_scope_date = max(available_dates_per_circle[req_circle_upper])
+        elif all_available_dates:
+            latest_scope_date = max(all_available_dates)
+        else:
+            latest_scope_date = today_str
+
+        if is_date_range:
+            effective_date_str = f"{date_from_param} to {date_to_param}"
+        elif is_explicit_date and target_date_dt.date() != now_ist.date():
+            effective_date_str = raw_date_param
+        else:
+            effective_date_str = latest_scope_date
+
+        if total_blocks_count == 0 and is_explicit_date and target_date_dt.date() != now_ist.date():
+            message_str = f"0 blocks reported captures on {raw_date_param}"
+        else:
+            message_str = f"{total_blocks_count} blocks reported captures on {effective_date_str}"
+
+        all_circles_set = set()
+        for k in available_dates_per_circle.keys():
+            all_circles_set.add(k)
+        for t in tasks:
+            loc = t.get('location') or t.get('locationSnapshot') or {}
+            c_val = loc.get('circle') or t.get('circle') or loc.get('state') or t.get('state')
+            if c_val:
+                all_circles_set.add(str(c_val).strip())
+
+        response_payload = {
+            "status": "OK",
+            "message": message_str,
+            "date": effective_date_str,
+            "latest_available_date": latest_scope_date,
+            "available_circles": sorted(list(all_circles_set)),
+            "results": {
+                "circles": circles_list
+            }
+        }
+
+        if not force_refresh:
+            ttl_set(cache_key, response_payload, ttl_seconds=60)
+
+        return Response(response_payload, status=status.HTTP_200_OK)
+
 
 
 class BharatNetLiveViewAPIView(APIView):

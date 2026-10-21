@@ -44,7 +44,7 @@ export const HddShotReport = ({ selectedVendorId }) => {
     effective_today: '',
     daily_summary: [],
     pagination: { page: 1, page_size: 25, total_records: 0, total_pages: 1 },
-    summary: { total_shots: 0, total_meters: 0, total_machines: 0, today_shots_count: 0, today_meters: 0, date_range: {} },
+    summary: { total_shots: 0, total_meters: 0, total_machines: 0, today_shots_count: 0, today_meters: 0, today_wip_count: 0, total_wip_count: 0, date_range: {} },
     filter_options: { machines: [], vendors: [], circles: [], districts: [], blocks: [] }
   });
   const [error, setError] = useState(null);
@@ -275,7 +275,7 @@ export const HddShotReport = ({ selectedVendorId }) => {
             {summary.today_meters ? summary.today_meters.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 2 }) : (summary.total_meters?.toLocaleString() ?? 0)} <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>m</span>
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-            {summary.today_shots_count ?? summary.total_shots} shots completed today
+            {summary.today_shots_count ?? summary.total_shots} shots today{summary.today_wip_count ? ` (${summary.today_wip_count} WIP)` : ''}
           </div>
         </div>
 
@@ -417,7 +417,7 @@ export const HddShotReport = ({ selectedVendorId }) => {
             className="form-input"
             value={startDate}
             max={endDate || undefined}
-            onClick={(e) => { try { e.target.showPicker?.(); } catch (_) {} }}
+            onClick={(e) => { try { e.target.showPicker?.(); } catch (_) { } }}
             onChange={(e) => {
               const val = e.target.value;
               setStartDate(val);
@@ -450,7 +450,7 @@ export const HddShotReport = ({ selectedVendorId }) => {
             className="form-input"
             value={endDate}
             min={startDate || undefined}
-            onClick={(e) => { try { e.target.showPicker?.(); } catch (_) {} }}
+            onClick={(e) => { try { e.target.showPicker?.(); } catch (_) { } }}
             onChange={(e) => {
               const val = e.target.value;
               setEndDate(val);
@@ -827,9 +827,7 @@ export const HddShotReport = ({ selectedVendorId }) => {
 
                       {/* End Time */}
                       <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
-                        {shot.end_time && !['WIP', '—', '-', 'None', 'null', '00:00:00'].includes(String(shot.end_time).trim()) ? (
-                          <span style={{ color: 'var(--text-muted)' }}>{shot.end_time}</span>
-                        ) : (
+                        {shot.is_wip || String(shot.end_time || '').trim().toUpperCase() === 'WIP' ? (
                           <span style={{
                             background: 'rgba(217, 119, 6, 0.12)',
                             color: '#d97706',
@@ -841,6 +839,8 @@ export const HddShotReport = ({ selectedVendorId }) => {
                           }}>
                             WIP
                           </span>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)' }}>{shot.end_time || '—'}</span>
                         )}
                       </td>
 

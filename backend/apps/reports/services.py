@@ -17,7 +17,7 @@ from apps.machines.hdd_shots import (
 
 logger = logging.getLogger(__name__)
 
-CACHE_KEY_SHOTS = "hero_reports_hdd_shots_dataset_v5"
+CACHE_KEY_SHOTS = "hero_reports_hdd_shots_dataset_v6"
 CACHE_TTL_SHOTS = 180  # 3 minutes cache for super-fast retrieval
 
 
@@ -158,57 +158,151 @@ def build_all_hdd_shot_records(force_refresh=False):
                 'name': vendor_name
             }
 
-        shots = tr.get('hddShot') if isinstance(tr.get('hddShot'), list) else []
+        shots = tr.get('hddShot') or fd.get('hddShot') or []
+        if not isinstance(shots, list):
+            shots = []
         prev_cum = None
 
         for idx, s in enumerate(shots):
             if not isinstance(s, dict):
                 continue
 
-            # Enforce completed shot validation rules
+            # Check if shot is fully completed
             is_valid, start_dt, end_dt = is_shot_completed(s)
-            if not is_valid:
-                continue
 
-            shot_date = start_dt.strftime('%Y-%m-%d')
-            meters, prev_cum = extract_shot_meters(s, prev_cum)
-            meters = round(float(meters), 2)
+            if is_valid:
+                # 1. COMPLETED SHOT
+                shot_date = start_dt.strftime('%Y-%m-%d')
+                meters, prev_cum = extract_shot_meters(s, prev_cum)
+                meters = round(float(meters), 2)
 
-            shot_serial = str(s.get('hddShotSerialNo') or f"HDD-{idx+1:03d}").strip()
-            shot_name = str(s.get('hddShotName') or '').strip()
-            start_iso = start_dt.strftime('%Y-%m-%dT%H:%M:%S')
-            end_iso = end_dt.strftime('%Y-%m-%dT%H:%M:%S')
+                shot_serial = str(s.get('hddShotSerialNo') or f"HDD-{idx+1:03d}").strip()
+                shot_name = str(s.get('hddShotName') or '').strip()
+                start_iso = start_dt.strftime('%Y-%m-%dT%H:%M:%S')
+                end_iso = end_dt.strftime('%Y-%m-%dT%H:%M:%S')
 
-            # Deduplication key to prevent duplicates
-            dedup_key = (canonical_chassis, shot_serial, shot_name, start_iso, end_iso, meters)
-            if dedup_key in seen_dedup_keys:
-                continue
-            seen_dedup_keys.add(dedup_key)
+                # Deduplication key to prevent duplicates
+                dedup_key = (canonical_chassis, shot_serial, shot_name, start_iso, end_iso, meters)
+                if dedup_key in seen_dedup_keys:
+                    continue
+                seen_dedup_keys.add(dedup_key)
 
-            shot_id = shot_name or s.get('id') or s.get('hddShotId') or f"{canonical_chassis}_{shot_serial}"
-            start_display = format_time_display(start_iso)
-            end_display = format_time_display(end_iso)
+                shot_id = shot_name or s.get('id') or s.get('hddShotId') or f"{canonical_chassis}_{shot_serial}"
+                start_display = format_time_display(start_iso)
+                end_display = format_time_display(end_iso)
 
-            raw_shots.append({
-                'date': shot_date,
-                'circle': circle,
-                'district': district,
-                'block': block,
-                'machine_id': machine_code,
-                'machine_pk': machine_pk,
-                'machine_name': machine_name,
-                'chassis_number': canonical_chassis,
-                'shot_id': shot_id,
-                'shot_serial': shot_serial,
-                'start_time': start_display,
-                'start_time_raw': start_iso,
-                'end_time': end_display,
-                'end_time_raw': end_iso,
-                'shot_meters': meters,
-                'vendor_id': vendor_id,
-                'vendor_name': vendor_name,
-                '_task_id': task_id,
-            })
+                raw_shots.append({
+                    'date': shot_date,
+                    'circle': circle,
+                    'district': district,
+                    'block': block,
+                    'machine_id': machine_code,
+                    'machine_pk': machine_pk,
+                    'machine_name': machine_name,
+                    'chassis_number': canonical_chassis,
+                    'shot_id': shot_id,
+                    'shot_serial': shot_serial,
+                    'start_time': start_display,
+                    'start_time_raw': start_iso,
+                    'end_time': end_display,
+                    'end_time_raw': end_iso,
+                    'shot_meters': meters,
+                    'is_wip': False,
+                    'status': 'COMPLETED',
+                    'vendor_id': vendor_id,
+                    'vendor_name': vendor_name,
+                    '_task_id': task_id,
+                })
+            else:
+                # 2. WORK-IN-PROGRESS (WIP) ONGOING SHOT
+                start_raw = (
+                    s.get('hddStartTime')
+                    or s.get('startTime')
+                    or s.get('start_time')
+                    or s.get('ductingStartTime')
+                    or s.get('time')
+                )
+                dps = s.get('depthCapture') or s.get('depthReadings') or []
+                if not start_raw and isinstance(dps, list) and len(dps) > 0 and isinstance(dps[0], dict):
+                    start_raw = dps[0].get('capturedAt') or dps[0].get('depthCaptureStartTime') or dps[0].get('createdAt')
+
+                status_raw = str(
+                    s.get('taskStage')
+                    or s.get('taskHddStage')
+                    or s.get('status')
+                    or s.get('shotStatus')
+                    or s.get('executionStatus')
+                    or s.get('state')
+                    or ''
+                ).strip().upper()
+                is_explicit_wip = status_raw in ('IN_PROGRESS', 'INPROGRESS', 'WIP', 'PENDING', 'RUNNING', 'STARTED', 'PARTIAL')
+
+                # Filter out unstarted/empty stubs
+                has_activity = (
+                    is_explicit_wip
+                    or bool(start_raw)
+                    or (isinstance(dps, list) and len(dps) > 0)
+                    or bool(s.get('startHddShotImage'))
+                    or bool(s.get('pilotHole'))
+                    or bool(s.get('tentativeShotLength'))
+                    or bool(s.get('lengthMeters'))
+                )
+                if not has_activity:
+                    continue
+
+                start_dt = parse_shot_datetime(start_raw) if start_raw else None
+                if not start_dt:
+                    extracted_date = extract_shot_date(s, t)
+                    if extracted_date:
+                        start_dt = parse_shot_datetime(f"{extracted_date} 00:00:00")
+                    elif t.get('createdAt'):
+                        start_dt = parse_shot_datetime(t.get('createdAt'))
+                    else:
+                        start_dt = datetime.now()
+
+                shot_date = start_dt.strftime('%Y-%m-%d')
+                meters, prev_cum = extract_shot_meters(s, prev_cum)
+                if meters <= 0:
+                    try:
+                        meters = float(s.get('tentativeShotLength') or s.get('lengthMeters') or s.get('shotLength') or 0.0)
+                    except (ValueError, TypeError):
+                        meters = 0.0
+                meters = round(float(meters), 2)
+
+                shot_serial = str(s.get('hddShotSerialNo') or f"HDD-{idx+1:03d}").strip()
+                shot_name = str(s.get('hddShotName') or '').strip()
+                start_iso = start_dt.strftime('%Y-%m-%dT%H:%M:%S')
+
+                dedup_key = (canonical_chassis, shot_serial, shot_name, start_iso, 'WIP', meters)
+                if dedup_key in seen_dedup_keys:
+                    continue
+                seen_dedup_keys.add(dedup_key)
+
+                shot_id = shot_name or s.get('id') or s.get('hddShotId') or f"{canonical_chassis}_{shot_serial}"
+                start_display = format_time_display(start_iso) if start_raw else "—"
+
+                raw_shots.append({
+                    'date': shot_date,
+                    'circle': circle,
+                    'district': district,
+                    'block': block,
+                    'machine_id': machine_code,
+                    'machine_pk': machine_pk,
+                    'machine_name': machine_name,
+                    'chassis_number': canonical_chassis,
+                    'shot_id': shot_id,
+                    'shot_serial': shot_serial,
+                    'start_time': start_display,
+                    'start_time_raw': start_iso,
+                    'end_time': 'WIP',
+                    'end_time_raw': '',
+                    'shot_meters': meters,
+                    'is_wip': True,
+                    'status': 'WIP',
+                    'vendor_id': vendor_id,
+                    'vendor_name': vendor_name,
+                    '_task_id': task_id,
+                })
 
     # Group by (machine, date) to compute daily totals
     daily_stats = defaultdict(lambda: {'count': 0, 'meters': 0.0, 'machine_info': {}})
@@ -486,6 +580,8 @@ def get_hdd_shot_report_data(
             'total_machines': machines_matched,
             'today_shots_count': len(today_records),
             'today_meters': round(sum(s['shot_meters'] for s in today_records), 2),
+            'today_wip_count': sum(1 for s in today_records if s.get('is_wip')),
+            'total_wip_count': sum(1 for s in filtered if s.get('is_wip')),
             'total_historical_shots': len(all_matching_non_date),
             'date_range': {
                 'start': norm_start or (min((s['date'] for s in filtered), default=None)),

@@ -2141,7 +2141,11 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
               {executionData.isBlockMap ? (
                 <span>
                   <strong>Block: {executionData.block || '—'}</strong> · {executionData.district || '—'}, {executionData.state || '—'}
-                  {executionData.usersList?.length ? ` · ${executionData.usersList.length} ${executionData.usersList.length === 1 ? 'user' : 'users'}` : ''}
+                  {!isBharatNetMap && executionData.usersList?.length ? ` · ${executionData.usersList.length} ${executionData.usersList.length === 1 ? 'user' : 'users'}` : ''}
+                </span>
+              ) : isBharatNetMap ? (
+                <span>
+                  <strong>Block: {executionData.block || '—'}</strong> · {executionData.district || executionData.state || '—'}
                 </span>
               ) : (
                 <span>

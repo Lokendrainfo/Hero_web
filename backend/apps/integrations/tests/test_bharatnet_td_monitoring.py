@@ -505,3 +505,110 @@ class BharatNetTDMonitoringTestCase(TestCase):
         self.assertEqual(res_old.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(res_new.data.get('status'), res_old.data.get('status'))
 
+    @patch('apps.integrations.bharatnet_views.get_user_authorized_tasks')
+    def test_23_circle_alias_as_maps_to_assam(self, mock_tasks_fn):
+        """Verify circle alias AS maps correctly to ASSAM circle."""
+        assam_task = {
+            'id': 'task_as_01',
+            'location': {'circle': 'ASSAM', 'district': 'NALBARI', 'blockName': 'TIHU'},
+            'machineId': 'HDD-001',
+            'assigneeName': 'Sayem Ali',
+            'assigneeUserId': 'OP-001',
+            'taskExecution': {
+                'fieldData': {
+                    'trenching': {
+                        'trenchingMachineDetails': {'machineId': 'HDD-001'},
+                        'operatorDetails': {'name': 'Sayem Ali', 'id': 'OP-001'},
+                        'hddShot': [{
+                            'depthCapture': [{
+                                'depth': 1.69,
+                                'depthoMeterImage': {
+                                    'capturedAt': int(datetime(2026, 10, 16, 11, 0, 0, tzinfo=IST).timestamp() * 1000)
+                                }
+                            }]
+                        }]
+                    }
+                }
+            }
+        }
+        mock_tasks_fn.return_value = {'results': [assam_task]}
+        self.client.credentials(HTTP_AUTHORIZATION=self.basic_auth_header)
+
+        # Query using alias AS
+        res = self.client.get('/api/v1/bharatnet/td-monitoring/?circle=AS&date=2026-10-16')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data['results']['circles']), 1)
+        self.assertEqual(res.data['results']['circles'][0]['circle_name'], 'ASSAM')
+
+    @patch('apps.integrations.bharatnet_views.get_user_authorized_tasks')
+    def test_24_circle_all_returns_all_circles(self, mock_tasks_fn):
+        """Verify circle=ALL does not filter out circles and returns all available circles."""
+        multi_tasks = list(self.mock_tasks) + [{
+            'id': 'task_as_01',
+            'location': {'circle': 'ASSAM', 'district': 'NALBARI', 'blockName': 'TIHU'},
+            'machineId': 'HDD-001',
+            'assigneeName': 'Sayem Ali',
+            'assigneeUserId': 'OP-001',
+            'taskExecution': {
+                'fieldData': {
+                    'trenching': {
+                        'trenchingMachineDetails': {'machineId': 'HDD-001'},
+                        'operatorDetails': {'name': 'Sayem Ali', 'id': 'OP-001'},
+                        'hddShot': [{
+                            'depthCapture': [{
+                                'depth': 1.69,
+                                'depthoMeterImage': {
+                                    'capturedAt': int(datetime(2026, 10, 2, 11, 0, 0, tzinfo=IST).timestamp() * 1000)
+                                }
+                            }]
+                        }]
+                    }
+                }
+            }
+        }]
+        mock_tasks_fn.return_value = {'results': multi_tasks}
+        self.client.credentials(HTTP_AUTHORIZATION=self.basic_auth_header)
+
+        res = self.client.get('/api/v1/bharatnet/td-monitoring/?circle=ALL&date=2026-10-02')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        circle_names = [c['circle_name'] for c in res.data['results']['circles']]
+        self.assertIn('UPW', circle_names)
+        self.assertIn('ASSAM', circle_names)
+
+    @patch('apps.integrations.bharatnet_views.get_user_authorized_tasks')
+    def test_25_assam_circle_latest_date_fallback(self, mock_tasks_fn):
+        """Verify circle=ASSAM without date or with no captures today automatically falls back to latest activity."""
+        assam_task = {
+            'id': 'task_as_01',
+            'location': {'circle': 'ASSAM', 'district': 'NALBARI', 'blockName': 'TIHU'},
+            'machineId': 'HDD-001',
+            'assigneeName': 'Sayem Ali',
+            'assigneeUserId': 'OP-001',
+            'taskExecution': {
+                'fieldData': {
+                    'trenching': {
+                        'trenchingMachineDetails': {'machineId': 'HDD-001'},
+                        'operatorDetails': {'name': 'Sayem Ali', 'id': 'OP-001'},
+                        'hddShot': [{
+                            'depthCapture': [{
+                                'depth': 1.73,
+                                'depthoMeterImage': {
+                                    'capturedAt': int(datetime(2026, 10, 16, 14, 0, 0, tzinfo=IST).timestamp() * 1000)
+                                }
+                            }]
+                        }]
+                    }
+                }
+            }
+        }
+        mock_tasks_fn.return_value = {'results': [assam_task]}
+        self.client.credentials(HTTP_AUTHORIZATION=self.basic_auth_header)
+
+        # Call without date parameter
+        res = self.client.get('/api/v1/bharatnet/td-monitoring/?circle=ASSAM')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data['results']['circles']), 1)
+        self.assertEqual(res.data['results']['circles'][0]['circle_name'], 'ASSAM')
+        self.assertEqual(res.data['date'], '2026-10-16')
+        self.assertEqual(res.data['latest_available_date'], '2026-10-16')
+

@@ -35,7 +35,9 @@ def generate_hdd_shot_excel_report(shots, daily_summary, filters_applied=None, t
         if not val:
             return '—'
         s_val = str(val).strip()
-        if not s_val or s_val.lower() in ('none', 'null', '-', '—', '--', 'n/a', 'nan', '00:00:00', 'undefined', 'wip'):
+        if s_val.upper() == 'WIP':
+            return 'WIP'
+        if not s_val or s_val.lower() in ('none', 'null', '-', '—', '--', 'n/a', 'nan', '00:00:00', 'undefined'):
             return '—'
         return s_val
 

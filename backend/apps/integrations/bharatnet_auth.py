@@ -26,8 +26,14 @@ class BharatNetServiceUser:
         allowed_str = getattr(settings, 'BHARATNET_ALLOWED_CIRCLES', '*') or '*'
         if allowed_str == '*' or not allowed_str.strip():
             return True
+        c_upper = str(circle_name or '').strip().upper()
+        if c_upper in ('ALL', '*', ''):
+            return True
         allowed_circles = [c.strip().upper() for c in allowed_str.split(',') if c.strip()]
-        return str(circle_name or '').strip().upper() in allowed_circles
+        from .bharatnet_views import CIRCLE_ALIASES
+        c_norm = CIRCLE_ALIASES.get(c_upper, c_upper)
+        return c_upper in allowed_circles or c_norm in allowed_circles
+
 
 
 class BharatNetBasicAuthentication(BaseAuthentication):
