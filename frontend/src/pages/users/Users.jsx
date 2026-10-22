@@ -663,7 +663,6 @@ export const Users = () => {
                       <button
                         onClick={() => handleStatusToggle(u)}
                         style={{
-                          border: 'none',
                           background: u.is_active ? '#ecfdf5' : '#fef2f2',
                           color: u.is_active ? '#047857' : '#dc2626',
                           padding: '3px 9px',

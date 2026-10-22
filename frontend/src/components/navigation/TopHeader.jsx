@@ -22,6 +22,7 @@ const ROUTE_TITLES = {
   '/expense-subcategories': 'Subcategories',
   '/fuel': 'Fuel Logs',
   '/refuel': 'Refuel',
+  '/reports/execution': 'Execution Report',
   '/reports': 'Reports',
   '/maintenance': 'Maintenance',
   '/breakdown': 'Breakdowns',

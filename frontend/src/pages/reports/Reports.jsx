@@ -6,7 +6,6 @@ import { useAuth } from '../../hooks/useAuth';
 import { PageHeader } from '../../components/common/PageHeader';
 import { BarChart } from '../../components/common/BarChart';
 import { LucideDownload } from 'lucide-react';
-import { HddShotReport } from './HddShotReport';
 
 const downloadCsv = (filename, rows) => {
   const csv = rows.map((row) => row.map((cell) => {
@@ -110,7 +109,7 @@ export const Reports = () => {
     <div className="screen-container">
       <PageHeader
         title="Reports"
-        subtitle="Fleet status, attendance, fuel consumption, and HDD shot report"
+        subtitle="Fleet status, attendance, and fuel consumption"
         actions={
           <>
             <button type="button" className="btn-secondary" onClick={exportMachines}>
@@ -190,8 +189,6 @@ export const Reports = () => {
         </div>
         <BarChart items={fuelByMachine} />
       </section>
-
-      <HddShotReport selectedVendorId={selectedVendorId} />
     </div>
   );
 };

@@ -7,7 +7,7 @@ import {
   LucideDollarSign, LucideFuel, LucideRepeat, LucideFileText, LucideWrench, LucideAlertOctagon, LucideAlertTriangle,
   LucidePackage, LucideBuilding, LucideUserCheck, LucideShieldCheck, LucideBell, LucideSettings, LucideX, LucideGlobe,
   LucideLayers, LucideTag, LucideLineChart, LucideArrowLeftRight, LucideBookOpen, LucideChevronDown, LucideCompass,
-  LucideNetwork, LucideFileCheck
+  LucideNetwork, LucideFileCheck, LucideFileSpreadsheet
 } from 'lucide-react';
 
 export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) => {
@@ -77,6 +77,12 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
         { label: 'Expenses', path: '/expenses', icon: LucideDollarSign, perm: 'expenses.view' },
         { label: 'Fuel Logs', path: '/fuel', icon: LucideFuel, perm: 'fuel.view' },
         { label: 'Reports', path: '/reports', icon: LucideFileText, perm: 'reports.view' }
+      ]
+    },
+    {
+      title: 'Reports',
+      items: [
+        { label: 'Execution Report', path: '/reports/execution', icon: LucideFileSpreadsheet, perm: 'reports.view' }
       ]
     },
     {

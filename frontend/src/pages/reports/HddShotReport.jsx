@@ -19,7 +19,7 @@ import {
   Clock
 } from 'lucide-react';
 
-export const HddShotReport = ({ selectedVendorId }) => {
+export const HddShotReport = ({ selectedVendorId, isStandalone = false }) => {
   // Filter states
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -206,12 +206,14 @@ export const HddShotReport = ({ selectedVendorId }) => {
   }, [filter_options.blocks]);
 
   return (
-    <section className="panel" id="hdd-shot-report" style={{ marginTop: '1.5rem' }}>
+    <section className="panel" id="hdd-shot-report" style={{ marginTop: isStandalone ? '0.75rem' : '1.5rem' }}>
       {/* Header */}
       <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '1rem' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <h2 className="panel-title" style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0 }}>HDD Shot Report</h2>
+            <h2 className="panel-title" style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0 }}>
+              {isStandalone ? 'HDD Shot Records' : 'HDD Shot Report'}
+            </h2>
             <span style={{ fontSize: '0.75rem', fontWeight: 600, padding: '3px 8px', borderRadius: '12px', background: 'rgba(37, 99, 235, 0.1)', color: '#2563eb' }}>
               Machine & Shot-Wise
             </span>

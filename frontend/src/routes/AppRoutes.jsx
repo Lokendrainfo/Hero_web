@@ -43,6 +43,7 @@ const ExpenseSubcategoryMaster = lazyComponent(() => import('../pages/expenses/E
 const FuelDashboard = lazyComponent(() => import('../pages/fuel/FuelDashboard'), 'FuelDashboard');
 const Refuel = lazyComponent(() => import('../pages/refuel/Refuel'), 'Refuel');
 const Reports = lazyComponent(() => import('../pages/reports/Reports'), 'Reports');
+const ExecutionReportPage = lazyComponent(() => import('../pages/reports/ExecutionReportPage'), 'ExecutionReportPage');
 const Maintenance = lazyComponent(() => import('../pages/maintenance/Maintenance'), 'Maintenance');
 const Breakdowns = lazyComponent(() => import('../pages/breakdown/Breakdowns'), 'Breakdowns');
 const Alerts = lazyComponent(() => import('../pages/alerts/Alerts'), 'Alerts');
@@ -130,6 +131,9 @@ export const AppRoutes = () => {
             <Route path="/fuel" element={<FuelDashboard />} />
             <Route path="/refuel" element={<Refuel />} />
             <Route path="/reports" element={<Reports />} />
+            <Route path="/reports/execution" element={<ExecutionReportPage />} />
+            <Route path="/reports/hdd-shots" element={<Navigate to="/reports/execution" replace />} />
+            <Route path="/execution-report" element={<Navigate to="/reports/execution" replace />} />
             <Route path="/maintenance" element={<Maintenance />} />
             <Route path="/breakdown" element={<Breakdowns />} />
             <Route path="/alerts" element={<Alerts />} />
