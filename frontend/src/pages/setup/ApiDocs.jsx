@@ -416,15 +416,10 @@ const ENDPOINTS_CATALOG = [
                         block_name: 'BAH',
                         user_urls: [
                           {
-                            url: 'https://hero.pramaanu.co.in/live-view/eyJ0aWQiOiI2YWI1...secure-token',
-                            lastDepthCapturedAt: '2026-10-02T14:32:07+05:30',
                             userName: 'Ram Kumar',
-                            userId: 'OP-4471',
-                            machineId: 'HDD-221',
-                            depthMeters: 1.65,
-                            state: 'UPW',
-                            district: 'AGRA',
-                            block: 'BAH'
+                            lastDepthCapturedAt: '2026-10-02T14:32:07+05:30',
+                            url: 'https://hero.pramaanu.co.in/live-view/eyJ0aWQiOiI2YWI1...secure-token',
+                            map_url: 'https://hero.pramaanu.co.in/map-view/task_upw_001?userName=Ram+Kumar&block=BAH&district=AGRA&state=UPW&date=2026-10-02&mode=user&isBharatNet=true'
                           }
                         ]
                       }

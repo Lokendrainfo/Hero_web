@@ -145,8 +145,10 @@ class BharatNetTDMonitoringTestCase(TestCase):
             }
         ]
 
-    def test_01_valid_basic_authentication(self):
+    @patch('apps.integrations.bharatnet_views.get_user_authorized_tasks')
+    def test_01_valid_basic_authentication(self, mock_tasks_fn):
         """Test valid Basic authentication succeeds."""
+        mock_tasks_fn.return_value = {'results': self.mock_tasks}
         self.client.credentials(HTTP_AUTHORIZATION=self.basic_auth_header)
         res = self.client.get('/api/v1/bharatnet/td-monitoring/?circle=UPW&date=2026-10-02')
         self.assertEqual(res.status_code, status.HTTP_200_OK)
@@ -267,6 +269,8 @@ class BharatNetTDMonitoringTestCase(TestCase):
         self.assertNotIn('machineId', ram)
         self.assertNotIn('depthMeters', ram)
         self.assertNotIn('userId', ram)
+        self.assertNotIn('userId=', ram.get('map_url', ''))
+        self.assertNotIn('machineId=', ram.get('map_url', ''))
 
     @patch('apps.integrations.bharatnet_views.get_user_authorized_tasks')
     def test_09_ist_date_boundaries(self, mock_tasks_fn):
