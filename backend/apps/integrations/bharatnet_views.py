@@ -394,6 +394,8 @@ class BharatNetTDMonitoringView(APIView):
                     date_str=cap_date_str
                 )
                 from urllib.parse import quote_plus
+                mid = rec.get('machine_id')
+                mach_param = f"&machineId={quote_plus(str(mid))}" if mid else ""
                 dynamic_map_url = (
                     f"{hero_base_url}/map-view/{rec['task_id']}?"
                     f"userId={quote_plus(str(rec['op_id'] or ''))}&"
@@ -404,7 +406,7 @@ class BharatNetTDMonitoringView(APIView):
                     f"date={quote_plus(str(cap_date_str or ''))}&"
                     f"mode=user&"
                     f"isBharatNet=true"
-                    f"{f'&machineId={quote_plus(str(rec['machine_id']))}' if rec['machine_id'] else ''}"
+                    f"{mach_param}"
                 )
 
                 hierarchy[task_circle][task_district][task_block][group_key] = {
