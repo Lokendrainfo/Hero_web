@@ -257,7 +257,7 @@ def _quick_commissioned_chassis(assigned_chassis, ff_machines=None):
 
 def _compute_machine_hdd_output(user=None, request=None, req_vendor=None, date_param=None):
     from apps.common.ttl_cache import ttl_get, ttl_set
-    from apps.common.task_scope import get_user_authorized_tasks, parse_iso_epoch
+    from apps.reports.services import build_all_hdd_shot_records
     from apps.vendors.models import Vendor
     from collections import defaultdict
     from datetime import datetime
@@ -267,34 +267,13 @@ def _compute_machine_hdd_output(user=None, request=None, req_vendor=None, date_p
         target_date = datetime.now().strftime('%Y-%m-%d')
     target_month = target_date[:7]
 
-    cache_key = f"dashboard:machine_output_v3:{getattr(user, 'id', 'anon')}:{req_vendor or 'all'}:{target_date}"
+    cache_key = f"dashboard:machine_output_v5:{getattr(user, 'id', 'anon')}:{req_vendor or 'all'}:{target_date}"
     cached = ttl_get(cache_key)
     if cached is not None:
         return cached
 
-    extra_params = {}
-    if req_vendor and str(req_vendor).strip() and str(req_vendor).lower() != 'all':
-        extra_params['vendor_id'] = str(req_vendor).strip()
-
-    try:
-        scoped_res = get_user_authorized_tasks(
-            user=user,
-            request=request,
-            task_type='FIBER_TRENCHING_DUCTING_TASK',
-            page=0,
-            size=100,
-            extra_params=extra_params
-        )
-        tasks = scoped_res.get('results', []) if isinstance(scoped_res, dict) else (scoped_res if isinstance(scoped_res, list) else [])
-    except Exception as exc:
-        print(f"[Dashboard] _compute_machine_hdd_output error: {exc}")
-        tasks = []
-
-    machine_stats = defaultdict(lambda: {'meters': 0.0, 'month_meters': 0.0, 'day_meters': 0.0, 'vendor': '', 'tasks': 0})
-    daily_stats = defaultdict(lambda: {'meters': 0.0, 'machines': set()})
-    total_meters = 0.0
-    month_total_meters = 0.0
-    day_total_meters = 0.0
+    dataset = build_all_hdd_shot_records(user=user)
+    shots = dataset.get('shots', [])
 
     resolved_vendor_name = "All Vendors"
     if req_vendor and str(req_vendor).strip() and str(req_vendor).lower() != 'all':
@@ -302,71 +281,75 @@ def _compute_machine_hdd_output(user=None, request=None, req_vendor=None, date_p
         if v_obj and v_obj.name:
             resolved_vendor_name = v_obj.name
 
-    for t in tasks:
-        if not isinstance(t, dict):
+    machine_stats = defaultdict(lambda: {
+        'meters': 0.0,
+        'month_meters': 0.0,
+        'day_meters': 0.0,
+        'vendor': '',
+        'tasks': set()
+    })
+    daily_stats = defaultdict(lambda: {'meters': 0.0, 'machines': set()})
+    total_meters = 0.0
+    month_total_meters = 0.0
+    day_total_meters = 0.0
+
+    for s in shots:
+        m_no = s.get('chassis_number')
+        if not m_no:
             continue
-        ex = t.get('taskExecution') or {}
-        fd = ex.get('fieldData') or {}
-        tr = fd.get('trenching') or {}
-        mach = tr.get('trenchingMachineDetails') or {}
-        shots = tr.get('hddShot') or tr.get('shots') or ex.get('shots') or []
 
-        m_no = str(mach.get('machineId') or mach.get('machineNo') or mach.get('machineName') or '').strip()
-        v_name = mach.get('vendorName') or t.get('vendorName') or (t.get('vendorSnapshot') or {}).get('partnerName') or (t.get('vendorSnapshot') or {}).get('name') or ''
+        v_id = str(s.get('vendor_id') or '').strip()
+        v_name = s.get('vendor_name') or ''
 
-        for s in shots:
-            if not isinstance(s, dict):
+        # Vendor filter
+        if req_vendor and str(req_vendor).strip() and str(req_vendor).lower() != 'all':
+            if str(req_vendor) != v_id and str(req_vendor).lower() not in v_name.lower():
                 continue
-            lens = float(s.get('tentativeShotLength') or s.get('lengthMeters') or 0)
-            t_raw = s.get('hddStartTime') or s.get('hddEndTime') or s.get('updatedAt') or s.get('createdAt') or t.get('updatedAt') or t.get('createdAt')
-            d_str = None
-            if t_raw:
-                ep = parse_iso_epoch(t_raw)
-                if ep:
-                    d_str = datetime.fromtimestamp(ep).strftime('%Y-%m-%d')
-                elif isinstance(t_raw, str) and len(t_raw) >= 10:
-                    parts = t_raw[:10].split('-')
-                    if len(parts) == 3 and len(parts[2]) == 4:
-                        d_str = f'{parts[2]}-{parts[1]}-{parts[0]}'
-                    else:
-                        d_str = t_raw[:10]
-            if not d_str:
-                d_str = datetime.now().strftime('%Y-%m-%d')
 
-            total_meters += lens
-            daily_stats[d_str]['meters'] += lens
+        meters = float(s.get('shot_meters') or 0.0)
+        d_str = s.get('date') or target_date
+        st = s.get('status')
+        has_end_date = bool(s.get('end_time_raw')) and st == 'COMPLETED'
 
-            is_this_month = (d_str[:7] == target_month and d_str <= target_date)
-            is_target_day = (d_str == target_date)
+        is_this_month = (d_str[:7] == target_month and d_str <= target_date)
+        is_target_day = (d_str == target_date)
 
-            if is_this_month:
-                month_total_meters += lens
-            if is_target_day:
-                day_total_meters += lens
-
-            if m_no:
+        # FTD (For The Day): MUST have end date available (completed shot)
+        # If end date is not available, do NOT include in FTD!
+        if is_target_day:
+            if has_end_date:
+                day_total_meters += meters
+                machine_stats[m_no]['day_meters'] += meters
                 daily_stats[d_str]['machines'].add(m_no)
-                machine_stats[m_no]['meters'] += lens
-                if is_this_month:
-                    machine_stats[m_no]['month_meters'] += lens
-                if is_target_day:
-                    machine_stats[m_no]['day_meters'] += lens
+                daily_stats[d_str]['meters'] += meters
+        else:
+            if has_end_date:
+                daily_stats[d_str]['meters'] += meters
+                daily_stats[d_str]['machines'].add(m_no)
 
-        if m_no:
-            machine_stats[m_no]['tasks'] += 1
-            if v_name and (not machine_stats[m_no]['vendor'] or machine_stats[m_no]['vendor'] == '—'):
-                machine_stats[m_no]['vendor'] = v_name
+        # LTD and MTD: include production meters (completed + WIP progress)
+        if st in ('COMPLETED', 'WIP'):
+            total_meters += meters
+            machine_stats[m_no]['meters'] += meters
+            if is_this_month:
+                month_total_meters += meters
+                machine_stats[m_no]['month_meters'] += meters
+
+        if s.get('_task_id'):
+            machine_stats[m_no]['tasks'].add(s['_task_id'])
+        if v_name and (not machine_stats[m_no]['vendor'] or machine_stats[m_no]['vendor'] == 'Hero'):
+            machine_stats[m_no]['vendor'] = v_name
 
     sorted_machines = sorted(machine_stats.items(), key=lambda x: x[1]['meters'], reverse=True)
 
     day_wise_list = [
         {
             "date": d,
-            "output_meters": round(st["meters"], 2),
-            "output_km": round(st["meters"] / 1000.0, 2),
-            "machine_count": len(st["machines"]),
+            "output_meters": round(st_data["meters"], 2),
+            "output_km": round(st_data["meters"] / 1000.0, 2),
+            "machine_count": len(st_data["machines"]),
         }
-        for d, st in sorted(daily_stats.items(), reverse=True)
+        for d, st_data in sorted(daily_stats.items(), reverse=True)
     ]
 
     result = {
@@ -385,16 +368,16 @@ def _compute_machine_hdd_output(user=None, request=None, req_vendor=None, date_p
         "machines": [
             {
                 "machine_no": m_id,
-                "vendor_name": st["vendor"] or "—",
-                "output_meters": round(st["meters"], 2),
-                "output_km": round(st["meters"] / 1000.0, 2),
-                "month_output_meters": round(st["month_meters"], 2),
-                "month_output_km": round(st["month_meters"] / 1000.0, 2),
-                "day_output_meters": round(st["day_meters"], 2),
-                "day_output_km": round(st["day_meters"] / 1000.0, 2),
-                "tasks_count": st["tasks"],
+                "vendor_name": st_data["vendor"] or "—",
+                "output_meters": round(st_data["meters"], 2),
+                "output_km": round(st_data["meters"] / 1000.0, 2),
+                "month_output_meters": round(st_data["month_meters"], 2),
+                "month_output_km": round(st_data["month_meters"] / 1000.0, 2),
+                "day_output_meters": round(st_data["day_meters"], 2),
+                "day_output_km": round(st_data["day_meters"] / 1000.0, 2),
+                "tasks_count": len(st_data["tasks"]),
             }
-            for m_id, st in sorted_machines
+            for m_id, st_data in sorted_machines
         ]
     }
     ttl_set(cache_key, result, ttl_seconds=60)

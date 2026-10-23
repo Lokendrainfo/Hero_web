@@ -38,10 +38,6 @@ def sync_fiberforce_machines():
     
     # Build dynamic map of normalized machine identifier -> Vendor DB object from iLync
     vendor_map = {}
-    default_vendor, _ = Vendor.objects.get_or_create(
-        name="HERO INFRASTRUCTURE",
-        defaults={"code": "HERO", "contact_person": "Ravi Kumar", "email": "admin@hero.com"}
-    )
     try:
         from apps.integrations.ilync_client import IlyncClient
         from apps.common.vendor_scope import normalize_machine_identifier
@@ -53,32 +49,36 @@ def sync_fiberforce_machines():
                 ext_id = v_data.get('id')
                 if not ext_id:
                     continue
-                v_detail = ilync.get_vendor_by_id(ext_id)
-                v_obj = Vendor.objects.filter(external_vendor_id=ext_id).first()
-                if not v_obj and v_data.get('partnerName'):
-                    v_obj = Vendor.objects.filter(name=v_data.get('partnerName')).first()
-                if not v_obj and v_data.get('partnerName'):
-                    v_obj, _ = Vendor.objects.get_or_create(
-                        name=v_data.get('partnerName'),
-                        defaults={'external_vendor_id': ext_id}
+                v_name = (v_data.get('partnerName') or v_data.get('name') or '').strip()
+                if not v_name:
+                    continue
+                v_obj = Vendor.objects.filter(external_vendor_id=ext_id).first() or Vendor.objects.filter(name__iexact=v_name).first()
+                if not v_obj:
+                    # Avoid duplicate name constraints
+                    unique_name = v_name
+                    counter = 1
+                    while Vendor.objects.filter(name__iexact=unique_name).exists():
+                        unique_name = f"{v_name} ({counter})"
+                        counter += 1
+                    v_obj = Vendor.objects.create(
+                        name=unique_name,
+                        external_vendor_id=ext_id,
+                        status='ACTIVE',
+                        is_active=True
                     )
-                if v_obj and v_detail and v_detail.get('success'):
-                    m_list = v_detail.get('data', {}).get('machines', []) or []
-                    for m_item in m_list:
-                        for k in ['machineNo', 'name', 'code', 'engineNo', 'id']:
-                            val = m_item.get(k)
-                            if val:
-                                norm = normalize_machine_identifier(val)
-                                if norm:
-                                    if norm in vendor_map and vendor_map[norm].id != v_obj.id:
-                                        # Conflict: Machine returned under multiple vendors in upstream iLync!
-                                        # Protect existing DB vendor assignment if already valid
-                                        db_m = Machine.objects.filter(
-                                            Q(machine_chassis_no=str(val).strip()) | Q(serial_number=str(val).strip())
-                                        ).first()
-                                        if db_m and db_m.vendor_id == vendor_map[norm].id:
-                                            continue
-                                    vendor_map[norm] = v_obj
+                # Map machines from v_data
+                m_list = v_data.get('mappedMachine') or v_data.get('machines') or []
+                if not m_list:
+                    v_detail = ilync.get_vendor_by_id(ext_id)
+                    if v_detail and v_detail.get('success'):
+                        m_list = v_detail.get('data', {}).get('machines', []) or v_detail.get('data', {}).get('mappedMachine', []) or []
+                for m_item in m_list:
+                    for k in ['machineNo', 'name', 'code', 'engineNo', 'id']:
+                        val = m_item.get(k)
+                        if val and val != '-':
+                            norm = normalize_machine_identifier(val)
+                            if norm:
+                                vendor_map[norm] = v_obj
     except Exception:
         pass
 
@@ -103,7 +103,8 @@ def sync_fiberforce_machines():
 
         chassis_norm = normalize_machine_identifier(chassis_no)
         engine_norm = normalize_machine_identifier(engine_no)
-        target_vendor = vendor_map.get(chassis_norm) or vendor_map.get(engine_norm) or default_vendor
+        existing_m = Machine.objects.filter(machine_chassis_no=chassis_no).first()
+        target_vendor = vendor_map.get(chassis_norm) or vendor_map.get(engine_norm) or (existing_m.vendor if existing_m and existing_m.vendor else None)
 
         readable_name = f"{model_code} HDD ({chassis_no[-4:]})"
 

@@ -51,7 +51,7 @@ export const Header = ({ viewMode, setViewMode }) => {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px', fontSize: '0.85rem' }}>
-        <div>Vendor: <strong>{user?.vendor_details?.name || 'HERO INFRASTRUCTURE'}</strong></div>
+        <div>Vendor: <strong>{user?.vendor_details?.name || 'Hero NetInfra'}</strong></div>
         <div>User: <strong>{user?.first_name || user?.username}</strong></div>
       </div>
     </header>

@@ -135,7 +135,8 @@ class HddShotReportView(APIView):
                 daily_summary=report_data['daily_summary'],
                 filters_applied=filters_applied,
                 today_records=report_data.get('today_records'),
-                effective_today=report_data.get('effective_today')
+                effective_today=report_data.get('effective_today'),
+                execution_summary=report_data.get('execution_summary')
             )
 
             filename = "hero_hdd_shot_report.xlsx"
@@ -159,6 +160,12 @@ class HddShotReportView(APIView):
                 "summary": report_data['summary'],
                 "daily_summary": report_data['daily_summary'],
                 "filter_options": report_data['filter_options'],
+                "analytics": report_data.get('analytics', {}),
+                "execution_summary": report_data.get('execution_summary', {}),
+                "daily_machine_summary": report_data.get('daily_machine_summary', {}),
+                "selected_report_date": report_data.get('selected_report_date', ''),
+                "effective_today": report_data.get('effective_today', ''),
             },
             message="HDD Shot report generated successfully"
         )
+

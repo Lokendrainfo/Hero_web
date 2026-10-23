@@ -235,8 +235,8 @@ def _parse_task_execution_timeout():
     return (connect_to, read_to)
 
 ILYNC_TASK_EXECUTION_TIMEOUT = _parse_task_execution_timeout()
-ILYNC_TASK_EXECUTION_MAX_WORKERS = int(os.environ.get('ILYNC_TASK_EXECUTION_MAX_WORKERS', 10))
-ILYNC_TASK_EXECUTION_BATCH_TIMEOUT = float(os.environ.get('ILYNC_TASK_EXECUTION_BATCH_TIMEOUT', 15.0))
+ILYNC_TASK_EXECUTION_MAX_WORKERS = int(os.environ.get('ILYNC_TASK_EXECUTION_MAX_WORKERS', 25))
+ILYNC_TASK_EXECUTION_BATCH_TIMEOUT = float(os.environ.get('ILYNC_TASK_EXECUTION_BATCH_TIMEOUT', 60.0))
 
 # BharatNet Phase-3 T&D Monitoring API Configuration
 BHARATNET_API_USERNAME = os.environ.get('BHARATNET_API_USERNAME', 'bharatnet_service')

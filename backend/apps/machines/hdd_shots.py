@@ -105,7 +105,9 @@ def parse_shot_datetime(dt_val):
         clean_s = s.replace('Z', '+00:00')
         dt = datetime.fromisoformat(clean_s)
         if dt.tzinfo is not None:
-            dt = dt.replace(tzinfo=None)
+            from datetime import timezone, timedelta
+            ist_tz = timezone(timedelta(hours=5, minutes=30))
+            dt = dt.astimezone(ist_tz).replace(tzinfo=None)
         return dt
     except Exception:
         pass
@@ -118,9 +120,9 @@ def is_shot_completed(shot):
     Evaluates whether an individual HDD shot is fully completed according to
     enterprise validation rules:
     - Include a shot only when both start_time and end_time are present and valid.
-    - Exclude shots where start_time is missing.
-    - Exclude shots where end_time is null, empty, or missing.
-    - Exclude in-progress shots, even if they have already recorded partial metres.
+    - Exclude in-progress/pending shots, even if they have already recorded partial metres.
+    - If end_time is valid on completed historical records where start_time was left empty,
+      derive start_time from ductingStartTime, photo timestamp, or previous hour so production is counted.
     - Validate that the end time is not earlier than the start time.
     Returns (is_valid: bool, start_dt: datetime, end_dt: datetime).
     """
@@ -133,18 +135,7 @@ def is_shot_completed(shot):
         if st_val in ('IN_PROGRESS', 'INPROGRESS', 'WIP', 'PENDING', 'RUNNING', 'STARTED', 'PARTIAL'):
             return False, None, None
 
-    # Extract start time candidate
-    start_raw = (
-        shot.get('hddStartTime')
-        or shot.get('startTime')
-        or shot.get('start_time')
-        or shot.get('ductingStartTime')
-        or shot.get('time')
-    )
-    if not start_raw:
-        return False, None, None
-
-    # Extract end time candidate
+    # Extract end time candidate first
     end_raw = (
         shot.get('hddEndTime')
         or shot.get('endTime')
@@ -160,11 +151,34 @@ def is_shot_completed(shot):
     if end_str in ('none', 'null', 'undefined', 'wip', 'inprogress', 'in_progress', 'pending', '-', '—', '--', 'n/a', '00:00:00'):
         return False, None, None
 
-    start_dt = parse_shot_datetime(start_raw)
     end_dt = parse_shot_datetime(end_raw)
-
-    if not start_dt or not end_dt:
+    if not end_dt:
         return False, None, None
+
+    # Extract start time candidate
+    start_raw = (
+        shot.get('hddStartTime')
+        or shot.get('startTime')
+        or shot.get('start_time')
+        or shot.get('ductingStartTime')
+        or shot.get('time')
+    )
+    start_dt = parse_shot_datetime(start_raw) if start_raw else None
+
+    # Fallback for start_dt if missing but end_dt is valid (historical completed shots)
+    if not start_dt:
+        duct = shot.get('ducting') or []
+        if duct and isinstance(duct, list) and isinstance(duct[0], dict):
+            d_start = duct[0].get('ductingStartTime')
+            if d_start:
+                start_dt = parse_shot_datetime(d_start)
+        if not start_dt:
+            img = shot.get('startHddShotImage')
+            if isinstance(img, dict) and img.get('capturedAt'):
+                start_dt = parse_shot_datetime(img.get('capturedAt'))
+        if not start_dt:
+            from datetime import timedelta
+            start_dt = end_dt - timedelta(hours=1)
 
     # Validate that the end time is not earlier than the start time
     if end_dt < start_dt:
@@ -513,15 +527,32 @@ def extract_shot_date(shot, task):
 def extract_shot_meters(shot, prev_cumulative=None):
     """
     Extracts drilled meters for a shot.
-    - If explicit delta / end-start meter readings are available, calculates difference.
-    - If cumulative meter reading is available and previous reading is known, calculates delta.
-    - Otherwise, uses incremental length (tentativeShotLength, lengthMeters, shotLength).
+    - Authoritative production source field: HDD Shot Distance (User Input),
+      captured in `tentativeShotLength`.
+    - Fallback: lengthMeters, shotLength, delta of readings.
     Returns (meters, current_cumulative).
     """
     if not isinstance(shot, dict):
         return 0.0, prev_cumulative
 
-    # 1. Explicit end and start readings on the shot
+    # 1. Authoritative production source field: HDD Shot Distance (User Input)
+    user_dist = shot.get('tentativeShotLength')
+    if user_dist is not None and str(user_dist).strip() != '':
+        try:
+            return float(user_dist), prev_cumulative
+        except (ValueError, TypeError):
+            pass
+
+    # 2. Fallback to incremental length attributes
+    for k in ('lengthMeters', 'shotLength', 'boreLength'):
+        val = shot.get(k)
+        if val is not None and str(val).strip() != '':
+            try:
+                return float(val), prev_cumulative
+            except (ValueError, TypeError):
+                pass
+
+    # 3. Explicit end and start readings on the shot
     end_reading = shot.get('endReading') or shot.get('endMeter') or shot.get('meterEnd')
     start_reading = shot.get('startReading') or shot.get('startMeter') or shot.get('meterStart')
     if end_reading is not None and start_reading is not None:
@@ -531,7 +562,7 @@ def extract_shot_meters(shot, prev_cumulative=None):
         except (ValueError, TypeError):
             pass
 
-    # 2. Cumulative meter readings (calculate difference between consecutive readings)
+    # 4. Cumulative meter readings (calculate difference between consecutive readings)
     cum_reading = shot.get('cumulativeReading') or shot.get('cumulative_meters') or shot.get('meterReading')
     if cum_reading is not None:
         try:
@@ -539,23 +570,11 @@ def extract_shot_meters(shot, prev_cumulative=None):
             if prev_cumulative is not None and curr_cum >= prev_cumulative:
                 return curr_cum - prev_cumulative, curr_cum
             elif prev_cumulative is None:
-                tentative = float(shot.get('tentativeShotLength') or shot.get('lengthMeters') or shot.get('shotLength') or 0.0)
-                return (tentative if tentative > 0 else curr_cum), curr_cum
+                return curr_cum, curr_cum
         except (ValueError, TypeError):
             pass
 
-    # 3. Standard incremental shot length
-    try:
-        length = float(
-            shot.get('tentativeShotLength')
-            or shot.get('lengthMeters')
-            or shot.get('shotLength')
-            or shot.get('boreLength')
-            or 0.0
-        )
-        return length, prev_cumulative
-    except (ValueError, TypeError):
-        return 0.0, prev_cumulative
+    return 0.0, prev_cumulative
 
 
 def build_all_chassis_daily_hdd_metrics(force_refresh=False):

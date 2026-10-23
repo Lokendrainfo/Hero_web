@@ -14,7 +14,7 @@ class MaintenanceScheduleSerializer(serializers.ModelSerializer):
     def get_vendor_name(self, obj):
         if obj.machine and obj.machine.vendor:
             return obj.machine.vendor.name
-        return "HERO INFRASTRUCTURE"
+        return "Hero"
 
     def get_location(self, obj):
         if obj.machine:

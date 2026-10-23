@@ -12,7 +12,6 @@ from apps.tasks.models import Task
 
 def seed_all():
     print("Seeding Hero Web screenshot screen data...")
-    hero_vendor, _ = Vendor.objects.get_or_create(name="HERO INFRASTRUCTURE", code="HERO", contact_person="John Doe", email="admin@hero.com")
     gk_vendor, _ = Vendor.objects.get_or_create(name="GURUKRIPA LOGISTICS", code="GURUKRIPA", contact_person="Rajesh Kumar", email="admin@gurukripa.com")
 
     # Superuser & Admins
@@ -20,7 +19,7 @@ def seed_all():
     admin.set_password("admin123")
     admin.first_name = "Admin"
     admin.last_name = ""
-    admin.vendor = hero_vendor
+    admin.vendor = None
     admin.role = "ADMIN"
     admin.is_superuser = True
     admin.is_staff = True
@@ -30,8 +29,8 @@ def seed_all():
     hero_admin.set_password("hero123")
     hero_admin.first_name = "Hero"
     hero_admin.last_name = "Admin"
-    hero_admin.vendor = hero_vendor
-    hero_admin.role = "VENDOR_ADMIN"
+    hero_admin.vendor = None
+    hero_admin.role = "ADMIN"
     hero_admin.save()
 
     gk_admin, _ = User.objects.get_or_create(username="gk_admin", defaults={"email": "gk_admin@gurukripa.com"})
@@ -52,7 +51,7 @@ def seed_all():
     # Seed Alerts for A600 HDD
     Alert.objects.all().delete()
     Alert.objects.create(
-        vendor=hero_vendor,
+        vendor=m0.vendor if m0 else None,
         machine=m0,
         alert_type="LOW_FUEL",
         title="Low Fuel Alert",
@@ -61,7 +60,7 @@ def seed_all():
         alert_severity="CRITICAL"
     )
     Alert.objects.create(
-        vendor=hero_vendor,
+        vendor=m0.vendor if m0 else None,
         machine=m0,
         alert_type="PREVENTIVE_MAINTENANCE",
         title="PM Due Soon",

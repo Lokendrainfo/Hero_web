@@ -24,7 +24,7 @@ class BreakdownReportSerializer(serializers.ModelSerializer):
     def get_vendor_name(self, obj):
         if obj.machine and obj.machine.vendor:
             return obj.machine.vendor.name
-        return "HERO INFRASTRUCTURE"
+        return "Hero"
 
     def get_reported_by_name(self, obj):
         if obj.reported_by:
