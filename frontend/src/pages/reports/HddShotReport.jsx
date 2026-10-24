@@ -1076,38 +1076,60 @@ export const HddShotReport = ({ selectedVendorId, isStandalone = false }) => {
                         </td>
                       ))}
 
-                      {/* Average (Light Pink highlight, Bold Red text) */}
-                      <td style={{ border: '1px solid #CBD5E1', padding: '6px 10px', textAlign: 'right', fontWeight: 700, color: '#990000', background: '#FECDD3' }}>
-                        {formatNum(r.current_week_average)}
-                      </td>
+                      {/* Average: Number Green if >= 500, Red if < 500; Background stays #FECDD3 */}
+                      {(() => {
+                        const isHighAvg = Number(r.current_week_average || 0) >= 500;
+                        return (
+                          <td
+                            style={{
+                              border: '1px solid #CBD5E1',
+                              padding: '6px 10px',
+                              textAlign: 'right',
+                              fontWeight: 700,
+                              color: isHighAvg ? '#047857' : '#990000',
+                              background: '#FECDD3'
+                            }}
+                          >
+                            {formatNum(r.current_week_average)}
+                          </td>
+                        );
+                      })()}
 
-                      {/* Previous Week Delta */}
-                      <td
-                        style={{
-                          border: '1px solid #CBD5E1',
-                          padding: '6px 10px',
-                          textAlign: 'right',
-                          fontWeight: 600,
-                          color: r.prev_week_delta > 0 ? '#059669' : (r.prev_week_delta < 0 ? '#990000' : '#0F172A')
-                        }}
-                        title={r.prev_week_change_pct !== null ? `${r.prev_week_change_pct > 0 ? '+' : ''}${r.prev_week_change_pct}% change` : ''}
-                      >
-                        {formatDelta(r.prev_week_delta)}
-                      </td>
+                      {/* Previous Week Delta: This Week Average − Previous Week Average */}
+                      {(() => {
+                        const pwDelta = Number((Number(r.current_week_average || 0) - Number(r.prev_week_per_day || 0)).toFixed(2));
+                        const mtdDelta = Number((Number(r.current_week_average || 0) - Number(r.prev_month_per_day || 0)).toFixed(2));
+                        return (
+                          <>
+                            <td
+                              style={{
+                                border: '1px solid #CBD5E1',
+                                padding: '6px 10px',
+                                textAlign: 'right',
+                                fontWeight: 600,
+                                color: pwDelta > 0 ? '#059669' : (pwDelta < 0 ? '#990000' : '#0F172A')
+                              }}
+                              title={`Delta Previous Week: ${formatNum(r.current_week_average)} - ${formatNum(r.prev_week_per_day)} = ${formatDelta(pwDelta)}`}
+                            >
+                              {formatDelta(pwDelta)}
+                            </td>
 
-                      {/* MTD Delta */}
-                      <td
-                        style={{
-                          border: '1px solid #CBD5E1',
-                          padding: '6px 10px',
-                          textAlign: 'right',
-                          fontWeight: 600,
-                          color: r.mtd_delta > 0 ? '#059669' : (r.mtd_delta < 0 ? '#990000' : '#0F172A')
-                        }}
-                        title={r.mtd_change_pct !== null ? `${r.mtd_change_pct > 0 ? '+' : ''}${r.mtd_change_pct}% change` : ''}
-                      >
-                        {formatDelta(r.mtd_delta)}
-                      </td>
+                            {/* MTD Delta: This Week Average − Previous Month Per Day Average */}
+                            <td
+                              style={{
+                                border: '1px solid #CBD5E1',
+                                padding: '6px 10px',
+                                textAlign: 'right',
+                                fontWeight: 600,
+                                color: mtdDelta > 0 ? '#059669' : (mtdDelta < 0 ? '#990000' : '#0F172A')
+                              }}
+                              title={`Delta MTD: ${formatNum(r.current_week_average)} - ${formatNum(r.prev_month_per_day)} = ${formatDelta(mtdDelta)}`}
+                            >
+                              {formatDelta(mtdDelta)}
+                            </td>
+                          </>
+                        );
+                      })()}
                     </tr>
                   ))
                 )}
@@ -1166,16 +1188,48 @@ export const HddShotReport = ({ selectedVendorId, isStandalone = false }) => {
                       </td>
                     ))}
 
-                    <td style={{ border: '1px solid #94A3B8', padding: '8px 10px', textAlign: 'right', color: '#990000', background: '#FECDD3' }}>
-                      {formatNum(execTotals.current_week_average)}
-                    </td>
+                    {(() => {
+                      const isTotHighAvg = Number(execTotals.current_week_average || 0) >= 500;
+                      return (
+                        <td
+                          style={{
+                            border: '1px solid #94A3B8',
+                            padding: '8px 10px',
+                            textAlign: 'right',
+                            fontWeight: 700,
+                            color: isTotHighAvg ? '#047857' : '#990000',
+                            background: '#FECDD3'
+                          }}
+                        >
+                          {formatNum(execTotals.current_week_average)}
+                        </td>
+                      );
+                    })()}
 
-                    <td style={{ border: '1px solid #94A3B8', padding: '8px 10px', textAlign: 'right', color: '#0F172A' }}>
+                    <td
+                      style={{
+                        border: '1px solid #94A3B8',
+                        padding: '8px 10px',
+                        textAlign: 'right',
+                        fontWeight: 600,
+                        color: execTotals.prev_week_delta > 0 ? '#059669' : (execTotals.prev_week_delta < 0 ? '#990000' : '#0F172A')
+                      }}
+                    >
                       {formatDelta(execTotals.prev_week_delta)}
                     </td>
 
-                    <td style={{ border: '1px solid #94A3B8', padding: '8px 10px', textAlign: 'right', color: '#0F172A' }}>
-                      {formatDelta(execTotals.mtd_delta)}
+                    <td
+                      style={{
+                        border: '1px solid #94A3B8',
+                        padding: '8px 10px',
+                        textAlign: 'right',
+                        fontWeight: 600,
+                        color: (Number((Number(execTotals.current_week_average || 0) - Number(execTotals.prev_month_per_day || 0)).toFixed(2))) > 0
+                          ? '#059669'
+                          : ((Number((Number(execTotals.current_week_average || 0) - Number(execTotals.prev_month_per_day || 0)).toFixed(2))) < 0 ? '#990000' : '#0F172A')
+                      }}
+                    >
+                      {formatDelta(Number((Number(execTotals.current_week_average || 0) - Number(execTotals.prev_month_per_day || 0)).toFixed(2)))}
                     </td>
                   </tr>
                 )}

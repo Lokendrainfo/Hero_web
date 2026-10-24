@@ -369,9 +369,9 @@ def compute_execution_report_summary(all_matching_shots, machines_catalog, selec
         pw_delta = round(cw_avg - pw_pd, 2)
         pw_pct = round(((cw_avg - pw_pd) / pw_pd) * 100, 2) if pw_pd > 0 else None
 
-        # 7. MTD Delta: MTD Per Day - Previous Month Per Day
-        mtd_delta = round(mtd_pd - pm_pd, 2)
-        mtd_pct = round(((mtd_pd - pm_pd) / pm_pd) * 100, 2) if pm_pd > 0 else None
+        # 7. MTD Delta: Current Week Average - Previous Month Per Day Average
+        mtd_delta = round(cw_avg - pm_pd, 2)
+        mtd_pct = round(((cw_avg - pm_pd) / pm_pd) * 100, 2) if pm_pd > 0 else None
 
         rows.append({
             'block': block,
@@ -447,8 +447,8 @@ def compute_execution_report_summary(all_matching_shots, machines_catalog, selec
     tot_cw_avg = round(tot_cw_sum / cw_elapsed, 2) if cw_elapsed > 0 else 0.0
     tot_pw_delta = round(tot_cw_avg - tot_pw_pd, 2)
     tot_pw_pct = round(((tot_cw_avg - tot_pw_pd) / tot_pw_pd) * 100, 2) if tot_pw_pd > 0 else None
-    tot_mtd_delta = round(tot_mtd_pd - tot_pm_pd, 2)
-    tot_mtd_pct = round(((tot_mtd_pd - tot_pm_pd) / tot_pm_pd) * 100, 2) if tot_pm_pd > 0 else None
+    tot_mtd_delta = round(tot_cw_avg - tot_pm_pd, 2)
+    tot_mtd_pct = round(((tot_cw_avg - tot_pm_pd) / tot_pm_pd) * 100, 2) if tot_pm_pd > 0 else None
 
     partner_machines = set(
         r.get('machine') or r.get('machine_id') or r.get('chassis_number')
@@ -1607,14 +1607,22 @@ def get_hdd_shot_report_data(
     computes full production analytics & KPIs (Completed, WIP, Pending),
     and paginates individual shot records.
     """
+    # 1. Get dataset
+    dataset = build_all_hdd_shot_records(force_refresh=force_refresh)
+    shots = dataset['shots']
+
     today_str = datetime.now().strftime('%Y-%m-%d')
+    # Determine effective today from active fleet records (authoritative latest production date)
+    effective_today = today_str if any(s.get('date') == today_str for s in shots) else (max((s['date'] for s in shots), default=today_str))
 
-    # If today_only is requested and no explicit date range was provided, override date range to today's date
+    # If today_only is requested and no explicit date range was provided, override date range to effective today's date
     if today_only and not start_date and not end_date:
-        start_date = today_str
-        end_date = today_str
+        start_date = effective_today
+        end_date = effective_today
+        if page_size == 25:
+            page_size = 0
 
-    # 1. Normalize dates
+    # 2. Normalize dates
     norm_start = None
     if start_date:
         norm_start = normalize_date_input(start_date)
@@ -1629,10 +1637,6 @@ def get_hdd_shot_report_data(
 
     if norm_start and norm_end and norm_start > norm_end:
         raise ValueError(f"start_date ({norm_start}) cannot be after end_date ({norm_end}).")
-
-    # 2. Get dataset
-    dataset = build_all_hdd_shot_records(force_refresh=force_refresh)
-    shots = dataset['shots']
 
     # 3. Filtering
     filtered = []

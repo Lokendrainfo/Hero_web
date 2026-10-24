@@ -839,6 +839,7 @@ def build_execution_summary_sheet(wb, execution_summary=None, filters_applied=No
     f_data_reg = Font(name="Calibri", size=9, color="0F172A")
     f_data_bold = Font(name="Calibri", size=9, bold=True, color="0F172A")
     f_data_red = Font(name="Calibri", size=9, bold=True, color=c_red_text)
+    f_data_green = Font(name="Calibri", size=9, bold=True, color="047857")
 
     fill_navy = PatternFill(start_color=c_navy, end_color=c_navy, fill_type="solid")
     fill_ptd = PatternFill(start_color=c_ptd, end_color=c_ptd, fill_type="solid")
@@ -847,6 +848,7 @@ def build_execution_summary_sheet(wb, execution_summary=None, filters_applied=No
     fill_pw = PatternFill(start_color=c_pw, end_color=c_pw, fill_type="solid")
     fill_subhdr = PatternFill(start_color=c_subhdr, end_color=c_subhdr, fill_type="solid")
     fill_pink = PatternFill(start_color=c_pink, end_color=c_pink, fill_type="solid")
+    fill_green = PatternFill(start_color="D1FAE5", end_color="D1FAE5", fill_type="solid")
     fill_total = PatternFill(start_color=c_total_fill, end_color=c_total_fill, fill_type="solid")
 
     thin_border = Border(
@@ -1040,9 +1042,12 @@ def build_execution_summary_sheet(wb, execution_summary=None, filters_applied=No
                 cell.value = ""
             cell.alignment = Alignment(horizontal="right", vertical="center")
 
-        # Col 22: Current Week Average
-        c22 = ws_sum.cell(row=curr_row, column=22, value=r.get('current_week_average', 0.0))
-        c22.font = f_data_red; c22.fill = fill_pink; c22.number_format = '#,##0.00'
+        # Col 22: Current Week Average (Number Green if >= 500, Red if < 500; Fill is always pink)
+        cw_avg_val = float(r.get('current_week_average') or 0.0)
+        c22 = ws_sum.cell(row=curr_row, column=22, value=cw_avg_val)
+        c22.font = f_data_green if cw_avg_val >= 500 else f_data_red
+        c22.fill = fill_pink
+        c22.number_format = '#,##0.00'
         c22.alignment = Alignment(horizontal="right", vertical="center")
 
         # Col 23: Previous Week Delta
@@ -1112,9 +1117,12 @@ def build_execution_summary_sheet(wb, execution_summary=None, filters_applied=No
                 cell.value = ""
             cell.alignment = Alignment(horizontal="right", vertical="center")
 
-        # Col 22: Average
-        c = ws_sum.cell(row=curr_row, column=22, value=totals.get('current_week_average', 0.0))
-        c.font = f_data_red; c.fill = fill_pink; c.number_format = '#,##0.00'
+        # Col 22: Average (Number Green if >= 500, Red if < 500; Fill is always pink)
+        tot_cw_avg_val = float(totals.get('current_week_average') or 0.0)
+        c = ws_sum.cell(row=curr_row, column=22, value=tot_cw_avg_val)
+        c.font = f_data_green if tot_cw_avg_val >= 500 else f_data_red
+        c.fill = fill_pink
+        c.number_format = '#,##0.00'
 
         # Cols 23-24: Deltas
         ws_sum.cell(row=curr_row, column=23, value=totals.get('prev_week_delta', 0.0)).number_format = '+#,##0.00;-#,##0.00;0.00'
