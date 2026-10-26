@@ -10,9 +10,15 @@ export const isNavPathActive = (arg1, arg2) => {
   if (path === '/map-view') return current === '/map-view';
   if (path === '/reports') return current === '/reports';
   if (path === '/tasks') {
-    if (current === '/tasks' || current === '/tasks/execution') return true;
+    if (current === '/tasks' || current.startsWith('/tasks/planning') || current.startsWith('/tasks/execution')) return true;
     if (current.startsWith('/tasks/hindrance') || current.startsWith('/tasks/otn') || current.startsWith('/tasks/ccn')) return false;
     return current.startsWith('/tasks/');
+  }
+  if (path === '/tasks/planning') {
+    return current === '/tasks/planning' || (current === '/tasks' && !current.includes('tab=execution'));
+  }
+  if (path === '/tasks/execution') {
+    return current.startsWith('/tasks/execution');
   }
   return current === path || current.startsWith(`${path}/`);
 };

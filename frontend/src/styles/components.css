@@ -2546,19 +2546,19 @@ textarea:focus {
 
 /* Indentation levels */
 .nav-level-0 {
-  padding-left: 10px;
+  padding-left: 12px;
 }
 
 .nav-level-1 {
-  padding-left: 22px;
+  padding-left: 28px;
 }
 
 .nav-level-2 {
-  padding-left: 34px;
+  padding-left: 40px;
 }
 
 .nav-level-3 {
-  padding-left: 46px;
+  padding-left: 52px;
 }
 
 .nav-nested-children {
