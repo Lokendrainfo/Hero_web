@@ -16,6 +16,7 @@ const lazyComponent = (importFn, exportName) =>
 
 // Lazy Loaded Pages
 const Dashboard = lazyComponent(() => import('../pages/dashboard/Dashboard'), 'Dashboard');
+const ProjectDashboard = lazyComponent(() => import('../pages/dashboard/ProjectDashboard'), 'ProjectDashboard');
 const Machines = lazyComponent(() => import('../pages/machines/Machines'), 'Machines');
 const MachineDetails = lazyComponent(() => import('../pages/machines/MachineDetails'), 'MachineDetails');
 const LiveTracking = lazyComponent(() => import('../pages/tracking/LiveTracking'), 'LiveTracking');
@@ -99,6 +100,7 @@ export const AppRoutes = () => {
         <Route element={<ProtectedRoute />}>
           <Route element={<DashboardLayout />}>
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/project-dashboard" element={<ProjectDashboard />} />
             <Route path="/machines" element={<Machines />} />
             <Route path="/machines/:id" element={<MachineDetails />} />
             <Route path="/tracking" element={<LiveTracking />} />
@@ -108,6 +110,7 @@ export const AppRoutes = () => {
             <Route path="/machines/:machineId/refuel/history" element={<RefuelHistory />} />
             <Route path="/refuel/:id" element={<RefuelDetails />} />
             <Route path="/tasks" element={<Tasks />} />
+            <Route path="/tasks/planning" element={<Tasks />} />
             <Route path="/tasks/execution" element={<Tasks />} />
             <Route path="/tasks/hindrance" element={<TaskHindrancePage />} />
             <Route path="/tasks/otn" element={<TaskOtnPage />} />

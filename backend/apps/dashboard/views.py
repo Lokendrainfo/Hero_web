@@ -878,3 +878,78 @@ class DashboardSummaryView(APIView):
         }
         ttl_set(cache_key, data, ttl_seconds=30)
         return success_response(data=data, message="Dashboard screen data fetched successfully")
+
+
+class ProjectDashboardSummaryView(APIView):
+    """
+    Project Dashboard Summary API.
+    Returns metrics across all 8 project cards:
+    SCOPE, DTR/DTP, PHYSICAL SURVEY, BOQ, Construction, INFRA, HOTO, OPERATION.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from .project_dashboard_service import get_project_dashboard_summary
+
+        user = request.user
+        mode = request.query_params.get('mode', 'project').lower().strip()
+        state = request.query_params.get('state') or request.query_params.get('circle') or 'RAJASTHAN'
+        district = request.query_params.get('district', 'ALL')
+        block = request.query_params.get('block', 'ALL')
+        duration = request.query_params.get('duration', 'all').lower().strip()
+
+        data = get_project_dashboard_summary(
+            user=user,
+            request=request,
+            state=state,
+            district=district,
+            block=block,
+            duration=duration,
+            mode=mode
+        )
+        return success_response(data=data, message="Project dashboard summary fetched successfully")
+
+
+class ProjectDashboardDrilldownView(APIView):
+    """
+    Project Dashboard Drilldown API.
+    Returns itemized block and task records for any clicked metric.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from .project_dashboard_service import get_project_dashboard_drilldown
+
+        user = request.user
+        card = request.query_params.get('card', 'SCOPE')
+        section = request.query_params.get('section', 'TOTAL')
+        metric = request.query_params.get('metric', 'BLOCK')
+        state = request.query_params.get('state') or request.query_params.get('circle') or 'RAJASTHAN'
+        district = request.query_params.get('district', 'ALL')
+        block = request.query_params.get('block', 'ALL')
+        search = request.query_params.get('search', '').strip()
+        
+        try:
+            page = max(0, int(request.query_params.get('page', 0)))
+        except (ValueError, TypeError):
+            page = 0
+            
+        try:
+            page_size = max(1, min(100, int(request.query_params.get('page_size', 20))))
+        except (ValueError, TypeError):
+            page_size = 20
+
+        data = get_project_dashboard_drilldown(
+            card=card,
+            section=section,
+            metric=metric,
+            state=state,
+            district=district,
+            block=block,
+            user=user,
+            search=search,
+            page=page,
+            page_size=page_size
+        )
+        return success_response(data=data, message="Project dashboard drilldown records fetched successfully")
+

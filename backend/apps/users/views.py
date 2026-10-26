@@ -273,6 +273,33 @@ class UserViewSet(viewsets.ModelViewSet):
                 if not v_obj:
                     v_obj = Vendor.objects.filter(name=str(v_identifier)).first()
 
+                # If still not found, attempt on-demand resolution from iLync
+                if not v_obj:
+                    try:
+                        from apps.integrations.ilync_client import IlyncClient
+                        client = IlyncClient()
+                        res = client.get_vendor_by_id(str(v_identifier))
+                        v_data = res.get('data') if isinstance(res, dict) and 'data' in res else res
+                        if isinstance(v_data, dict) and (v_data.get('partnerName') or v_data.get('name')):
+                            ext_id = str(v_data.get('id') or v_identifier).strip()
+                            v_name = str(v_data.get('partnerName') or v_data.get('name')).strip()
+                            target_name = v_name
+                            if Vendor.objects.filter(name__iexact=target_name).exists():
+                                target_name = f"{v_name} ({ext_id[-4:] if ext_id else 'ext'})"
+                            v_obj = Vendor.objects.create(
+                                name=target_name,
+                                external_vendor_id=ext_id or None,
+                                code=str(v_data.get('vendorCode') or (ext_id[-8:].upper() if ext_id else '')),
+                                vendor_type=str(v_data.get('legalEntityType') or 'CONTRACTOR'),
+                                contact_person=str(v_data.get('contactName') or ''),
+                                email=str(v_data.get('email') or ''),
+                                phone=str(v_data.get('phoneNumber') or ''),
+                                status='ACTIVE',
+                                is_active=True
+                            )
+                    except Exception as e:
+                        pass
+
                 if v_obj:
                     assignment, created = HeroVendorAssignment.objects.get_or_create(
                         user=user,
@@ -283,6 +310,9 @@ class UserViewSet(viewsets.ModelViewSet):
                         assignment.is_active = True
                         assignment.save()
                     added.append(v_obj.name)
+
+            if not added:
+                return error_response(message=f"Vendor '{vendor_ids[0]}' could not be found or assigned.")
 
             return success_response(
                 data=UserSerializer(user).data,

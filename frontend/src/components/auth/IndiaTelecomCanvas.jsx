@@ -2,7 +2,6 @@ import React, { useEffect, useRef } from 'react';
 import {
   INDIA_MAP_BOUNDS,
   INDIA_BOUNDARY_PATH,
-  SRI_LANKA_PATH,
   TELECOM_NODES,
   FIBER_LINKS,
   NODE_DICT
@@ -22,13 +21,11 @@ export const IndiaTelecomCanvas = () => {
     let isVisible = true;
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    // Pre-parse Path2D objects for native high-performance rendering
+    // Pre-parse Path2D object for native high-performance rendering
     let indiaPath2D = null;
-    let sriLankaPath2D = null;
     try {
       if (typeof Path2D !== 'undefined') {
         indiaPath2D = new Path2D(INDIA_BOUNDARY_PATH);
-        sriLankaPath2D = new Path2D(SRI_LANKA_PATH);
       }
     } catch (e) {
       console.warn('Path2D not supported or parse error', e);
@@ -157,13 +154,14 @@ export const IndiaTelecomCanvas = () => {
     let lastTime = performance.now();
 
     const render = (time) => {
-      if (!isVisible) {
-        animId = requestAnimationFrame(render);
-        return;
-      }
+      try {
+        if (!isVisible) {
+          animId = requestAnimationFrame(render);
+          return;
+        }
 
-      const dt = Math.min(time - lastTime, 60);
-      lastTime = time;
+        const dt = Math.min(time - lastTime, 60);
+        lastTime = time;
 
       // 1. Reset transform matrix on every frame to guarantee scale NEVER accumulates!
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -268,28 +266,24 @@ export const IndiaTelecomCanvas = () => {
         ctx.fillStyle = landGrad;
         ctx.fill(indiaPath2D);
 
-        // Sri Lanka fill
-        if (sriLankaPath2D) {
-          ctx.fillStyle = 'rgba(8, 26, 52, 0.55)';
-          ctx.fill(sriLankaPath2D);
-        }
-
         // Multi-layered Neon Glowing Border
+        const sw = (px) => Math.max(0.8, px / mapScale);
+
         // Outer wide soft glow
         ctx.save();
         ctx.shadowColor = '#00f5ff';
-        ctx.shadowBlur = 16;
-        ctx.strokeStyle = 'rgba(0, 245, 255, 0.35)';
-        ctx.lineWidth = 4;
+        ctx.shadowBlur = 18 / mapScale;
+        ctx.strokeStyle = 'rgba(0, 245, 255, 0.45)';
+        ctx.lineWidth = sw(3.6);
         ctx.stroke(indiaPath2D);
         ctx.restore();
 
-        // Mid vibrant glow with gradient
+        // Mid vibrant glow
         ctx.save();
         ctx.shadowColor = '#38bdf8';
-        ctx.shadowBlur = 8;
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
-        ctx.lineWidth = 2.2;
+        ctx.shadowBlur = 8 / mapScale;
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+        ctx.lineWidth = sw(2.0);
         ctx.stroke(indiaPath2D);
         ctx.restore();
 
@@ -300,33 +294,13 @@ export const IndiaTelecomCanvas = () => {
         neonBorderGrad.addColorStop(0.65, '#818cf8'); // Deccan: Indigo
         neonBorderGrad.addColorStop(1, '#c084fc'); // South: Violet
 
-        ctx.strokeStyle = neonBorderGrad;
-        ctx.lineWidth = 1.8;
-        ctx.stroke(indiaPath2D);
-
-        // Sri Lanka border
-        if (sriLankaPath2D) {
-          ctx.strokeStyle = 'rgba(168, 85, 247, 0.7)';
-          ctx.lineWidth = 1.5;
-          ctx.stroke(sriLankaPath2D);
-        }
-
-        // Andaman & Nicobar islands
-        const andamanIslandCoords = [
-          [880, 890, 4.5],
-          [882, 920, 4.0],
-          [885, 950, 3.5],
-          [888, 980, 3.0]
-        ];
-        ctx.fillStyle = '#00f5ff';
+        ctx.save();
         ctx.shadowColor = '#00f5ff';
-        ctx.shadowBlur = 6;
-        andamanIslandCoords.forEach(([ix, iy, ir]) => {
-          ctx.beginPath();
-          ctx.arc(ix, iy, ir, 0, Math.PI * 2);
-          ctx.fill();
-        });
-        ctx.shadowBlur = 0;
+        ctx.shadowBlur = 4 / mapScale;
+        ctx.strokeStyle = neonBorderGrad;
+        ctx.lineWidth = sw(1.5);
+        ctx.stroke(indiaPath2D);
+        ctx.restore();
       }
       ctx.restore();
 
@@ -509,23 +483,80 @@ export const IndiaTelecomCanvas = () => {
         ctx.arc(sx, sy, radius * 0.45, 0, Math.PI * 2);
         ctx.fill();
 
-        // City labels for Tier 1 & Key Hubs
-        if (isT1 || (isT2 && (width >= 960 || ['AMD', 'GAU', 'JAI', 'LKO', 'COK'].includes(node.id)))) {
-          const fontSize = Math.max(9, Math.min(11, Math.round(10.5 * (width / 1440))));
-          ctx.font = `600 ${fontSize}px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-          ctx.fillStyle = isT1 ? '#ffffff' : 'rgba(203, 213, 225, 0.85)';
+        // City labels for all verified nodes with collision-free placement
+        const shouldShowLabel = width >= 960 || isT1 || ['AMD', 'GAU', 'JAI', 'LKO', 'COK', 'SXR', 'HYD'].includes(node.id);
+        if (shouldShowLabel) {
+          const fontSize = isT1
+            ? Math.max(10, Math.min(12, Math.round(11 * (width / 1440))))
+            : Math.max(8.5, Math.min(10.5, Math.round(9.5 * (width / 1440))));
+          ctx.font = `${isT1 ? '700' : '500'} ${fontSize}px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+          ctx.fillStyle = isT1 ? '#ffffff' : 'rgba(215, 226, 240, 0.9)';
 
-          const textOffsetX = sx + radius + 6;
-          const textOffsetY = sy + 3.5;
+          const offsetDist = radius + 6;
+          let textOffsetX = sx;
+          let textOffsetY = sy;
+          let textAlign = 'left';
+
+          switch (node.labelPos) {
+            case 'left':
+              textOffsetX = sx - offsetDist;
+              textOffsetY = sy + 3.5;
+              textAlign = 'right';
+              break;
+            case 'right':
+              textOffsetX = sx + offsetDist;
+              textOffsetY = sy + 3.5;
+              textAlign = 'left';
+              break;
+            case 'top':
+              textOffsetX = sx;
+              textOffsetY = sy - offsetDist - 2;
+              textAlign = 'center';
+              break;
+            case 'bottom':
+              textOffsetX = sx;
+              textOffsetY = sy + offsetDist + 8;
+              textAlign = 'center';
+              break;
+            case 'top-left':
+              textOffsetX = sx - offsetDist;
+              textOffsetY = sy - 4;
+              textAlign = 'right';
+              break;
+            case 'top-right':
+              textOffsetX = sx + offsetDist;
+              textOffsetY = sy - 4;
+              textAlign = 'left';
+              break;
+            case 'bottom-left':
+              textOffsetX = sx - offsetDist;
+              textOffsetY = sy + 10;
+              textAlign = 'right';
+              break;
+            case 'bottom-right':
+              textOffsetX = sx + offsetDist;
+              textOffsetY = sy + 10;
+              textAlign = 'left';
+              break;
+            default:
+              textOffsetX = sx + offsetDist;
+              textOffsetY = sy + 3.5;
+              textAlign = 'left';
+          }
 
           ctx.save();
+          ctx.textAlign = textAlign;
           ctx.shadowColor = '#06111f';
-          ctx.shadowBlur = 6;
+          ctx.shadowBlur = 8;
           ctx.fillText(node.name, textOffsetX, textOffsetY);
           ctx.restore();
         }
       }
       ctx.restore();
+
+      } catch (err) {
+        console.error('Canvas render loop error:', err);
+      }
 
       if (!reducedMotion) {
         animId = requestAnimationFrame(render);

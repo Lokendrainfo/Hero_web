@@ -125,12 +125,12 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
             if expand_val is not None:
                 expand_hierarchy = str(expand_val).lower() in ('1', 'true')
             else:
-                expand_hierarchy = True
+                expand_hierarchy = (not task_type or str(task_type).upper() == 'FIBER_TRENCHING_DUCTING_TASK')
         elif extra_params and ('expand_hierarchy' in extra_params or 'expand' in extra_params):
             expand_val = extra_params.get('expand_hierarchy') or extra_params.get('expand')
             expand_hierarchy = str(expand_val).lower() in ('1', 'true')
         else:
-            expand_hierarchy = True
+            expand_hierarchy = (not task_type or str(task_type).upper() == 'FIBER_TRENCHING_DUCTING_TASK')
 
     # Resolve whether to query live execution telemetry (api/task-executions/<id>) for each leaf task.
     # Omit for task listing endpoints (my-tasks) to keep response time fast (~0.6s).
@@ -205,7 +205,10 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
             extra_params['search'] = search_term
 
     req_task_type = task_type
-    if not task_type or str(task_type).upper() in ['ALL', 'NONE', 'UNDEFINED']:
+    if not req_task_type and request:
+        q_params = getattr(request, 'query_params', getattr(request, 'GET', {}))
+        req_task_type = q_params.get('taskType') or q_params.get('task_type')
+    if not req_task_type or str(req_task_type).upper() in ['ALL', 'NONE', 'UNDEFINED']:
         req_task_type = None
 
     client = IlyncClient(request=request)
@@ -624,6 +627,22 @@ def get_user_authorized_tasks(user, request=None, task_type=None, page=0, size=5
         for root in base_content:
             format_and_add(root)
 
+    # Enforce strict data isolation: guarantee no task records from other categories leak into response
+    if req_task_type:
+        req_norm = str(req_task_type).strip().upper()
+        def matches_req_type(t):
+            t_type = str(t.get('taskType') or t.get('task_type') or '').strip().upper()
+            if t_type == req_norm:
+                return True
+            if req_norm == 'GREEN_SURVEY_V2' and t_type in ('GREEN_SURVEY_V2', 'GREEN_SURVEY'):
+                return True
+            if req_norm == 'LAND_BASED_SURVEY_V2' and t_type in ('LAND_BASED_SURVEY_V2', 'LAND_BASED_SURVEY'):
+                return True
+            if req_norm == 'FIBER_TRENCHING_DUCTING_TASK' and ('TRENCH' in t_type or 'DUCT' in t_type):
+                return True
+            return False
+
+        expanded_results = [t for t in expanded_results if matches_req_type(t)]
 
     # Scoping filter for vendor users or requested vendor_id
     allowed_vendor_ids = get_user_vendor_ids(user) if user else None

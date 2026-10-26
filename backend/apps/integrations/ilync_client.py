@@ -175,13 +175,19 @@ class IlyncClient:
     def get_my_tasks(self, task_type=None, page=0, size=10, params=None):
         valid_types = {
             "GP_SURVEY", "OTDR_SURVEY", "FIBER_SURVEY", "BLOCK_SURVEY",
-            "FIBER_TRENCHING_DUCTING_TASK", "LAND_BASED_SURVEY",
-            "GREEN_SURVEY", "BROWN_SURVEY"
+            "FIBER_TRENCHING_DUCTING_TASK", "LAND_BASED_SURVEY", "LAND_BASED_SURVEY_V2",
+            "GREEN_SURVEY", "GREEN_SURVEY_V2", "BROWN_SURVEY", "ELECTRIC_METER_TASK",
+            "DTP", "DTP_IMPORT", "GP_INFRA", "BLOCK_INFRA", "MANHOLE", "BLOWING",
+            "SPLICING", "OTDR", "OTDR_TASK", "ROUTE_MARKER"
         }
         eff_size = min(int(size), 50) if (size and str(size).isdigit() and int(size) > 0) else 50
         req_params = {"page": page, "size": eff_size}
-        if task_type and str(task_type).upper() in valid_types:
-            req_params["taskType"] = str(task_type).upper()
+        if task_type:
+            ttype_str = str(task_type).upper()
+            if ttype_str in valid_types:
+                req_params["taskType"] = ttype_str
+            else:
+                req_params["taskType"] = ttype_str
         
         allowed_keys = {'search', 'query', 'taskType'}
         if params and isinstance(params, dict):

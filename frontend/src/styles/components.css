@@ -2439,3 +2439,133 @@ textarea:focus {
   }
 }
 
+/* ==========================================================================
+   NESTED TASK SIDEBAR NAVIGATION (iLANCE SPEC)
+   ========================================================================== */
+.nav-nested-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+
+.nav-nested-node {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.nav-nested-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: #475569;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-decoration: none;
+  width: 100%;
+  box-sizing: border-box;
+  transition: all 0.15s ease;
+  user-select: none;
+  text-align: left;
+}
+
+.nav-nested-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.nav-nested-btn.active-parent {
+  color: #0369a1;
+  font-weight: 600;
+  background: rgba(224, 242, 254, 0.45);
+}
+
+.nav-nested-btn.active-leaf {
+  background: #e0f2fe;
+  color: #0284c7;
+  font-weight: 600;
+}
+
+.nav-nested-btn .node-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-nested-btn .node-icon {
+  flex-shrink: 0;
+  color: #64748b;
+}
+
+.nav-nested-btn.active-parent .node-icon,
+.nav-nested-btn.active-leaf .node-icon {
+  color: #0284c7;
+}
+
+.nav-nested-btn .node-chevron {
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.nav-nested-btn .node-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.nav-nested-btn .node-bullet {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #94a3b8;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.nav-nested-btn.active-leaf .node-bullet {
+  background: #0284c7;
+  transform: scale(1.3);
+}
+
+.nav-nested-btn .node-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+}
+
+/* Indentation levels */
+.nav-level-0 {
+  padding-left: 10px;
+}
+
+.nav-level-1 {
+  padding-left: 22px;
+}
+
+.nav-level-2 {
+  padding-left: 34px;
+}
+
+.nav-level-3 {
+  padding-left: 46px;
+}
+
+.nav-nested-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+
+

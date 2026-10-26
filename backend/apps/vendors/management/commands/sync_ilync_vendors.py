@@ -72,67 +72,84 @@ class Command(BaseCommand):
             phone = str(item.get('phoneNumber') or '').strip()
             is_active = bool(item.get('active', True))
 
-            # Match vendor in DB:
-            # 1. By external_vendor_id
-            # 2. Or by name (case-insensitive)
-            # 3. Or by code
-            vendor = None
-            if ext_v_id:
-                vendor = Vendor.objects.filter(external_vendor_id=ext_v_id).first()
-            if not vendor:
-                vendor = Vendor.objects.filter(name__iexact=name).first()
-            if not vendor and code:
-                vendor = Vendor.objects.filter(code__iexact=code).first()
+            try:
+                # Match vendor in DB:
+                # 1. By external_vendor_id
+                # 2. Or by name (case-insensitive)
+                # 3. Or by code
+                vendor = None
+                if ext_v_id:
+                    vendor = Vendor.objects.filter(external_vendor_id=ext_v_id).first()
+                if not vendor:
+                    vendor = Vendor.objects.filter(name__iexact=name).first()
+                if not vendor and code:
+                    vendor = Vendor.objects.filter(code__iexact=code).first()
 
-            if vendor:
-                # Non-destructive update
-                updated_fields = []
-                if vendor.name != name:
-                    vendor.name = name
-                    updated_fields.append('name')
-                if ext_v_id and vendor.external_vendor_id != ext_v_id:
-                    vendor.external_vendor_id = ext_v_id
-                    updated_fields.append('external_vendor_id')
-                if code and vendor.code != code:
-                    vendor.code = code
-                    vendor.vendor_code = code
-                    updated_fields.extend(['code', 'vendor_code'])
-                if contact and vendor.contact_person != contact:
-                    vendor.contact_person = contact
-                    updated_fields.append('contact_person')
-                if email and vendor.email != email:
-                    vendor.email = email
-                    updated_fields.append('email')
-                if phone and vendor.phone != phone:
-                    vendor.phone = phone
-                    updated_fields.append('phone')
-                if not vendor.is_active:
-                    vendor.is_active = True
-                    vendor.status = 'ACTIVE'
-                    updated_fields.extend(['is_active', 'status'])
+                if vendor:
+                    # Non-destructive update
+                    updated_fields = []
+                    if vendor.name != name:
+                        clash = Vendor.objects.filter(name__iexact=name).exclude(id=vendor.id).exists()
+                        if clash:
+                            # Keep existing unique name if it already starts with name (e.g. GRAVELL (a3db))
+                            if not vendor.name.lower().startswith(name.lower()):
+                                suffix = ext_v_id[-4:] if ext_v_id else str(vendor.id)
+                                unique_name = f"{name} ({suffix})"
+                                if not Vendor.objects.filter(name__iexact=unique_name).exclude(id=vendor.id).exists():
+                                    vendor.name = unique_name
+                                    updated_fields.append('name')
+                        else:
+                            vendor.name = name
+                            updated_fields.append('name')
+                    if ext_v_id and vendor.external_vendor_id != ext_v_id:
+                        vendor.external_vendor_id = ext_v_id
+                        updated_fields.append('external_vendor_id')
+                    if code and vendor.code != code:
+                        vendor.code = code
+                        vendor.vendor_code = code
+                        updated_fields.extend(['code', 'vendor_code'])
+                    if contact and vendor.contact_person != contact:
+                        vendor.contact_person = contact
+                        updated_fields.append('contact_person')
+                    if email and vendor.email != email:
+                        vendor.email = email
+                        updated_fields.append('email')
+                    if phone and vendor.phone != phone:
+                        vendor.phone = phone
+                        updated_fields.append('phone')
+                    if not vendor.is_active:
+                        vendor.is_active = True
+                        vendor.status = 'ACTIVE'
+                        updated_fields.extend(['is_active', 'status'])
 
-                if updated_fields:
-                    vendor.save(update_fields=list(set(updated_fields)))
-                    self.stdout.write(f"  [UPDATED] Vendor #{vendor.id}: '{vendor.name}' (ext_id={vendor.external_vendor_id})")
+                    if updated_fields:
+                        vendor.save(update_fields=list(set(updated_fields)))
+                        self.stdout.write(f"  [UPDATED] Vendor #{vendor.id}: '{vendor.name}' (ext_id={vendor.external_vendor_id})")
+                    else:
+                        self.stdout.write(f"  [UNCHANGED] Vendor #{vendor.id}: '{vendor.name}'")
                 else:
-                    self.stdout.write(f"  [UNCHANGED] Vendor #{vendor.id}: '{vendor.name}'")
-            else:
-                # Create missing vendor
-                vendor = Vendor.objects.create(
-                    name=name,
-                    external_vendor_id=ext_v_id or None,
-                    code=code,
-                    vendor_code=code,
-                    vendor_type=v_type,
-                    contact_person=contact,
-                    email=email,
-                    phone=phone,
-                    status='ACTIVE',
-                    is_active=True
-                )
-                self.stdout.write(self.style.SUCCESS(f"  [CREATED] Vendor #{vendor.id}: '{vendor.name}' (ext_id={vendor.external_vendor_id})"))
+                    # Create missing vendor
+                    target_name = name
+                    if Vendor.objects.filter(name__iexact=target_name).exists():
+                        suffix = ext_v_id[-4:] if ext_v_id else 'ext'
+                        target_name = f"{name} ({suffix})"
+                    vendor = Vendor.objects.create(
+                        name=target_name,
+                        external_vendor_id=ext_v_id or None,
+                        code=code,
+                        vendor_code=code,
+                        vendor_type=v_type,
+                        contact_person=contact,
+                        email=email,
+                        phone=phone,
+                        status='ACTIVE',
+                        is_active=True
+                    )
+                    self.stdout.write(self.style.SUCCESS(f"  [CREATED] Vendor #{vendor.id}: '{vendor.name}' (ext_id={vendor.external_vendor_id})"))
 
-            vendor_synced_count += 1
+                vendor_synced_count += 1
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"  Error syncing vendor '{name}' ({ext_v_id}): {e}"))
 
         self.stdout.write(self.style.SUCCESS(f"Synchronized {vendor_synced_count} vendor(s) in Hero database."))
 
@@ -150,8 +167,10 @@ class Command(BaseCommand):
                 # Update vendor name if iLync detail has newer partnerName
                 live_pname = str(data.get('partnerName') or data.get('name') or '').strip()
                 if live_pname and v_obj.name != live_pname:
-                    v_obj.name = live_pname
-                    v_obj.save(update_fields=['name'])
+                    clash = Vendor.objects.filter(name__iexact=live_pname).exclude(id=v_obj.id).exists()
+                    if not clash:
+                        v_obj.name = live_pname
+                        v_obj.save(update_fields=['name'])
 
                 users = data.get('users') or []
                 if not isinstance(users, list):

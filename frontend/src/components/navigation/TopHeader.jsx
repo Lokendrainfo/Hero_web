@@ -6,6 +6,7 @@ import { ConfirmDialog } from '../common/ConfirmDialog';
 
 const ROUTE_TITLES = {
   '/dashboard': 'Dashboard',
+  '/project-dashboard': 'Project Dashboard',
   '/machines': 'Machines',
   '/tracking': 'Live Tracking',
   '/tasks': 'Tasks',

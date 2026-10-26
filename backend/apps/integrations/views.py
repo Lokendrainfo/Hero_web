@@ -511,13 +511,24 @@ class IlyncTaskTypeCountsView(IlyncBaseView):
 
         counts = {
             "GP_SURVEY": 0,
-            "OTDR_SURVEY": 0,
-            "FIBER_SURVEY": 0,
             "BLOCK_SURVEY": 0,
-            "BROWN_SURVEY": 0,
+            "FIBER_SURVEY": 0,
+            "OTDR_SURVEY": 0,
+            "DTP": 0,
+            "GREEN_SURVEY_V2": 0,
+            "GREEN_SURVEY": 0,
+            "LAND_BASED_SURVEY_V2": 0,
             "LAND_BASED_SURVEY": 0,
+            "BROWN_SURVEY": 0,
+            "ELECTRIC_METER_TASK": 0,
+            "GP_INFRA": 0,
+            "BLOCK_INFRA": 0,
             "FIBER_TRENCHING_DUCTING_TASK": 0,
-            "GREEN_SURVEY": 0
+            "MANHOLE": 0,
+            "BLOWING": 0,
+            "SPLICING": 0,
+            "OTDR_TASK": 0,
+            "ROUTE_MARKER": 0,
         }
 
         for t in task_list:
@@ -528,6 +539,8 @@ class IlyncTaskTypeCountsView(IlyncBaseView):
                 # Default trenching fallback if type matches
                 if 'TRENCH' in ttype or 'DUCT' in ttype:
                     counts['FIBER_TRENCHING_DUCTING_TASK'] += 1
+                elif 'METER' in ttype:
+                    counts['ELECTRIC_METER_TASK'] += 1
                 elif 'GP' in ttype or 'SURVEY' in ttype:
                     counts['GP_SURVEY'] += 1
 
@@ -535,14 +548,25 @@ class IlyncTaskTypeCountsView(IlyncBaseView):
         from apps.common.vendor_scope import get_user_vendor_ids
         if get_user_vendor_ids(user) is None:
             full_counts = {
-                "GP_SURVEY": 17180,
-                "OTDR_SURVEY": 16353,
-                "FIBER_SURVEY": 16098,
+                "GP_SURVEY": 18279,
                 "BLOCK_SURVEY": 931,
-                "BROWN_SURVEY": 20,
-                "LAND_BASED_SURVEY": 13,
-                "FIBER_TRENCHING_DUCTING_TASK": 12,
-                "GREEN_SURVEY": 12
+                "FIBER_SURVEY": 16109,
+                "OTDR_SURVEY": 16364,
+                "DTP": 0,
+                "GREEN_SURVEY_V2": 26,
+                "GREEN_SURVEY": 12,
+                "LAND_BASED_SURVEY_V2": 2,
+                "LAND_BASED_SURVEY": 14,
+                "BROWN_SURVEY": 29,
+                "ELECTRIC_METER_TASK": 244,
+                "GP_INFRA": 0,
+                "BLOCK_INFRA": 0,
+                "FIBER_TRENCHING_DUCTING_TASK": 39,
+                "MANHOLE": 0,
+                "BLOWING": 0,
+                "SPLICING": 0,
+                "OTDR_TASK": 0,
+                "ROUTE_MARKER": 0,
             }
             try:
                 client = IlyncClient(request=request)
