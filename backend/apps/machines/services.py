@@ -525,7 +525,25 @@ def _fetch_live_fiberforce_machines_impl(user, params=None):
         operator_name = operator_raw.get('name') if isinstance(operator_raw, dict) else (str(operator_raw) if operator_raw else "Ravi Kumar")
 
         # Stable integer ID or chassis string for frontend routing
-        stable_id = existing_id_map.get(chassis) or (idx + 1000)
+        stable_id = existing_id_map.get(chassis)
+        if not stable_id and chassis:
+            try:
+                m_row, _ = Machine.objects.get_or_create(
+                    machine_chassis_no=chassis,
+                    defaults={
+                        'name': f"{model_code} HDD ({chassis[-4:] if len(chassis) >= 4 else chassis})",
+                        'serial_number': chassis,
+                        'model': model_code,
+                        'status': status,
+                        'is_active': True,
+                    }
+                )
+                stable_id = m_row.id
+                existing_id_map[chassis] = m_row.id
+            except Exception:
+                stable_id = idx + 1000
+        if not stable_id:
+            stable_id = idx + 1000
 
         speed_val = _safe_float(tele.get('speed_kmph') or tele.get('speed'), 0.0)
         course_val = _safe_float(tele.get('course_deg') or tele.get('heading'), 0.0)

@@ -50,32 +50,125 @@ class VendorRelatedField(serializers.PrimaryKeyRelatedField):
     def to_internal_value(self, data):
         from django.db.models import Q
         val_str = str(data).strip()
-        try:
-            if val_str.isdigit():
-                return Vendor.objects.get(id=int(val_str))
-            return Vendor.objects.get(
+        v_obj = None
+
+        if val_str.isdigit():
+            v_obj = Vendor.objects.filter(id=int(val_str)).first()
+
+        if not v_obj:
+            v_obj = Vendor.objects.filter(
                 Q(external_vendor_id=val_str) |
                 Q(code__iexact=val_str) |
                 Q(name__iexact=val_str)
-            )
-        except Vendor.DoesNotExist:
-            self.fail('does_not_exist', pk_value=data)
+            ).first()
+
+        # If not found, attempt on-demand resolution from iLync
+        if not v_obj:
+            try:
+                from apps.integrations.ilync_client import IlyncClient
+                client = IlyncClient()
+                res = client.get_vendor_by_id(val_str)
+                v_data = res.get('data') if isinstance(res, dict) and 'data' in res else res
+                if isinstance(v_data, dict) and (v_data.get('partnerName') or v_data.get('name')):
+                    ext_id = str(v_data.get('id') or val_str).strip()
+                    v_name = str(v_data.get('partnerName') or v_data.get('name')).strip()
+                    target_name = v_name
+                    if Vendor.objects.filter(name__iexact=target_name).exists():
+                        target_name = f"{v_name} ({ext_id[-4:] if ext_id else 'ext'})"
+                    v_obj = Vendor.objects.create(
+                        name=target_name,
+                        external_vendor_id=ext_id or None,
+                        code=str(v_data.get('vendorCode') or (ext_id[-8:].upper() if ext_id else '')),
+                        vendor_type=str(v_data.get('legalEntityType') or 'CONTRACTOR'),
+                        contact_person=str(v_data.get('contactName') or ''),
+                        email=str(v_data.get('email') or ''),
+                        phone=str(v_data.get('phoneNumber') or ''),
+                        status='ACTIVE',
+                        is_active=True
+                    )
+            except Exception:
+                pass
+
+        if v_obj:
+            return v_obj
+
+        self.fail('does_not_exist', pk_value=data)
 
 
 class MachineRelatedField(serializers.PrimaryKeyRelatedField):
     def to_internal_value(self, data):
         from django.db.models import Q
         val_str = str(data).strip()
-        try:
-            if val_str.isdigit():
-                return Machine.objects.get(id=int(val_str))
-            return Machine.objects.get(
+        m_obj = None
+
+        if val_str.isdigit():
+            m_obj = Machine.objects.filter(id=int(val_str)).first()
+
+        if not m_obj:
+            m_obj = Machine.objects.filter(
                 Q(machine_chassis_no__iexact=val_str) |
                 Q(serial_number__iexact=val_str) |
-                Q(code__iexact=val_str)
-            )
-        except Machine.DoesNotExist:
-            self.fail('does_not_exist', pk_value=data)
+                Q(code__iexact=val_str) |
+                Q(name__iexact=val_str)
+            ).first()
+
+        # If still not found, try sync with FiberForce
+        if not m_obj:
+            from apps.machines.services import sync_fiberforce_machines
+            try:
+                sync_fiberforce_machines()
+                if val_str.isdigit():
+                    m_obj = Machine.objects.filter(id=int(val_str)).first()
+                if not m_obj:
+                    m_obj = Machine.objects.filter(
+                        Q(machine_chassis_no__iexact=val_str) |
+                        Q(serial_number__iexact=val_str) |
+                        Q(code__iexact=val_str) |
+                        Q(name__iexact=val_str)
+                    ).first()
+            except Exception:
+                pass
+
+        # If still not found and val_str is a synthetic live ID (>= 1000)
+        if not m_obj and val_str.isdigit() and int(val_str) >= 1000:
+            try:
+                from apps.machines.services import fetch_live_fiberforce_machines
+                res = fetch_live_fiberforce_machines(None)
+                live_machines = res.get('results', [])
+                target_m = next((m for m in live_machines if str(m.get('id')) == val_str), None)
+                if not target_m:
+                    target_idx = int(val_str) - 1000
+                    if 0 <= target_idx < len(live_machines):
+                        target_m = live_machines[target_idx]
+                if target_m:
+                    chassis_candidate = target_m.get('machine_chassis_no') or target_m.get('serial_number')
+                    if chassis_candidate:
+                        m_obj = Machine.objects.filter(machine_chassis_no__iexact=chassis_candidate).first()
+            except Exception:
+                pass
+
+        # If still not found and val_str is a synthetic live ID (>= 1000)
+        if not m_obj and val_str.isdigit() and int(val_str) >= 1000:
+            try:
+                from apps.machines.services import fetch_live_fiberforce_machines
+                res = fetch_live_fiberforce_machines(None)
+                live_machines = res.get('results', [])
+                target_m = next((m for m in live_machines if str(m.get('id')) == val_str), None)
+                if not target_m:
+                    target_idx = int(val_str) - 1000
+                    if 0 <= target_idx < len(live_machines):
+                        target_m = live_machines[target_idx]
+                if target_m:
+                    chassis_candidate = target_m.get('machine_chassis_no') or target_m.get('serial_number')
+                    if chassis_candidate:
+                        m_obj = Machine.objects.filter(machine_chassis_no__iexact=chassis_candidate).first()
+            except Exception:
+                pass
+
+        if m_obj:
+            return m_obj
+
+        self.fail('does_not_exist', pk_value=data)
 
 
 class MachineShiftRequestSerializer(serializers.ModelSerializer):

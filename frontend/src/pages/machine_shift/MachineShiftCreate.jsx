@@ -186,22 +186,23 @@ export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => 
 
     // Add iLance machines first
     iLanceMachines.forEach(im => {
-      const chassis = String(im.machineNo || im.name || im.code || '').trim();
+      const chassis = String(im.machineNo || im.machine_no || im.name || im.code || '').trim();
       // Find corresponding Machine from DB list if present
       const dbMatch = (allMachines || []).find(dbM =>
         (chassis && (
           String(dbM.machine_chassis_no) === chassis ||
           String(dbM.serial_number) === chassis ||
+          String(dbM.machineNo) === chassis ||
           String(dbM.name).includes(chassis)
         ))
       );
 
-      const mId = dbMatch ? dbMatch.id : (im.id || chassis);
+      const mId = dbMatch ? dbMatch.id : (chassis || im.id);
       const mName = dbMatch
         ? `${dbMatch.name} [${dbMatch.machine_chassis_no || dbMatch.serial_number || chassis}]`
         : `${im.code || 'HDD'} (${chassis || im.name || 'Machine'})`;
 
-      const key = String(dbMatch ? dbMatch.id : chassis);
+      const key = String(dbMatch ? dbMatch.id : (chassis || im.id));
       if (!seenChassis.has(key)) {
         seenChassis.add(key);
         combined.push({
@@ -301,8 +302,21 @@ export const MachineShiftCreate = ({ onCreated, onCancel, isModal = false }) => 
       }
     } catch (err) {
       console.error("Create shift request failed", err);
-      const msg = err?.data?.message || err?.message || err?.detail || 'Failed to submit shift request.';
-      setErrorMsg(typeof msg === 'object' ? JSON.stringify(msg) : msg);
+      let msg = err?.data?.message || err?.response?.data?.message || err?.message || err?.detail || 'Failed to submit shift request.';
+      const resData = err?.response?.data || err?.data;
+      if (resData && typeof resData === 'object') {
+        if (resData.message) {
+          msg = resData.message;
+        } else if (resData.detail) {
+          msg = resData.detail;
+        } else {
+          const firstKey = Object.keys(resData)[0];
+          const firstVal = resData[firstKey];
+          const cleanVal = Array.isArray(firstVal) ? firstVal[0] : firstVal;
+          msg = `${firstKey}: ${cleanVal}`;
+        }
+      }
+      setErrorMsg(typeof msg === 'object' ? JSON.stringify(msg) : String(msg));
       showToast('Failed to create shift request.', 'error');
     } finally {
       setSubmitting(false);
