@@ -157,6 +157,9 @@ class IlyncClient:
         params = {"page": page, "size": size}
         return self.get("api/users", params=params)
 
+    def get_user_by_id(self, user_id):
+        return self.get(f"api/users/id/{user_id}")
+
     def get_locations(self, page=0, size=100, search=None):
         params = {"page": page, "size": size}
         if search:

@@ -311,3 +311,123 @@ class SafeIlyncUserSyncTests(TestCase):
         self.assertEqual(att.status, 'PRESENT')
         self.assertEqual(att.user_id, self.ajay_nayak.id)
         self.assertEqual(att.vendor_id, self.vendor_shyam.id)
+
+    def test_13_new_user_with_reporting_chain_sets_manager(self):
+        """13. A new iLync user with reportingChain links their reporting_manager."""
+        payload = {
+            "id": "new_subordinate_id_101",
+            "empId": "EMP-101",
+            "phoneNumber": "9112233445",
+            "name": "Subordinate Person",
+            "email": "subordinate@example.com",
+            "active": True,
+            "reportingChain": [
+                {
+                    "empId": self.manager_user.username,
+                    "name": self.manager_user.get_full_name(),
+                    "designation": "GENERAL_MANAGER"
+                }
+            ]
+        }
+        user, status = sync_ilync_user_to_django(payload)
+        self.assertEqual(status, 'CREATED')
+        self.assertIsNotNone(user.reporting_manager)
+        self.assertEqual(user.reporting_manager.id, self.manager_user.id)
+
+    def test_14_existing_user_reporting_chain_updates_manager(self):
+        """14. Existing user without manager gets reporting_manager from reportingChain."""
+        # ajayveer currently has reporting_manager = None
+        self.assertIsNone(self.ajayveer.reporting_manager)
+
+        payload = {
+            "id": self.ajayveer.external_user_id,
+            "empId": self.ajayveer.employee_id,
+            "name": "AJAYVEER YADAV",
+            "active": True,
+            "reportingChain": [
+                {
+                    "empId": self.manager_user.username,
+                    "name": self.manager_user.get_full_name(),
+                    "designation": "GENERAL_MANAGER"
+                }
+            ]
+        }
+        user, status = sync_ilync_user_to_django(payload)
+        self.assertEqual(status, 'UPDATED')
+        self.ajayveer.refresh_from_db()
+        self.assertEqual(self.ajayveer.reporting_manager, self.manager_user)
+
+    def test_15_empty_reporting_chain_does_not_clear_existing_manager(self):
+        """15. Empty reportingChain: [] from iLync does NOT strip an existing reporting manager."""
+        self.assertEqual(self.ajay_nayak.reporting_manager, self.manager_user)
+
+        payload = {
+            "id": self.ajay_nayak.external_user_id,
+            "empId": self.ajay_nayak.employee_id,
+            "name": "Ajay Nayak",
+            "active": True,
+            "reportingChain": []  # Empty chain like Rekha Ram payload
+        }
+        user, status = sync_ilync_user_to_django(payload)
+        self.ajay_nayak.refresh_from_db()
+        self.assertEqual(self.ajay_nayak.reporting_manager, self.manager_user)
+
+    def test_16_circular_reporting_prevented(self):
+        """16. Assigning a reporting manager that would cause circular hierarchy is prevented."""
+        # Currently: ajay_nayak reports to manager_user
+        self.assertEqual(self.ajay_nayak.reporting_manager, self.manager_user)
+
+        # Attempt to set ajay_nayak as manager of manager_user in iLync payload
+        payload = {
+            "id": "mgr_ext_id_01",
+            "empId": self.manager_user.username,
+            "name": "General Manager",
+            "active": True,
+            "reportingChain": [
+                {
+                    "empId": self.ajay_nayak.employee_id,
+                    "name": self.ajay_nayak.get_full_name(),
+                    "designation": "AREA_MANAGER"
+                }
+            ]
+        }
+        user, status = sync_ilync_user_to_django(payload)
+        self.manager_user.refresh_from_db()
+        # Manager user MUST NOT report to subordinate ajay_nayak!
+        self.assertIsNone(self.manager_user.reporting_manager)
+
+    def test_17_pass_two_resolves_forward_referenced_manager(self):
+        """17. Pass 2 in fetch_and_sync_all_ilync_users resolves manager created later in batch."""
+        page_payload = {
+            'success': True,
+            'data': {
+                'content': [
+                    {
+                        'id': 'SUBORDINATE_USER',
+                        'empId': 'SUB_001',
+                        'name': 'Batch Subordinate',
+                        'active': True,
+                        'reportingChain': [
+                            {'empId': 'MGR_001', 'name': 'Batch Manager'}
+                        ]
+                    },
+                    {
+                        'id': 'MANAGER_USER',
+                        'empId': 'MGR_001',
+                        'name': 'Batch Manager',
+                        'active': True,
+                        'reportingChain': []
+                    }
+                ],
+                'totalPages': 1,
+                'totalElements': 2,
+                'last': True
+            }
+        }
+        with patch('apps.integrations.ilync_client.IlyncClient.get_users', return_value=page_payload):
+            with patch('apps.integrations.ilync_client.IlyncClient.get_user_by_id', return_value={'success': False}):
+                res = fetch_and_sync_all_ilync_users(max_pages=1, size=10)
+                sub_user = User.objects.get(external_user_id='SUBORDINATE_USER')
+                mgr_user = User.objects.get(external_user_id='MANAGER_USER')
+                self.assertEqual(sub_user.reporting_manager, mgr_user)
+
