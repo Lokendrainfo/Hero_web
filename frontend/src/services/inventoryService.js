@@ -7,4 +7,8 @@ export const inventoryService = {
   searchStockBalance: (payload) => api.post('/integrations/inventory/stock-balance/', payload),
   getStockItems: (params) => api.get('/integrations/inventory/items/', { params }),
   searchStockItems: (payload) => api.post('/integrations/inventory/items/', payload),
+  exportCompleteStockExcel: (params = {}) => api.get('/integrations/inventory/export-excel/', {
+    params,
+    responseType: 'blob'
+  }),
 };

@@ -21,7 +21,8 @@ from .views import (
     IlyncMapViewExecutionsView,
     IlyncGreenSurveyMapView,
     IlyncGreenSurveyVideoStreamView,
-    IlyncTrenchingDashboardSummaryView
+    IlyncTrenchingDashboardSummaryView,
+    IlyncStockExportExcelView
 )
 from apps.machines.views import MachineChassisHddShotSummaryView, MachineHddMetricsDayWiseView
 
@@ -37,6 +38,7 @@ urlpatterns = [
     path('inventory/stock-issue-items/search/', IlyncStockIssueItemSearchView.as_view(), name='ilync_stock_issue_items_search'),
     path('inventory/stock-issue-items/', IlyncStockIssueItemSearchView.as_view(), name='ilync_stock_issue_items_alias'),
 
+    path('inventory/export-excel/', IlyncStockExportExcelView.as_view(), name='ilync_stock_export_excel'),
     path('inventory/stock-balance/', IlyncStockBalanceSearchView.as_view(), name='ilync_stock_balance_search'),
     path('inventory/items/', IlyncStockItemSearchView.as_view(), name='ilync_stock_items_search'),
     path('tasks/map-view-executions/', IlyncMapViewExecutionsView.as_view(), name='ilync_map_view_executions'),

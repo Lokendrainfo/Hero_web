@@ -305,6 +305,46 @@ class IlyncStockIssueSearchView(IlyncBaseView):
 
         if isinstance(data, dict) and "data" in data and isinstance(data["data"], dict) and "content" in data["data"]:
             issues = data["data"]["content"]
+            try:
+                from .inventory_export_service import get_cached_metadata
+                vendors_by_id, vendors_by_name, users_by_id = get_cached_metadata(client)
+                for iss in issues:
+                    issuee_id = str(iss.get('issueeId') or '').strip()
+                    issuee_name = str(iss.get('issueeName') or '').strip()
+                    issued_by_id = str(iss.get('issuedBy') or iss.get('createdBy') or '').strip()
+
+                    v_match = vendors_by_id.get(issuee_id) or vendors_by_name.get(issuee_name.lower())
+                    u_match = users_by_id.get(issuee_id)
+
+                    if v_match:
+                        iss['issuedTo'] = (v_match.get('partnerName') or v_match.get('name') or issuee_name).strip()
+                        iss['recipientPerson'] = (v_match.get('contactName') or '').strip()
+                        v_users = v_match.get('users', [])
+                        matched_u = next((u for u in v_users if (u.get('name') or '').strip().lower() == iss['recipientPerson'].lower()), None) if iss['recipientPerson'] else None
+                        if not matched_u:
+                            matched_u = next((u for u in v_users if (u.get('designation') or '').upper() == 'VENDOR'), None)
+                        if not matched_u and v_users:
+                            matched_u = v_users[0]
+                        iss['vendorOrEmpId'] = matched_u.get('empId') if matched_u else (v_match.get('phoneNumber') or '')
+                    elif u_match:
+                        iss['issuedTo'] = (u_match.get('name') or '').strip()
+                        iss['recipientPerson'] = iss['issuedTo']
+                        iss['vendorOrEmpId'] = u_match.get('empId') or u_match.get('phoneNumber') or ''
+                    else:
+                        iss['issuedTo'] = issuee_name
+                        iss['recipientPerson'] = ''
+                        iss['vendorOrEmpId'] = str(iss.get('issueeCode') or iss.get('issueeId') or '')
+
+                    issued_by_user = users_by_id.get(issued_by_id)
+                    if issued_by_user:
+                        u_name = (issued_by_user.get('name') or '').strip()
+                        u_emp = (issued_by_user.get('empId') or '').strip()
+                        iss['issuedByName'] = f"{u_name} ({u_emp})" if u_emp else u_name
+                    else:
+                        iss['issuedByName'] = 'Store Admin / Manager'
+            except Exception as e:
+                logger.warning("[IlyncStockIssueSearchView] Error enriching issues: %s", e)
+
             if req_vendor and str(req_vendor).strip() and req_vendor != 'all':
                 from apps.vendors.models import Vendor
                 target_v = Vendor.objects.filter(id=int(req_vendor)).first() if str(req_vendor).isdigit() else Vendor.objects.filter(external_vendor_id=str(req_vendor)).first() or Vendor.objects.filter(name__icontains=str(req_vendor)).first()
@@ -348,7 +388,47 @@ class IlyncStockIssueItemSearchView(IlyncBaseView):
         flat_items = []
         if isinstance(data, dict) and "data" in data and isinstance(data["data"], dict) and "content" in data["data"]:
             issues = data["data"]["content"]
+            try:
+                from .inventory_export_service import get_cached_metadata
+                vendors_by_id, vendors_by_name, users_by_id = get_cached_metadata(client)
+            except Exception:
+                vendors_by_id, vendors_by_name, users_by_id = {}, {}, {}
+
             for issue in issues:
+                issuee_id = str(issue.get('issueeId') or '').strip()
+                issuee_name = str(issue.get('issueeName') or '').strip()
+                issued_by_id = str(issue.get('issuedBy') or issue.get('createdBy') or '').strip()
+
+                v_match = vendors_by_id.get(issuee_id) or vendors_by_name.get(issuee_name.lower())
+                u_match = users_by_id.get(issuee_id)
+
+                if v_match:
+                    issued_to = (v_match.get('partnerName') or v_match.get('name') or issuee_name).strip()
+                    recipient_person = (v_match.get('contactName') or '').strip()
+                    v_users = v_match.get('users', [])
+                    matched_u = next((u for u in v_users if (u.get('name') or '').strip().lower() == recipient_person.lower()), None) if recipient_person else None
+                    if not matched_u:
+                        matched_u = next((u for u in v_users if (u.get('designation') or '').upper() == 'VENDOR'), None)
+                    if not matched_u and v_users:
+                        matched_u = v_users[0]
+                    vendor_or_emp_id = matched_u.get('empId') if matched_u else (v_match.get('phoneNumber') or '')
+                elif u_match:
+                    issued_to = (u_match.get('name') or '').strip()
+                    recipient_person = issued_to
+                    vendor_or_emp_id = u_match.get('empId') or u_match.get('phoneNumber') or ''
+                else:
+                    issued_to = issuee_name
+                    recipient_person = ''
+                    vendor_or_emp_id = str(issue.get('issueeCode') or issue.get('issueeId') or '')
+
+                issued_by_user = users_by_id.get(issued_by_id)
+                if issued_by_user:
+                    u_name = (issued_by_user.get('name') or '').strip()
+                    u_emp = (issued_by_user.get('empId') or '').strip()
+                    issued_by_name = f"{u_name} ({u_emp})" if u_emp else u_name
+                else:
+                    issued_by_name = 'Store Admin / Manager'
+
                 for it in issue.get('items', []):
                     item_copy = dict(it)
                     item_copy['issueId'] = issue.get('id')
@@ -356,8 +436,13 @@ class IlyncStockIssueItemSearchView(IlyncBaseView):
                     item_copy['fromWarehouseCode'] = issue.get('fromWarehouseCode')
                     item_copy['fromWarehouseName'] = issue.get('fromWarehouseName')
                     item_copy['issueeType'] = issue.get('issueeType')
-                    item_copy['issueeId'] = issue.get('issueeId')
-                    item_copy['issueeName'] = issue.get('issueeName')
+                    item_copy['issueeId'] = issuee_id
+                    item_copy['issueeName'] = issuee_name
+                    item_copy['issuedTo'] = issued_to
+                    item_copy['recipientPerson'] = recipient_person
+                    item_copy['vendorOrEmpId'] = vendor_or_emp_id
+                    item_copy['issuedByName'] = issued_by_name
+                    item_copy['transferRef'] = issue.get('stockTransferNumber') or ''
                     item_copy['issuedAt'] = issue.get('issuedAt')
                     item_copy['status'] = issue.get('status')
                     flat_items.append(item_copy)
@@ -2290,3 +2375,56 @@ class IlyncTrenchingDashboardSummaryView(IlyncBaseView):
 
 
 
+
+
+
+class IlyncStockExportExcelView(APIView):
+    """
+    GET /api/v1/integrations/inventory/export-excel/
+    Generates a complete 6-sheet Excel workbook for all stock and inventory:
+    - Sheet 1: Complete Stock Summary
+    - Sheet 2: Warehouse-Wise Stock
+    - Sheet 3: Stock Issue Details
+    - Sheet 4: Available Inventory
+    - Sheet 5: Material-Wise Summary
+    - Sheet 6: Drum & Serialized Items
+    Supports optional ?vendor_id=...
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from django.http import HttpResponse
+        from .inventory_export_service import InventoryExportService
+        from datetime import datetime
+
+        vendor_id = request.query_params.get('vendor_id') or request.query_params.get('vendor')
+        
+        # Scoping filter for vendor users
+        user = request.user if request.user and request.user.is_authenticated else None
+        if user and not user.is_superuser and 'ADMIN' not in getattr(user, 'get_role_list', lambda: [])():
+            from apps.common.vendor_scope import get_user_vendor_ids
+            allowed = get_user_vendor_ids(user)
+            if allowed and not vendor_id:
+                vendor_id = allowed[0]
+
+        try:
+            service = InventoryExportService(vendor_filter=vendor_id)
+            service.fetch_all_data()
+            excel_bytes = service.generate_excel_workbook()
+
+            date_str = datetime.now().strftime('%Y-%m-%d')
+            filename = f"Hero_Complete_Stock_Inventory_Export_{date_str}.xlsx"
+
+            response = HttpResponse(
+                excel_bytes,
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            response['Access-Control-Expose-Headers'] = 'Content-Disposition'
+            return response
+        except Exception as e:
+            logger.error("[IlyncStockExportExcelView] Error generating inventory Excel: %s", str(e), exc_info=True)
+            return Response(
+                {"success": False, "message": f"Failed to generate inventory Excel report: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

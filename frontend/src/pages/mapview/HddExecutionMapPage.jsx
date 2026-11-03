@@ -9,9 +9,14 @@ import {
   LucideMinimize2,
   Globe,
   LucideRuler,
+  LucideDownload,
+  LucideChevronDown,
+  LucideFileText,
 } from 'lucide-react';
 import { taskService } from '../../services/taskService';
 import { useAuth } from '../../hooks/useAuth';
+import { useToast } from '../../context/ToastContext';
+import { exportWorkDoneKmz } from '../../utils/exportKmz';
 import {
   mapHddExecutionResponse,
   filterHddExecutionByDate,
@@ -313,6 +318,13 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
   // Lightbox State
   const [lightboxPhotos, setLightboxPhotos] = useState(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+
+  // KMZ Export State
+  const [isExportingKmz, setIsExportingKmz] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef(null);
+  const toastCtx = useToast();
+  const showToast = toastCtx?.showToast;
 
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -2075,6 +2087,19 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
     }
   };
 
+  // Close export dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) {
+        setShowExportMenu(false);
+      }
+    };
+    if (showExportMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showExportMenu]);
+
   if (loading) {
     return <LoadingSpinner title="Loading..." subtitle="Fetching map data & telemetry" />;
   }
@@ -2108,6 +2133,47 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
   const activeTaskCode = [executionData?.taskCode, executionData?.taskId].find(v => v && !isMongoHexId(v)) || '';
   const activeTaskName = [executionData?.displayName, executionData?.taskName].find(v => v && !isMongoHexId(v)) || '';
   const activeRing = [executionData?.ring, executionData?.ringId, executionData?.ringCode].find(v => v && !isMongoHexId(v)) || '';
+
+  const handleExport = async (range = 'current', format = 'kmz') => {
+    setShowExportMenu(false);
+    setIsExportingKmz(true);
+
+    try {
+      const dataToExport = range === 'cumulative' && rawExecutionData
+        ? rawExecutionData
+        : executionData;
+
+      if (!dataToExport) {
+        throw new Error('No execution data available to export.');
+      }
+
+      const pitsToUse = range === 'current'
+        ? displayPits
+        : (dataToExport.pits || getVisiblePitsForMap(dataToExport));
+
+      const result = await exportWorkDoneKmz({
+        executionData: {
+          ...dataToExport,
+          pits: pitsToUse
+        },
+        mode: format,
+        includeDepthPoints: true,
+        includePits: true,
+        includeTrenches: true
+      });
+
+      if (showToast) {
+        showToast(`✓ Work done ${format.toUpperCase()} downloaded: ${result.filename}`, 'success');
+      }
+    } catch (err) {
+      console.error('[HddExecutionMapPage] Export error:', err);
+      if (showToast) {
+        showToast(`Failed to export ${format.toUpperCase()}: ${err.message}`, 'error');
+      }
+    } finally {
+      setIsExportingKmz(false);
+    }
+  };
 
   return (
     <div className="map-viewer-page">
@@ -2202,6 +2268,151 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
             <LucideRefreshCw size={13} className={isRefreshing ? 'animate-spin' : ''} />
             {isRefreshing ? 'Refreshing…' : 'Refresh'}
           </button>
+
+          {/* Export KMZ / Work Done Split-Dropdown Button */}
+          <div ref={exportMenuRef} style={{ position: 'relative', display: 'inline-flex' }}>
+            <div style={{ display: 'inline-flex', borderRadius: 6, overflow: 'hidden', boxShadow: '0 1px 2px rgba(0,0,0,0.06)' }}>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => handleExport('current', 'kmz')}
+                disabled={isExportingKmz || !executionData}
+                title="Export Work Done as Google Earth KMZ file"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '5px 12px',
+                  fontSize: '0.8rem',
+                  fontWeight: 650,
+                  borderTopRightRadius: 0,
+                  borderBottomRightRadius: 0,
+                  borderRight: '1px solid rgba(255,255,255,0.25)',
+                  cursor: isExportingKmz ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <LucideDownload size={13} className={isExportingKmz ? 'animate-spin' : ''} />
+                <span>{isExportingKmz ? 'Exporting…' : 'Export KMZ'}</span>
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => setShowExportMenu(prev => !prev)}
+                disabled={isExportingKmz || !executionData}
+                title="More KMZ/KML export options"
+                style={{
+                  padding: '5px 7px',
+                  borderTopLeftRadius: 0,
+                  borderBottomLeftRadius: 0,
+                  cursor: isExportingKmz ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <LucideChevronDown size={13} />
+              </button>
+            </div>
+
+            {showExportMenu && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 6px)',
+                  right: 0,
+                  zIndex: 1000,
+                  background: '#ffffff',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 8,
+                  boxShadow: '0 10px 25px -5px rgba(0,0,0,0.25), 0 8px 10px -6px rgba(0,0,0,0.1)',
+                  minWidth: 280,
+                  padding: '6px 0',
+                  color: '#0f172a'
+                }}
+              >
+                <div style={{ padding: '6px 14px', fontSize: '0.72rem', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Export Work Done (Google Earth)
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleExport('current', 'kmz')}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start',
+                    width: '100%',
+                    padding: '8px 14px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    textAlign: 'left'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 650, fontSize: '0.82rem', color: '#0f172a' }}>
+                    <LucideDownload size={14} color="#0284c7" />
+                    <span>Export KMZ (Current Date View)</span>
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: 2 }}>
+                    Date: {selectedDate || 'All'} · {executionData?.statistics?.totalShots || 0} trenches, {displayPits.length} pits
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleExport('cumulative', 'kmz')}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start',
+                    width: '100%',
+                    padding: '8px 14px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    textAlign: 'left'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 650, fontSize: '0.82rem', color: '#0f172a' }}>
+                    <LucideDownload size={14} color="#059669" />
+                    <span>Export KMZ (Full Cumulative)</span>
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: 2 }}>
+                    All historical trenches &amp; pits across all dates
+                  </div>
+                </button>
+
+                <div style={{ height: 1, background: '#e2e8f0', margin: '4px 0' }} />
+
+                <button
+                  type="button"
+                  onClick={() => handleExport('current', 'kml')}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start',
+                    width: '100%',
+                    padding: '8px 14px',
+                    border: 'none',
+                    background: 'transparent',
+                    cursor: 'pointer',
+                    textAlign: 'left'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = '#f1f5f9'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 650, fontSize: '0.82rem', color: '#0f172a' }}>
+                    <LucideFileText size={14} color="#6366f1" />
+                    <span>Export KML (Uncompressed XML)</span>
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: 2 }}>
+                    Plain XML for QGIS, ArcGIS &amp; AutoCAD
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -2300,6 +2511,17 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
           )}
           <button type="button" className="gis-map-icon-btn" onClick={fitRouteBounds} title="Fit to trench">
             <Globe size={15} /> Fit route
+          </button>
+          <button
+            type="button"
+            className="gis-map-icon-btn"
+            onClick={() => handleExport('current', 'kmz')}
+            disabled={isExportingKmz || !executionData}
+            title="Export Work Done KMZ (Google Earth)"
+            style={{ fontWeight: 650, color: '#38bdf8' }}
+          >
+            <LucideDownload size={15} className={isExportingKmz ? 'animate-spin' : ''} />
+            <span>KMZ</span>
           </button>
           <button type="button" className="gis-map-icon-btn" onClick={toggleFullscreen} title="Toggle fullscreen" style={{ width: 36, padding: 0, justifyContent: 'center' }}>
             {isFullscreen ? <LucideMinimize2 size={16} /> : <LucideMaximize2 size={16} />}
