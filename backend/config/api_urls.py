@@ -98,6 +98,7 @@ urlpatterns = [
     path('stock/', include('apps.stock.urls')),
     path('tasks/', include('apps.tasks.urls')),
     path('hindrances/', include('apps.tasks.urls')),
+    path('otn/', include('apps.tasks.urls')),
     path('team/', include('apps.team.urls')),
     path('tracking/', include('apps.tracking.urls')),
     path('alerts/', include('apps.alerts.urls')),
