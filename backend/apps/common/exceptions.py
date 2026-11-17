@@ -14,6 +14,13 @@ def custom_exception_handler(exc, context):
             "errors": response.data if isinstance(response.data, dict) else {"detail": response.data},
             "status_code": response.status_code
         }
+        if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+            custom_data["error"] = "Too Many Requests"
+            wait_val = getattr(exc, 'wait', None)
+            if wait_val is not None:
+                custom_data["retry_after"] = round(float(wait_val), 3)
+            elif 'Retry-After' in response:
+                custom_data["retry_after"] = response['Retry-After']
         response.data = custom_data
     else:
         # Check if exception has custom status code or message

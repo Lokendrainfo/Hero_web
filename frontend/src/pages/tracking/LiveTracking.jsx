@@ -11,8 +11,11 @@ export const LiveTracking = () => {
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState('Commissioned');
   const [selectedMachine, setSelectedMachine] = useState(null);
+  const isFetchingRef = React.useRef(false);
 
   const fetchTrackingData = (showLoading = true) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     if (showLoading) setLoading(true);
     trackingService.getLiveLocations()
       .then(res => {
@@ -29,6 +32,7 @@ export const LiveTracking = () => {
       })
       .catch(console.error)
       .finally(() => {
+        isFetchingRef.current = false;
         if (showLoading) setLoading(false);
       });
   };

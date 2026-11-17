@@ -70,6 +70,23 @@ api.interceptors.response.use(
       }
     }
 
+    // Handle HTTP 429 (Too Many Requests) with 100-150ms delay and bounded retries
+    if (error.response?.status === 429 && originalRequest) {
+      if (!originalRequest._retry429Count || originalRequest._retry429Count < 3) {
+        originalRequest._retry429Count = (originalRequest._retry429Count || 0) + 1;
+        const retryAfterHdr = error.response.headers?.['retry-after'];
+        let delayMs = 100 + Math.floor(Math.random() * 50); // 100-150ms jittered delay
+        if (retryAfterHdr) {
+          const parsed = parseFloat(retryAfterHdr);
+          if (!isNaN(parsed) && parsed > 0) {
+            delayMs = parsed <= 10 ? parsed * 1000 : parsed;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return api(originalRequest);
+      }
+    }
+
     const errData = error.response?.data || error;
     const cleanMsg = extractErrorMessage(errData);
     if (typeof errData === 'object' && errData !== null) {

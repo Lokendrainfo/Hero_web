@@ -8,6 +8,7 @@ from apps.common.responses import success_response
 from .ilync_client import IlyncClient
 from .fiberforce.client import FiberForceClient
 from .exceptions import IlyncAPIException
+from apps.common.throttling import MachineLiveRateThrottle
 
 logger = logging.getLogger(__name__)
 
@@ -526,6 +527,8 @@ class FiberForceLiveParamCatalogView(IlyncBaseView):
         return Response(data, status=status.HTTP_200_OK)
 
 class FiberForceLiveTelemetryView(IlyncBaseView):
+    throttle_classes = [MachineLiveRateThrottle]
+
     def get(self, request):
         chassis_no = request.query_params.get('machine_chassis_no') or request.query_params.get('chassis_no') or '600202608396'
         params_str = request.query_params.get('params')
@@ -533,6 +536,10 @@ class FiberForceLiveTelemetryView(IlyncBaseView):
 
         client = FiberForceClient()
         data = client.get_live_telemetry(machine_chassis_no=chassis_no, params=params_list)
+        if isinstance(data, dict) and data.get('status_code') == 429:
+            response = Response(data, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            response['Retry-After'] = str(data.get('retry_after') or '1')
+            return response
         return Response(data, status=status.HTTP_200_OK)
 
     def post(self, request):
@@ -542,7 +549,14 @@ class FiberForceLiveTelemetryView(IlyncBaseView):
 
         client = FiberForceClient()
         data = client.get_live_telemetry(machine_chassis_no=chassis_no, params=params_list)
+        if isinstance(data, dict) and data.get('status_code') == 429:
+            response = Response(data, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            response['Retry-After'] = str(data.get('retry_after') or '1')
+            return response
         return Response(data, status=status.HTTP_200_OK)
+
+
+MachineLiveExternalView = FiberForceLiveTelemetryView
 
 class IlyncMyTasksListView(IlyncBaseView):
     def get(self, request):

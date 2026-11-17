@@ -10,15 +10,22 @@ export const MachineTracking = () => {
   const targetId = machineId || id;
   const [machine, setMachine] = useState(null);
   const [loading, setLoading] = useState(true);
+  const isFetchingRef = React.useRef(false);
   const navigate = useNavigate();
 
   const loadTrackingData = (isSilent = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     if (!isSilent) setLoading(true);
+    const finalize = () => {
+      isFetchingRef.current = false;
+      if (!isSilent) setLoading(false);
+    };
     if (targetId) {
       machineService.getById(targetId)
         .then(res => setMachine(res.data || res))
         .catch(console.error)
-        .finally(() => { if (!isSilent) setLoading(false); });
+        .finally(finalize);
     } else {
       machineService.getAll()
         .then(res => {
@@ -26,7 +33,7 @@ export const MachineTracking = () => {
           setMachine(list[0]);
         })
         .catch(console.error)
-        .finally(() => { if (!isSilent) setLoading(false); });
+        .finally(finalize);
     }
   };
 

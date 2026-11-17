@@ -5,6 +5,7 @@ from apps.common.responses import success_response
 from apps.roles.views import PermissionViewSet
 from apps.authentication.views import MeView
 from apps.integrations.bharatnet_views import BharatNetTDMonitoringView, BharatNetLiveViewAPIView
+from apps.integrations.views import MachineLiveExternalView
 from apps.machines.views import MachineChassisHddShotSummaryView, MachineHddMetricsDayWiseView
 
 
@@ -117,6 +118,9 @@ urlpatterns = [
     path('chassis-hdd-shots/<str:chassis_number>/', MachineChassisHddShotSummaryView.as_view(), name='api_chassis_hdd_shots_detail'),
     path('hdd-machine-shots/', MachineChassisHddShotSummaryView.as_view(), name='api_hdd_machine_shots'),
     path('hdd-machine-shots/<str:chassis_number>/', MachineChassisHddShotSummaryView.as_view(), name='api_hdd_machine_shots_detail'),
+    # Dedicated Machine Live API route strictly rate-limited to 10 req/s
+    path('ext/v1/machines/live/', MachineLiveExternalView.as_view(), name='api_ext_machines_live'),
+    path('machines/live/', MachineLiveExternalView.as_view(), name='api_machines_live'),
     # Backward compatibility alias
     path('bharatnet/', include('apps.integrations.bharatnet_urls')),
 ]

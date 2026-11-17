@@ -1,9 +1,66 @@
 import os
+import time
+import random
+import logging
 import threading
 
 import requests
 
+logger = logging.getLogger(__name__)
+
 _thread_local = threading.local()
+
+
+class TokenBucketRateLimiter:
+    """
+    Thread-safe token bucket rate limiter for outgoing FiberForce requests.
+    Guarantees that requests to /api/ext/v1/machines/live/ strictly respect
+    the maximum allowed rate of 10 requests per second.
+    """
+    def __init__(self, rate=10.0, capacity=10.0):
+        self.rate = float(rate)          # tokens added per second (10 req/s)
+        self.capacity = float(capacity)  # max burst capacity (10)
+        self.tokens = float(capacity)
+        self.last_update = time.time()
+        self.lock = threading.Lock()
+        self.cooldown_until = 0.0        # shared backoff across threads upon HTTP 429
+
+    def set_cooldown(self, delay_seconds):
+        with self.lock:
+            target = time.time() + float(delay_seconds)
+            if target > self.cooldown_until:
+                self.cooldown_until = target
+
+    def acquire(self):
+        while True:
+            sleep_needed = 0.0
+            with self.lock:
+                now = time.time()
+                # 1. Respect 429 cooldown across all threads to prevent simultaneous retry loops
+                if now < self.cooldown_until:
+                    sleep_needed = self.cooldown_until - now
+                else:
+                    # 2. Refill tokens based on elapsed wall time
+                    elapsed = now - self.last_update
+                    self.last_update = now
+                    self.tokens = min(self.capacity, self.tokens + (elapsed * self.rate))
+
+                    # 3. Check token availability
+                    if self.tokens >= 1.0:
+                        self.tokens -= 1.0
+                        return
+                    else:
+                        sleep_needed = (1.0 - self.tokens) / self.rate
+
+            if sleep_needed > 0:
+                time.sleep(min(sleep_needed, 0.25))
+
+
+# Global rate limiter and cache for /api/ext/v1/machines/live/
+_live_rate_limiter = TokenBucketRateLimiter(rate=10.0, capacity=10.0)
+_live_telemetry_cache = {}
+_live_cache_lock = threading.Lock()
+LIVE_TELEMETRY_CACHE_TTL = 5.0  # seconds
 
 
 class FiberForceClient:
@@ -39,34 +96,82 @@ class FiberForceClient:
             headers["Content-Type"] = "application/json"
         return headers
 
-    def _request(self, method, path, *, json=None, data=None, files=None, params=None, timeout=25):
+    def _request(self, method, path, *, json=None, data=None, files=None, params=None, timeout=25, max_retries=3):
         url = f"{self.base_url}{path}"
-        try:
-            headers = self._headers(json_body=(json is not None and not files))
-            if files:
-                headers.pop("Content-Type", None)
-            response = self._session().request(
-                method,
-                url,
-                headers=headers,
-                json=json,
-                data=data,
-                files=files,
-                params=params,
-                timeout=timeout,
-            )
+        is_live_api = "/api/ext/v1/machines/live" in path
+
+        for attempt in range(max_retries + 1):
+            if is_live_api:
+                _live_rate_limiter.acquire()
+
             try:
-                body = response.json()
-            except ValueError:
-                body = {"success": False, "message": (response.text or "")[:400], "data": []}
-            if not isinstance(body, dict):
-                body = {"success": False, "data": body}
-            if response.status_code >= 400:
-                body.setdefault("success", False)
-                body.setdefault("message", f"FiberForce error {response.status_code}")
-            return body
-        except Exception as exc:
-            return {"success": False, "message": str(exc), "data": []}
+                headers = self._headers(json_body=(json is not None and not files))
+                if files:
+                    headers.pop("Content-Type", None)
+                response = self._session().request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=json,
+                    data=data,
+                    files=files,
+                    params=params,
+                    timeout=timeout,
+                )
+
+                # Handle HTTP 429 Too Many Requests
+                if response.status_code == 429:
+                    retry_after_hdr = response.headers.get("Retry-After")
+                    delay = None
+                    if retry_after_hdr:
+                        try:
+                            delay = float(retry_after_hdr)
+                        except (ValueError, TypeError):
+                            pass
+
+                    # Required 429 Retry Delay: 100–150 milliseconds if no Retry-After specified
+                    if delay is None or delay <= 0:
+                        delay = random.uniform(0.10, 0.15)
+
+                    # Pause all threads accessing the live API to prevent simultaneous retry storms
+                    if is_live_api:
+                        _live_rate_limiter.set_cooldown(delay)
+
+                    logger.warning(
+                        "[FIBERFORCE_429] endpoint=%s attempt=%d/%d delay=%.3fs retry_after=%s",
+                        path, attempt + 1, max_retries, delay, retry_after_hdr
+                    )
+
+                    # Bounded retries: avoid infinite retry loops
+                    if attempt < max_retries:
+                        time.sleep(delay)
+                        continue
+                    else:
+                        return {
+                            "success": False,
+                            "status_code": 429,
+                            "message": f"FiberForce rate limit exceeded (HTTP 429). Retries exhausted after {max_retries} attempts.",
+                            "retry_after": round(delay, 3),
+                            "data": {}
+                        }
+
+                try:
+                    body = response.json()
+                except ValueError:
+                    body = {"success": False, "message": (response.text or "")[:400], "data": []}
+                if not isinstance(body, dict):
+                    body = {"success": False, "data": body}
+                if response.status_code >= 400:
+                    body.setdefault("success", False)
+                    body.setdefault("status_code", response.status_code)
+                    body.setdefault("message", f"FiberForce error {response.status_code}")
+                return body
+
+            except Exception as exc:
+                if attempt < max_retries and is_live_api:
+                    time.sleep(random.uniform(0.10, 0.15))
+                    continue
+                return {"success": False, "message": str(exc), "data": []}
 
     def get_machines(self):
         payload = self._request("GET", "/api/ext/v1/machines/")
@@ -75,10 +180,29 @@ class FiberForceClient:
         return payload
 
     def get_live_telemetry(self, machine_chassis_no, params=None, timeout=2.5):
-        body = {"machine_chassis_no": str(machine_chassis_no)}
+        chassis_str = str(machine_chassis_no or '').strip()
+        if not chassis_str:
+            return {"success": False, "data": {}, "message": "Missing chassis number"}
+
+        # Short TTL cache to prevent duplicate requests across components and intervals
+        params_key = tuple(sorted(params)) if isinstance(params, list) else ('all',)
+        cache_key = f"{chassis_str}:{params_key}"
+        now = time.time()
+        with _live_cache_lock:
+            cached = _live_telemetry_cache.get(cache_key)
+            if cached and (now - cached['time']) < LIVE_TELEMETRY_CACHE_TTL:
+                return cached['data']
+
+        body = {"machine_chassis_no": chassis_str}
         if params and isinstance(params, list):
             body["params"] = params
-        return self._request("POST", "/api/ext/v1/machines/live/", json=body, timeout=timeout)
+
+        res = self._request("POST", "/api/ext/v1/machines/live/", json=body, timeout=timeout)
+        if isinstance(res, dict) and res.get("success"):
+            with _live_cache_lock:
+                _live_telemetry_cache[cache_key] = {"data": res, "time": time.time()}
+
+        return res
 
     def get_telemetry(self, machine_chassis_no):
         return self.get_live_telemetry(machine_chassis_no)

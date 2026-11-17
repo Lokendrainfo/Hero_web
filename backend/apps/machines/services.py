@@ -1,4 +1,6 @@
+import time
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from django.db.models import Q
 from apps.machines.models import Machine
@@ -112,9 +114,6 @@ def sync_fiberforce_machines():
         live_params = ["site_name", "circle_name", "district_name", "block_name", "fuel_litres", "fuel_pct", "is_online", "engine_on", "state_label", "rpm", "speed_kmph", "latitude", "longitude", "state", "fuel_consumed_today", "engine_hours_today", "engine_hours_total"]
         tele_res = client.get_live_telemetry(chassis_no, params=live_params)
         tele_data = tele_res.get('data', {}) if isinstance(tele_res, dict) else {}
-        if not tele_data or 'is_online' not in tele_data:
-            tele_res = client.get_live_telemetry(chassis_no)
-            tele_data = tele_res.get('data', {}) if isinstance(tele_res, dict) else {}
 
         real_site_name = tele_data.get('site_name') or tele_data.get('block_name') or tele_data.get('district_name') or item.get('site_name') or ""
         real_site_id = tele_data.get('site_id') or tele_data.get('geo_block_id') or item.get('site_id') or None
@@ -335,14 +334,41 @@ def filter_queryset_to_assigned(machines_qs, assigned_chassis):
     ).distinct()
 
 
+_live_machines_cache = {}
+_live_machines_lock = threading.Lock()
+LIVE_MACHINES_CACHE_TTL = 5.0  # 5-second TTL cache to prevent repeated redundant bursts
+
+
 def fetch_live_fiberforce_machines(user, params=None):
     """
     Live FiberForce Machine Integration.
     Fetches machines directly from FiberForce API without persisting into Hero DB.
     Enriches with live telemetry and filters according to user vendor scope.
+    Includes short 5s TTL cache and request deduplication to prevent request bursts.
     """
+    if params is None:
+        params = {}
+
+    resync = params.get('resync') in (True, 'true', '1', 1)
+    user_key = getattr(user, 'id', 'anon') if user else 'anon'
+    vendor_key = str(params.get('vendor_id') or params.get('vendor') or 'all')
+    status_key = str(params.get('status') or 'all').strip().lower()
+    search_key = str(params.get('search') or '').strip().lower()
+    cache_key = f"ff_machines:{user_key}:{vendor_key}:{status_key}:{search_key}"
+
+    now = time.time()
+    if not resync:
+        with _live_machines_lock:
+            cached = _live_machines_cache.get(cache_key)
+            if cached and (now - cached['time']) < LIVE_MACHINES_CACHE_TTL:
+                return cached['data']
+
     try:
-        return _fetch_live_fiberforce_machines_impl(user, params)
+        res = _fetch_live_fiberforce_machines_impl(user, params)
+        if isinstance(res, dict) and res.get('success'):
+            with _live_machines_lock:
+                _live_machines_cache[cache_key] = {'data': res, 'time': time.time()}
+        return res
     except Exception as exc:
         logger.exception("[LIVE_MACHINES] unhandled error: %s", exc)
         print(f"[LIVE_MACHINES] fiberforce_request=FAILED error={exc} response_status=503")
@@ -467,7 +493,8 @@ def _fetch_live_fiberforce_machines_impl(user, params=None):
 
     telemetry_map = {}
     if target_machines:
-        max_workers = min(32, len(target_machines))
+        # Paced concurrency to strictly respect 10 req/s upstream rate limit
+        max_workers = min(6, len(target_machines))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             tele_pairs = list(executor.map(fetch_telemetry_for_machine, target_machines))
             telemetry_map = dict(tele_pairs)

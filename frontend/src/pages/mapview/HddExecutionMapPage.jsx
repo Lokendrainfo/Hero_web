@@ -388,9 +388,11 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
   const [liveMachines, setLiveMachines] = useState([]);
   const [showLiveMachines, setShowLiveMachines] = useState(true);
   const [selectedLiveMachine, setSelectedLiveMachine] = useState(null);
+  const isFetchingLiveMachinesRef = React.useRef(false);
 
   const fetchLiveMachines = React.useCallback(async () => {
-    if (isBharatNetMap) return;
+    if (isBharatNetMap || isFetchingLiveMachinesRef.current) return;
+    isFetchingLiveMachinesRef.current = true;
     try {
       const res = await trackingService.getLiveLocations();
       const raw = res?.data?.data !== undefined ? res.data.data : (res?.data !== undefined ? res.data : res);
@@ -401,6 +403,8 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
       setLiveMachines(list.filter((m) => m && m.latitude != null && m.longitude != null));
     } catch (err) {
       console.warn('[HddExecutionMapPage] Could not load live machines:', err);
+    } finally {
+      isFetchingLiveMachinesRef.current = false;
     }
   }, [isBharatNetMap]);
 
