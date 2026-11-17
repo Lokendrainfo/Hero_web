@@ -389,3 +389,182 @@ class Otn(models.Model):
             "proposedOtn": proposed,
             "approvedOtn": self.approved_otn,
         }
+
+
+
+class Ccn(models.Model):
+    """
+    HERO Web Change Control Notice (CCN) Management Model.
+    Strictly aligned with Java model com.netinfra.platform.task.dao.entities.survey.CcnTaskData.
+    Follows the dual-state layout (proposedCcn and approvedCcn) aligned with HindranceTaskData.
+    """
+
+    CCN_SUBTYPE_1_CHOICES = [
+        ('Architecture change Involved', 'Architecture change Involved'),
+        ('Linear', 'Linear'),
+    ]
+
+    STATUS_CHOICES = [
+        ('DRAFT', 'Draft'),
+        ('SUBMITTED', 'Submitted'),
+        ('PENDING_APPROVAL', 'Pending Approval'),
+        ('IN_PROGRESS', 'In Progress'),
+        ('IN_REVIEW', 'In Review'),
+        ('APPROVED', 'Approved'),
+        ('REJECTED', 'Rejected'),
+        ('RESOLVED', 'Resolved'),
+        ('ESCALATED', 'Escalated'),
+        ('OPEN', 'Open'),
+    ]
+
+    SEVERITY_CHOICES = [
+        ('CRITICAL', 'Critical'),
+        ('HIGH', 'High'),
+        ('MEDIUM', 'Medium'),
+        ('LOW', 'Low'),
+    ]
+
+    SOURCE_CHOICES = [
+        ('HERO', 'HERO Web'),
+        ('NetInfra', 'NetInfra'),
+        ('ILYNC', 'iLync / Net Infra'),
+    ]
+
+    SYNC_STATUS_CHOICES = [
+        ('LOCAL', 'Local'),
+        ('SYNCED', 'Synced'),
+        ('PENDING', 'Pending'),
+        ('FAILED', 'Failed'),
+    ]
+
+    # Core Canonical Identifiers
+    ccn_id = models.CharField(max_length=64, unique=True, db_index=True)
+    title = models.CharField(max_length=255)
+    subtype1 = models.CharField(max_length=100, default='Linear', db_index=True)
+    subtype2 = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    severity = models.CharField(max_length=20, choices=SEVERITY_CHOICES, default='HIGH', db_index=True)
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='DRAFT', db_index=True)
+
+    # Detailed Descriptions & Stakeholders
+    ccn_details = models.TextField(blank=True, null=True)  # Multiline CCN details (max 6,000 chars)
+    description = models.TextField(blank=True, null=True)  # Backwards compatibility description
+    mitigation = models.TextField(blank=True, null=True)
+    remarks = models.TextField(blank=True, null=True)
+    contractor = models.CharField(max_length=255, blank=True, null=True)
+    vendor = models.ForeignKey(Vendor, on_delete=models.SET_NULL, null=True, blank=True, related_name='ccn_tasks')
+    department = models.CharField(max_length=255, blank=True, null=True)
+
+    # Location Information
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    s_latitude = models.FloatField(null=True, blank=True)
+    s_longitude = models.FloatField(null=True, blank=True)
+    e_latitude = models.FloatField(null=True, blank=True)
+    e_longitude = models.FloatField(null=True, blank=True)
+
+    circle = models.CharField(max_length=100, blank=True, null=True)
+    district = models.CharField(max_length=100, blank=True, null=True)
+    block = models.CharField(max_length=100, blank=True, null=True)
+    section = models.CharField(max_length=255, blank=True, null=True)
+    location = models.CharField(max_length=255, blank=True, null=True)
+    chainage = models.CharField(max_length=120, blank=True, null=True)
+    chainage_from = models.CharField(max_length=50, blank=True, null=True)
+    chainage_to = models.CharField(max_length=50, blank=True, null=True)
+
+    # Route Evidence Media Fields (SurveyPhoto structured objects)
+    start_photo = models.JSONField(default=dict, blank=True)
+    additional_start_photos = models.JSONField(default=list, blank=True)  # Up to 4
+    walkthrough_video = models.JSONField(default=dict, blank=True)
+    additional_route_videos = models.JSONField(default=list, blank=True)  # Up to 4
+    end_photo = models.JSONField(default=dict, blank=True)
+    additional_end_photos = models.JSONField(default=list, blank=True)    # Up to 10
+    additional_end_videos = models.JSONField(default=list, blank=True)    # Up to 2
+    photos = models.JSONField(default=list, blank=True)                   # General list
+
+    # KML Route File
+    kml_type = models.CharField(max_length=50, default='UPLOADED', blank=True, null=True)  # "GENERATED" or "UPLOADED"
+    kml_file = models.JSONField(default=dict, blank=True)
+    kml_file_name = models.CharField(max_length=255, blank=True, null=True)
+    kml_file_key = models.CharField(max_length=255, blank=True, null=True)
+    kml_content = models.TextField(blank=True, null=True)
+
+    # Dual-State Java Alignment (com.netinfra.platform.task.dao.entities.survey.CcnTaskData)
+    proposed_ccn = models.JSONField(default=dict, blank=True)
+    approved_ccn = models.JSONField(null=True, blank=True)
+    approval_history = models.JSONField(default=list, blank=True)
+    field_data = models.JSONField(default=dict, blank=True)
+
+    # Dates
+    logged_date = models.DateField(null=True, blank=True)
+    target_date = models.DateField(null=True, blank=True)
+    resolved_date = models.DateField(null=True, blank=True)
+
+    # Attribution & Sync Metadata
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_ccn_tasks')
+    source_system = models.CharField(max_length=30, choices=SOURCE_CHOICES, default='HERO', db_index=True)
+    external_task_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+    external_ccn_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    sync_status = models.CharField(max_length=30, choices=SYNC_STATUS_CHOICES, default='LOCAL')
+    last_sync_error = models.TextField(blank=True, null=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['source_system', 'external_task_id']),
+            models.Index(fields=['status', 'severity']),
+            models.Index(fields=['district', 'block']),
+            models.Index(fields=['subtype1']),
+        ]
+
+    def __str__(self):
+        return f"{self.ccn_id} - {self.title} [{self.source_system}]"
+
+    def build_proposed_details(self):
+        """
+        Constructs the canonical CcnDetails object for proposedCcn.
+        """
+        return {
+            "ccnId": self.ccn_id,
+            "ccnDetails": self.ccn_details or self.description or "",
+            "description": self.description or self.ccn_details or "",
+            "subtype1": self.subtype1 or "Linear",
+            "subtype2": self.subtype2 or "",
+            "status": self.status,
+            "remarks": self.remarks or self.mitigation or "",
+            "sLatitude": self.s_latitude,
+            "sLongitude": self.s_longitude,
+            "eLatitude": self.e_latitude,
+            "eLongitude": self.e_longitude,
+            "startPhoto": self.start_photo if isinstance(self.start_photo, dict) else ({"url": self.start_photo} if self.start_photo else {}),
+            "additionalStartPhotos": self.additional_start_photos if isinstance(self.additional_start_photos, list) else [],
+            "walkthroughVideo": self.walkthrough_video if isinstance(self.walkthrough_video, dict) else ({"url": self.walkthrough_video} if self.walkthrough_video else {}),
+            "additionalRouteVideos": self.additional_route_videos if isinstance(self.additional_route_videos, list) else [],
+            "endPhoto": self.end_photo if isinstance(self.end_photo, dict) else ({"url": self.end_photo} if self.end_photo else {}),
+            "additionalEndPhotos": self.additional_end_photos if isinstance(self.additional_end_photos, list) else [],
+            "additionalEndVideos": self.additional_end_videos if isinstance(self.additional_end_videos, list) else [],
+            "kmlType": self.kml_type or "UPLOADED",
+            "kmlFile": self.kml_file if isinstance(self.kml_file, dict) else ({"url": self.kml_file} if self.kml_file else {}),
+            "kmlFileName": self.kml_file_name or "",
+            "kmlFileKey": self.kml_file_key or "",
+            "kmlContent": self.kml_content or "",
+            "photos": self.photos if isinstance(self.photos, list) else [],
+        }
+
+    def to_ccn_task_data_json(self):
+        """
+        Produces the canonical CcnTaskData JSON structure matching:
+        com.netinfra.platform.task.dao.entities.survey.CcnTaskData
+        """
+        proposed = self.proposed_ccn if (isinstance(self.proposed_ccn, dict) and self.proposed_ccn) else self.build_proposed_details()
+        return {
+            "surveyKind": "CCN",
+            "ccnId": self.ccn_id,
+            "remarks": self.remarks or "",
+            "proposedCcn": proposed,
+            "approvedCcn": self.approved_ccn,
+        }

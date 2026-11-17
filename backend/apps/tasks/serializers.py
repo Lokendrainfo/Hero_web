@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.utils import timezone
-from .models import Task, Hindrance, Otn
+from .models import Task, Hindrance, Otn, Ccn
 from apps.vendors.models import Vendor
 
 class TaskSerializer(serializers.ModelSerializer):
@@ -729,4 +729,358 @@ class OtnSerializer(serializers.ModelSerializer):
         ret['sLongitude'] = instance.s_longitude
         ret['eLatitude'] = instance.e_latitude
         ret['eLongitude'] = instance.e_longitude
+        return ret
+
+
+# Controlled Classification Masters for CCN tasks (strictly matching CcnSubtype1 & CcnSubtype2)
+CCN_SUBTYPE_1 = [
+    {"value": "Linear", "label": "Linear"},
+    {"value": "Architecture change Involved", "label": "Architecture change Involved"},
+]
+
+CCN_SUBTYPE_2 = {
+    "Linear": [
+        "Low Depth",
+        "Route Divert",
+        "New GP Add",
+        "GP Shifting",
+    ],
+    "Architecture change Involved": [
+        "Heavy congestion of underground utilities",
+        "CC Road – Authority not allowing",
+        "CC Road – OT/HDD is not feasible",
+        "Permission issue from local authority",
+        "Local objection on private land",
+        "Hard Rock",
+        "Public issue",
+        "Permission restriction from the concerned",
+        "Road Expansion",
+    ],
+}
+
+
+class CcnSerializer(serializers.ModelSerializer):
+    """
+    Serializer strictly aligned with Java Model:
+    com.netinfra.platform.task.dao.entities.survey.CcnTaskData
+    """
+    ccn_id = serializers.CharField(required=False, allow_blank=True)
+    ccnId = serializers.CharField(source='ccn_id', required=False, allow_blank=True)
+    created_by_name = serializers.SerializerMethodField()
+    vendor_name = serializers.SerializerMethodField()
+
+    # Aliases and Java fields
+    surveyKind = serializers.SerializerMethodField()
+    proposedCcn = serializers.SerializerMethodField()
+    approvedCcn = serializers.SerializerMethodField()
+    approvalHistory = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Ccn
+        fields = '__all__'
+        extra_kwargs = {
+            'ccn_id': {'required': False, 'allow_blank': True},
+        }
+
+    def get_surveyKind(self, obj):
+        return "CCN"
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            name = f"{obj.created_by.first_name} {obj.created_by.last_name}".strip()
+            return name or obj.created_by.username
+        return 'System'
+
+    def get_vendor_name(self, obj):
+        if obj.vendor:
+            return obj.vendor.name
+        return obj.contractor or '—'
+
+    def get_proposedCcn(self, obj):
+        if isinstance(obj.proposed_ccn, dict) and obj.proposed_ccn:
+            return obj.proposed_ccn
+        return obj.build_proposed_details()
+
+    def get_approvedCcn(self, obj):
+        if isinstance(obj.approved_ccn, dict) and obj.approved_ccn:
+            return obj.approved_ccn
+        return None
+
+    def get_approvalHistory(self, obj):
+        return obj.approval_history or []
+
+    def to_internal_value(self, data):
+        """
+        Parses incoming payload supporting:
+        - Canonical Java CcnTaskData format (nested fieldData or proposedCcn)
+        - Aliases: ccnId, ccn_id, id
+        - Subtype1 aliases: subtype1, subtype_1, ccnType, classification1, hindranceType
+        - Subtype2 aliases: subtype2, subtype_2, subCcnType, classification2, subHindranceType
+        - Coordinate aliases: sLatitude/startLatitude, sLongitude/startLongitude, etc.
+        - Media & KML structures
+        """
+        mutable_data = data.copy() if hasattr(data, 'copy') else dict(data)
+
+        # 1. Nested fieldData or proposedCcn
+        nested_field_data = mutable_data.get('fieldData') or {}
+        proposed = mutable_data.get('proposedCcn') or nested_field_data.get('proposedCcn') or {}
+
+        # 2. Extract canonical CCN ID from known aliases
+        c_id = (
+            mutable_data.get('ccnId') or
+            mutable_data.get('ccn_id') or
+            mutable_data.get('id') or
+            proposed.get('ccnId') or
+            proposed.get('ccn_id') or
+            nested_field_data.get('ccnId')
+        )
+        if c_id:
+            mutable_data['ccn_id'] = str(c_id).strip()
+
+        # 3. Subtype 1 and Subtype 2
+        st1 = (
+            mutable_data.get('subtype1') or
+            mutable_data.get('subtype_1') or
+            mutable_data.get('ccnType') or
+            mutable_data.get('classification1') or
+            mutable_data.get('hindranceType') or
+            proposed.get('subtype1') or
+            'Linear'
+        )
+        st2 = (
+            mutable_data.get('subtype2') or
+            mutable_data.get('subtype_2') or
+            mutable_data.get('subCcnType') or
+            mutable_data.get('classification2') or
+            mutable_data.get('subHindranceType') or
+            proposed.get('subtype2') or
+            ''
+        )
+        mutable_data['subtype1'] = st1
+        mutable_data['subtype2'] = st2
+
+        # 4. CCN Details, Description, Remarks
+        ccn_details = (
+            mutable_data.get('ccnDetails') or
+            mutable_data.get('details') or
+            proposed.get('ccnDetails') or
+            proposed.get('details') or
+            ''
+        )
+        desc = (
+            mutable_data.get('description') or
+            proposed.get('description') or
+            ccn_details or
+            ''
+        )
+        remarks = (
+            mutable_data.get('remarks') or
+            proposed.get('remarks') or
+            nested_field_data.get('remarks') or
+            ''
+        )
+        mutable_data['ccn_details'] = ccn_details or desc
+        mutable_data['description'] = desc or ccn_details
+        mutable_data['remarks'] = remarks
+
+        # 5. Point Coordinates
+        lat = mutable_data.get('latitude') or proposed.get('latitude')
+        lng = mutable_data.get('longitude') or proposed.get('longitude')
+        if lat is not None and lat != '':
+            mutable_data['latitude'] = float(lat)
+        if lng is not None and lng != '':
+            mutable_data['longitude'] = float(lng)
+
+        # 6. Stretch Coordinates
+        s_lat = (
+            mutable_data.get('sLatitude') or
+            mutable_data.get('s_latitude') or
+            mutable_data.get('startLatitude') or
+            mutable_data.get('slatitude') or
+            proposed.get('sLatitude') or
+            proposed.get('startLatitude')
+        )
+        s_lng = (
+            mutable_data.get('sLongitude') or
+            mutable_data.get('s_longitude') or
+            mutable_data.get('startLongitude') or
+            mutable_data.get('slongitude') or
+            proposed.get('sLongitude') or
+            proposed.get('startLongitude')
+        )
+        e_lat = (
+            mutable_data.get('eLatitude') or
+            mutable_data.get('e_latitude') or
+            mutable_data.get('endLatitude') or
+            mutable_data.get('elatitude') or
+            proposed.get('eLatitude') or
+            proposed.get('endLatitude')
+        )
+        e_lng = (
+            mutable_data.get('eLongitude') or
+            mutable_data.get('e_longitude') or
+            mutable_data.get('endLongitude') or
+            mutable_data.get('elongitude') or
+            proposed.get('eLongitude') or
+            proposed.get('endLongitude')
+        )
+        if s_lat is not None and s_lat != '':
+            mutable_data['s_latitude'] = float(s_lat)
+        if s_lng is not None and s_lng != '':
+            mutable_data['s_longitude'] = float(s_lng)
+        if e_lat is not None and e_lat != '':
+            mutable_data['e_latitude'] = float(e_lat)
+        if e_lng is not None and e_lng != '':
+            mutable_data['e_longitude'] = float(e_lng)
+
+        # If point lat/lng is missing, fall back to start coordinate
+        if ('latitude' not in mutable_data or mutable_data['latitude'] is None) and mutable_data.get('s_latitude') is not None:
+            mutable_data['latitude'] = mutable_data['s_latitude']
+        if ('longitude' not in mutable_data or mutable_data['longitude'] is None) and mutable_data.get('s_longitude') is not None:
+            mutable_data['longitude'] = mutable_data['s_longitude']
+
+        # 7. Media fields
+        start_photo = normalize_survey_photo(mutable_data.get('startPhoto') or mutable_data.get('start_photo') or proposed.get('startPhoto'))
+        end_photo = normalize_survey_photo(mutable_data.get('endPhoto') or mutable_data.get('end_photo') or proposed.get('endPhoto'))
+        walkthrough_video = normalize_survey_photo(mutable_data.get('walkthroughVideo') or mutable_data.get('walkthrough_video') or proposed.get('walkthroughVideo'))
+        
+        photos_raw = mutable_data.get('photos') or proposed.get('photos') or []
+        add_start_photos_raw = mutable_data.get('additionalStartPhotos') or mutable_data.get('additional_start_photos') or proposed.get('additionalStartPhotos') or []
+        add_route_videos_raw = mutable_data.get('additionalRouteVideos') or mutable_data.get('additional_route_videos') or proposed.get('additionalRouteVideos') or []
+        add_end_photos_raw = mutable_data.get('additionalEndPhotos') or mutable_data.get('additional_end_photos') or proposed.get('additionalEndPhotos') or []
+        add_end_videos_raw = mutable_data.get('additionalEndVideos') or mutable_data.get('additional_end_videos') or proposed.get('additionalEndVideos') or []
+
+        mutable_data['start_photo'] = start_photo or {}
+        mutable_data['end_photo'] = end_photo or {}
+        mutable_data['walkthrough_video'] = walkthrough_video or {}
+
+        def norm_list(items, max_len=None):
+            res = []
+            if isinstance(items, list):
+                for x in items:
+                    norm = normalize_survey_photo(x)
+                    if norm:
+                        res.append(norm)
+            return res[:max_len] if max_len else res
+
+        mutable_data['additional_start_photos'] = norm_list(add_start_photos_raw, max_len=4)
+        mutable_data['additional_route_videos'] = norm_list(add_route_videos_raw, max_len=4)
+        mutable_data['additional_end_photos'] = norm_list(add_end_photos_raw, max_len=10)
+        mutable_data['additional_end_videos'] = norm_list(add_end_videos_raw, max_len=2)
+
+        normalized_photos = norm_list(photos_raw)
+        if start_photo and start_photo not in normalized_photos:
+            normalized_photos.insert(0, start_photo)
+        if end_photo and end_photo not in normalized_photos:
+            normalized_photos.append(end_photo)
+        mutable_data['photos'] = normalized_photos
+
+        # 8. KML Route File
+        kml_raw = mutable_data.get('kmlFile') or mutable_data.get('kml_file') or proposed.get('kmlFile')
+        kml_photo = normalize_survey_photo(kml_raw)
+        mutable_data['kml_file'] = kml_photo or {}
+        mutable_data['kml_type'] = mutable_data.get('kmlType') or mutable_data.get('kml_type') or proposed.get('kmlType') or 'UPLOADED'
+        mutable_data['kml_file_name'] = (
+            mutable_data.get('kmlFileName') or
+            mutable_data.get('kml_file_name') or
+            proposed.get('kmlFileName') or
+            (kml_photo.get('fileName') if isinstance(kml_photo, dict) else '') or
+            ''
+        )
+        mutable_data['kml_file_key'] = (
+            mutable_data.get('kmlFileKey') or
+            mutable_data.get('kml_file_key') or
+            proposed.get('kmlFileKey') or
+            (kml_photo.get('key') if isinstance(kml_photo, dict) else '') or
+            ''
+        )
+        mutable_data['kml_content'] = mutable_data.get('kmlContent') or mutable_data.get('kml_content') or proposed.get('kmlContent') or ''
+
+        # 9. Title default
+        if not mutable_data.get('title'):
+            mutable_data['title'] = f"CCN {st1}: {st2 or 'Change Notice'}"
+
+        # 10. Status handling
+        target_status = mutable_data.get('status')
+        if target_status:
+            mutable_data['status'] = str(target_status).upper()
+
+        return super().to_internal_value(mutable_data)
+
+    def validate(self, attrs):
+        st1 = attrs.get('subtype1') or 'Linear'
+        st2 = attrs.get('subtype2')
+        allowed_subtypes = CCN_SUBTYPE_2.get(st1, [])
+        if allowed_subtypes and st2:
+            norm_st2 = st2.replace('–', '-').replace('—', '-').strip().lower()
+            matched = any(s.replace('–', '-').replace('—', '-').strip().lower() == norm_st2 for s in allowed_subtypes)
+            if not matched:
+                attrs['subtype2'] = st2  # Allow custom if external, but preserve value
+        return attrs
+
+    def create(self, validated_data):
+        if not validated_data.get('ccn_id'):
+            count = Ccn.objects.count() + 101
+            c_id = f"CCN-2026-{count:03d}"
+            while Ccn.objects.filter(ccn_id=c_id).exists():
+                count += 1
+                c_id = f"CCN-2026-{count:03d}"
+            validated_data['ccn_id'] = c_id
+
+        instance = super().create(validated_data)
+
+        instance.proposed_ccn = instance.build_proposed_details()
+        instance.field_data = instance.to_ccn_task_data_json()
+
+        user_str = str(instance.created_by.username) if instance.created_by else 'System'
+        initial_action = "DRAFT_SAVED" if instance.status == 'DRAFT' else "SUBMITTED_FOR_APPROVAL"
+        instance.approval_history = [
+            {
+                "action": initial_action,
+                "status": instance.status,
+                "user": user_str,
+                "timestamp": timezone.now().isoformat(),
+                "remarks": instance.remarks or "Initial CCN submission"
+            }
+        ]
+        instance.save()
+        return instance
+
+    def update(self, instance, validated_data):
+        prev_status = instance.status
+        updated_instance = super().update(instance, validated_data)
+
+        if updated_instance.status in ['DRAFT', 'SUBMITTED', 'PENDING_APPROVAL']:
+            updated_instance.proposed_ccn = updated_instance.build_proposed_details()
+
+        if updated_instance.status != prev_status:
+            user = self.context.get('request').user if self.context.get('request') else None
+            user_str = user.username if user and user.is_authenticated else 'System'
+            history = updated_instance.approval_history or []
+            history.append({
+                "action": f"STATUS_CHANGED_TO_{updated_instance.status}",
+                "status": updated_instance.status,
+                "user": user_str,
+                "timestamp": timezone.now().isoformat(),
+                "remarks": updated_instance.remarks or ""
+            })
+            updated_instance.approval_history = history
+
+        updated_instance.field_data = updated_instance.to_ccn_task_data_json()
+        updated_instance.save()
+        return updated_instance
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        # Canonical ccnId at root
+        ret['ccnId'] = instance.ccn_id
+        # Aliases for compatibility
+        ret['id'] = instance.id
+        ret['sLatitude'] = instance.s_latitude
+        ret['sLongitude'] = instance.s_longitude
+        ret['eLatitude'] = instance.e_latitude
+        ret['eLongitude'] = instance.e_longitude
+        ret['ccnDetails'] = instance.ccn_details or instance.description or ''
+        ret['kmlFileName'] = instance.kml_file_name or ''
+        ret['kmlType'] = instance.kml_type or 'UPLOADED'
         return ret

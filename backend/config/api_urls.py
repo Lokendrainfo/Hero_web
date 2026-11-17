@@ -99,6 +99,7 @@ urlpatterns = [
     path('tasks/', include('apps.tasks.urls')),
     path('hindrances/', include('apps.tasks.urls')),
     path('otn/', include('apps.tasks.urls')),
+    path('ccn/', include('apps.tasks.urls')),
     path('team/', include('apps.team.urls')),
     path('tracking/', include('apps.tracking.urls')),
     path('alerts/', include('apps.alerts.urls')),
