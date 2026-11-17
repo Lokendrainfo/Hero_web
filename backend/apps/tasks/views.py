@@ -1,16 +1,27 @@
+import os
 import csv
+import uuid
+from datetime import datetime
 from django.http import HttpResponse
 from django.utils import timezone
+from django.conf import settings
+from django.core.files.storage import default_storage
+from django.db.models import Q
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+
 from .models import Task, Hindrance
-from .serializers import TaskSerializer, HindranceSerializer
+from .serializers import (
+    TaskSerializer, HindranceSerializer,
+    HINDRANCE_TYPES, SUB_HINDRANCE_TYPES, normalize_survey_photo
+)
 from .hindrance_service import sync_ilync_hindrances
 from apps.common.permissions import IsVendorAuthorized
 from apps.common.responses import success_response
-
 from apps.common.vendor_scope import filter_queryset_by_vendor
+
 
 class TaskViewSet(viewsets.ModelViewSet):
     queryset = Task.objects.all()
@@ -23,7 +34,6 @@ class TaskViewSet(viewsets.ModelViewSet):
         
         # Advance User Geography Filter
         if user and user.is_authenticated and getattr(user, 'user_type', None) == 'ADVANCE':
-            from django.db.models import Q
             if hasattr(Task, 'circle_name'):
                 if user.advance_scope_type == 'CIRCLE' and user.selected_circle:
                     qs = qs.filter(circle_name__iexact=user.selected_circle.name)
@@ -51,7 +61,6 @@ class TaskViewSet(viewsets.ModelViewSet):
         q_params = getattr(self.request, 'query_params', getattr(self.request, 'GET', {}))
         machine_id = q_params.get('machine_id') or q_params.get('machine')
         if machine_id and str(machine_id).strip() and str(machine_id).lower() != 'all':
-            from django.db.models import Q
             if str(machine_id).isdigit():
                 qs = qs.filter(machine_id=int(machine_id))
             else:
@@ -73,7 +82,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         user = self.request.user
         from rest_framework.exceptions import PermissionDenied
-        from apps.common.vendor_scope import get_user_vendor_ids, validate_machine_vendor_access, get_user_vendor
+        from apps.common.vendor_scope import get_user_vendor_ids, validate_machine_vendor_access
 
         vendor_id = serializer.validated_data.get('vendor_id') or serializer.validated_data.get('vendor')
         machine = serializer.validated_data.get('machine')
@@ -124,19 +133,27 @@ class TaskViewSet(viewsets.ModelViewSet):
 class HindranceViewSet(viewsets.ModelViewSet):
     """
     HERO Web Hindrance Management API.
-    Provides register management, filtering, creation, metrics, export,
-    and safe authorized read-only sync from iLync/Net Infra.
+    Faithfully adheres to Java model:
+    com.netinfra.platform.task.dao.entities.survey.HindranceTaskData
+
+    Features:
+    - Complete workflow: Draft -> Submit -> Review -> Approve / Reject -> Resolve
+    - Preserves dual-state: proposedHindrance (submitter) and approvedHindrance (reviewer)
+    - Classification hierarchy with dynamic dependencies
+    - SurveyPhoto structure for all media & SHP components
+    - Safe read-only NetInfra synchronization
+    - Register CSV export
     """
     queryset = Hindrance.objects.all().order_by('-created_at')
     serializer_class = HindranceSerializer
     permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get_queryset(self):
-        from django.db.models import Q
         qs = Hindrance.objects.all().order_by('-created_at')
         params = self.request.query_params
 
-        # 1. Search across key fields
+        # 1. Search filter
         search = (params.get('search') or '').strip()
         if search:
             qs = qs.filter(
@@ -148,28 +165,45 @@ class HindranceViewSet(viewsets.ModelViewSet):
                 Q(section__icontains=search) |
                 Q(contractor__icontains=search) |
                 Q(department__icontains=search) |
-                Q(chainage__icontains=search)
+                Q(chainage__icontains=search) |
+                Q(ie_name__icontains=search)
             )
 
-        # 2. Category
-        category = params.get('category')
-        if category and str(category).upper() != 'ALL':
-            qs = qs.filter(category__iexact=category)
+        # 2. Classification filters
+        h_type = params.get('hindrance_type') or params.get('category')
+        if h_type and str(h_type).upper() != 'ALL':
+            qs = qs.filter(Q(hindrance_type__iexact=h_type) | Q(category__iexact=h_type))
 
-        # 3. Severity
+        sub_type = params.get('sub_hindrance_type') or params.get('sub_category')
+        if sub_type and str(sub_type).upper() != 'ALL':
+            qs = qs.filter(Q(sub_hindrance_type__iexact=sub_type) | Q(sub_category__iexact=sub_type))
+
+        # 3. Severity filter
         severity = params.get('severity')
         if severity and str(severity).upper() != 'ALL':
             qs = qs.filter(severity__iexact=severity)
 
-        # 4. Status
+        # 4. Status filter
         status_param = params.get('status')
         if status_param and str(status_param).upper() != 'ALL':
-            qs = qs.filter(status__iexact=status_param)
+            if status_param.upper() == 'SUBMITTED':
+                qs = qs.filter(status__in=['SUBMITTED', 'PENDING_APPROVAL'])
+            elif status_param.upper() == 'PENDING_APPROVAL':
+                qs = qs.filter(status__in=['PENDING_APPROVAL', 'SUBMITTED'])
+            elif status_param.upper() == 'IN_PROGRESS':
+                qs = qs.filter(status__in=['IN_PROGRESS', 'IN_REVIEW', 'OPEN'])
+            else:
+                qs = qs.filter(status__iexact=status_param)
 
-        # 5. Source System
+        # 5. Source System filter (HERO vs NetInfra / iLync)
         source = params.get('source') or params.get('source_system')
         if source and str(source).upper() != 'ALL':
-            qs = qs.filter(source_system__iexact=source)
+            if source.upper() in ['NETINFRA', 'ILYNC']:
+                qs = qs.filter(source_system__in=['NetInfra', 'ILYNC'])
+            elif source.upper() == 'HERO':
+                qs = qs.filter(source_system='HERO')
+            else:
+                qs = qs.filter(source_system__iexact=source)
 
         # 6. Geography filters
         district = params.get('district')
@@ -183,18 +217,21 @@ class HindranceViewSet(viewsets.ModelViewSet):
         return qs
 
     def list(self, request, *args, **kwargs):
-        from django.db.models import Q
         queryset = self.filter_queryset(self.get_queryset())
         serializer = self.get_serializer(queryset, many=True)
 
-        # Calculate high-level metrics across all records
+        # High-level aggregate metrics across all records
         all_qs = Hindrance.objects.all()
         total_count = all_qs.count()
+        drafts_count = all_qs.filter(status='DRAFT').count()
+        submitted_count = all_qs.filter(status__in=['SUBMITTED', 'PENDING_APPROVAL']).count()
+        approved_count = all_qs.filter(status='APPROVED').count()
+        rejected_count = all_qs.filter(status='REJECTED').count()
         critical_count = all_qs.filter(Q(severity__iexact='CRITICAL') | Q(status__iexact='ESCALATED')).count()
         in_res_count = all_qs.filter(status__in=['OPEN', 'IN_PROGRESS', 'IN_REVIEW', 'In Progress', 'In Review', 'Open']).count()
         resolved_count = all_qs.filter(status__in=['RESOLVED', 'Resolved', 'CLEARED']).count()
         hero_count = all_qs.filter(source_system='HERO').count()
-        ilync_count = all_qs.filter(source_system='ILYNC').count()
+        netinfra_count = all_qs.filter(source_system__in=['NetInfra', 'ILYNC']).count()
 
         return Response({
             "success": True,
@@ -202,17 +239,32 @@ class HindranceViewSet(viewsets.ModelViewSet):
             "results": serializer.data,
             "metrics": {
                 "total": total_count,
+                "drafts": drafts_count,
+                "submitted": submitted_count,
+                "pending_approval": submitted_count,
+                "approved": approved_count,
+                "rejected": rejected_count,
                 "critical": critical_count,
                 "in_resolution": in_res_count,
                 "resolved": resolved_count,
                 "source_hero": hero_count,
-                "source_ilync": ilync_count,
+                "source_netinfra": netinfra_count,
             }
         })
 
     def perform_create(self, serializer):
         user = self.request.user if self.request.user and self.request.user.is_authenticated else None
-        hindrance_id = self.request.data.get('hindrance_id')
+        
+        # Check action: save as draft or submit for approval
+        action_flag = (self.request.data.get('action') or '').lower()
+        status_val = self.request.data.get('status')
+        
+        if action_flag == 'draft' or (status_val and str(status_val).upper() == 'DRAFT'):
+            assigned_status = 'DRAFT'
+        else:
+            assigned_status = 'PENDING_APPROVAL'
+
+        hindrance_id = self.request.data.get('hindrance_id') or self.request.data.get('hindranceId')
         if not hindrance_id:
             count = Hindrance.objects.count() + 105
             hindrance_id = f"HND-2026-{count:03d}"
@@ -222,16 +274,212 @@ class HindranceViewSet(viewsets.ModelViewSet):
 
         serializer.save(
             hindrance_id=hindrance_id,
+            status=assigned_status,
             created_by=user,
             source_system='HERO',
             sync_status='LOCAL',
             logged_date=self.request.data.get('logged_date') or timezone.now().date()
         )
 
+    @action(detail=True, methods=['post'], url_path='submit')
+    def submit_for_approval(self, request, pk=None):
+        """
+        Submits an existing DRAFT Hindrance for review/approval.
+        Validates IE photo if required and updates proposedHindrance.
+        """
+        hindrance = self.get_object()
+        if hindrance.status not in ['DRAFT', 'REJECTED']:
+            return Response(
+                {"success": False, "message": f"Hindrance cannot be submitted from status {hindrance.status}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if hindrance.ie_photo_needed and not hindrance.ie_photo:
+            return Response(
+                {"success": False, "message": "Independent Engineer photo is required when IE Photo Needed is Yes."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user_str = request.user.username if request.user and request.user.is_authenticated else 'System'
+        hindrance.status = 'PENDING_APPROVAL'
+        hindrance.proposed_hindrance = hindrance.build_proposed_details()
+        hindrance.field_data = hindrance.to_hindrance_task_data_json()
+
+        history = hindrance.approval_history or []
+        history.append({
+            "action": "SUBMITTED_FOR_APPROVAL",
+            "status": "PENDING_APPROVAL",
+            "user": user_str,
+            "timestamp": timezone.now().isoformat(),
+            "remarks": request.data.get('remarks') or hindrance.remarks or "Submitted for reviewer approval."
+        })
+        hindrance.approval_history = history
+        hindrance.save()
+
+        return Response({
+            "success": True,
+            "message": "Hindrance submitted for approval successfully.",
+            "data": HindranceSerializer(hindrance).data
+        })
+
+    @action(detail=True, methods=['post'], url_path='approve')
+    def approve(self, request, pk=None):
+        """
+        Approves Hindrance through HERO authorized workflow.
+        Dual-state guarantee:
+        - proposedHindrance is PRESERVED untouched.
+        - approvedHindrance is populated with reviewer's approved version.
+        - Approval history is logged with reviewer, timestamp, and remarks.
+        """
+        hindrance = self.get_object()
+        reviewer = request.user if request.user and request.user.is_authenticated else None
+        reviewer_name = reviewer.username if reviewer else 'Reviewer'
+        remarks = request.data.get('remarks') or "Approved by reviewer."
+
+        # Reviewer approved version
+        approved_details = request.data.get('approvedHindrance')
+        if not approved_details or not isinstance(approved_details, dict):
+            approved_details = hindrance.build_proposed_details()
+            approved_details['status'] = 'APPROVED'
+            approved_details['remarks'] = remarks
+
+        # Ensure proposedHindrance is preserved
+        if not hindrance.proposed_hindrance:
+            hindrance.proposed_hindrance = hindrance.build_proposed_details()
+
+        hindrance.approved_hindrance = approved_details
+        hindrance.status = 'APPROVED'
+        hindrance.remarks = remarks
+
+        history = hindrance.approval_history or []
+        history.append({
+            "action": "APPROVED",
+            "status": "APPROVED",
+            "user": reviewer_name,
+            "timestamp": timezone.now().isoformat(),
+            "remarks": remarks
+        })
+        hindrance.approval_history = history
+        hindrance.field_data = hindrance.to_hindrance_task_data_json()
+        hindrance.save()
+
+        return Response({
+            "success": True,
+            "message": "Hindrance approved successfully.",
+            "data": HindranceSerializer(hindrance).data
+        })
+
+    @action(detail=True, methods=['post'], url_path='reject')
+    def reject(self, request, pk=None):
+        """
+        Rejects Hindrance submission.
+        Dual-state guarantee:
+        - proposedHindrance is preserved untouched.
+        - Status is set to REJECTED.
+        - Rejection remarks and reviewer logged in approval history.
+        """
+        hindrance = self.get_object()
+        reviewer = request.user if request.user and request.user.is_authenticated else None
+        reviewer_name = reviewer.username if reviewer else 'Reviewer'
+        remarks = request.data.get('remarks') or request.data.get('reason')
+
+        if not remarks or not str(remarks).strip():
+            return Response(
+                {"success": False, "message": "Rejection remarks/reason are required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not hindrance.proposed_hindrance:
+            hindrance.proposed_hindrance = hindrance.build_proposed_details()
+
+        hindrance.status = 'REJECTED'
+        hindrance.remarks = remarks
+
+        history = hindrance.approval_history or []
+        history.append({
+            "action": "REJECTED",
+            "status": "REJECTED",
+            "user": reviewer_name,
+            "timestamp": timezone.now().isoformat(),
+            "remarks": remarks
+        })
+        hindrance.approval_history = history
+        hindrance.field_data = hindrance.to_hindrance_task_data_json()
+        hindrance.save()
+
+        return Response({
+            "success": True,
+            "message": "Hindrance rejected.",
+            "data": HindranceSerializer(hindrance).data
+        })
+
+    @action(detail=False, methods=['post'], url_path='upload-media')
+    def upload_media(self, request):
+        """
+        Media upload service returning standard SurveyPhoto JSON structure:
+        {
+          "key": "hindrances/20261117/...",
+          "url": "/media/hindrances/20261117/...",
+          "fileName": "site.jpg",
+          "fileSize": 1048576,
+          "mimeType": "image/jpeg",
+          "captureTime": "2026-11-17T15:00:00Z",
+          "latitude": 28.1234,
+          "longitude": 75.1234
+        }
+        """
+        file_obj = request.FILES.get('file') or request.FILES.get('media')
+        if not file_obj:
+            return Response(
+                {"success": False, "message": "No file uploaded."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        today_str = datetime.now().strftime("%Y%m%d")
+        ext = os.path.splitext(file_obj.name)[1].lower()
+        unique_name = f"{uuid.uuid4().hex[:12]}_{file_obj.name}"
+        relative_path = os.path.join('hindrances', today_str, unique_name).replace('\\', '/')
+
+        saved_path = default_storage.save(relative_path, file_obj)
+        media_url = f"{settings.MEDIA_URL}{saved_path}".replace('//', '/')
+
+        lat = request.data.get('latitude')
+        lng = request.data.get('longitude')
+        capture_time = request.data.get('capture_time') or request.data.get('captureTime') or timezone.now().isoformat()
+
+        survey_photo = {
+            "key": saved_path,
+            "url": media_url,
+            "fileName": file_obj.name,
+            "fileSize": file_obj.size,
+            "mimeType": getattr(file_obj, 'content_type', 'application/octet-stream'),
+            "captureTime": capture_time,
+            "latitude": float(lat) if lat is not None and lat != '' else None,
+            "longitude": float(lng) if lng is not None and lng != '' else None,
+        }
+
+        return Response({
+            "success": True,
+            "message": "File uploaded successfully.",
+            "data": survey_photo,
+            "photo": survey_photo
+        })
+
+    @action(detail=False, methods=['get'], url_path='masters')
+    def masters(self, request):
+        """
+        Returns controlled classification masters matching Java enums.
+        """
+        return Response({
+            "success": True,
+            "hindranceTypes": HINDRANCE_TYPES,
+            "subHindranceTypes": SUB_HINDRANCE_TYPES
+        })
+
     @action(detail=False, methods=['post'], url_path='sync')
     def sync_external(self, request):
         """
-        Triggers safe, authorized synchronization of HINDRANCE tasks from iLync.
+        Triggers safe, authorized read-only synchronization of HINDRANCE tasks from NetInfra.
         """
         stats = sync_ilync_hindrances(user=request.user)
         return Response({
@@ -243,7 +491,7 @@ class HindranceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='export')
     def export_csv(self, request):
         """
-        Exports all hindrances as a CSV register.
+        Exports all hindrances as a CSV register including Java model fields.
         """
         queryset = self.get_queryset()
         response = HttpResponse(content_type='text/csv')
@@ -251,30 +499,43 @@ class HindranceViewSet(viewsets.ModelViewSet):
 
         writer = csv.writer(response)
         writer.writerow([
-            'Hindrance ID', 'Title', 'Category', 'Severity', 'Status',
+            'Hindrance ID', 'Title', 'Hindrance Type', 'Sub-Hindrance Type', 'Severity', 'Status',
+            'Point Lat', 'Point Lng', 'Start Lat', 'Start Lng', 'End Lat', 'End Lng',
             'District', 'Block', 'Location/Section', 'Chainage',
+            'IE Name', 'IE Phone', 'IE Photo Needed',
             'Contractor', 'Department', 'Logged Date', 'Target Date',
-            'Source', 'Description', 'Mitigation Plan'
+            'Source System', 'External Task ID', 'Description', 'Mitigation / Remarks'
         ])
 
         for h in queryset:
             writer.writerow([
                 h.hindrance_id,
                 h.title,
-                h.category,
+                h.hindrance_type or h.category,
+                h.sub_hindrance_type or h.sub_category or '—',
                 h.severity,
                 h.status,
+                h.latitude or '—',
+                h.longitude or '—',
+                h.s_latitude or '—',
+                h.s_longitude or '—',
+                h.e_latitude or '—',
+                h.e_longitude or '—',
                 h.district or '—',
                 h.block or '—',
                 h.location or h.section or '—',
                 h.chainage or '—',
+                h.ie_name or '—',
+                h.ie_phone_number or '—',
+                'Yes' if h.ie_photo_needed else 'No',
                 h.contractor or '—',
                 h.department or '—',
                 h.logged_date.strftime('%d %b %Y') if h.logged_date else '—',
                 h.target_date.strftime('%d %b %Y') if h.target_date else '—',
                 h.source_system,
+                h.external_task_id or '—',
                 h.description or '—',
-                h.mitigation or h.remarks or '—'
+                h.remarks or h.mitigation or '—'
             ])
 
         return response

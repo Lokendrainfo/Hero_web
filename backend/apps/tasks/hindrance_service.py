@@ -1,13 +1,15 @@
 """
 HERO Web Hindrance Management & Synchronization Service.
 Enables HERO-native Hindrance creation, management, and authorized read-only
-synchronization from iLync/Net Infra without modifying upstream systems.
+synchronization from NetInfra / iLync without modifying upstream systems.
+Strictly adheres to: com.netinfra.platform.task.dao.entities.survey.HindranceTaskData
 """
 import logging
 import re
 from datetime import datetime, date
 from django.utils import timezone
 from apps.tasks.models import Hindrance
+from apps.tasks.serializers import normalize_survey_photo
 from apps.integrations.ilync_client import IlyncClient
 from apps.integrations.exceptions import IlyncAPIException, IlyncAuthException
 
@@ -29,7 +31,6 @@ def parse_date(date_val):
     if isinstance(date_val, (date, datetime)):
         return date_val.date() if isinstance(date_val, datetime) else date_val
     try:
-        # e.g. "2026-10-12" or "2026-10-12T14:30:00Z"
         s = str(date_val).strip()
         if 'T' in s:
             s = s.split('T')[0]
@@ -38,18 +39,21 @@ def parse_date(date_val):
         return None
 
 
-def map_ilync_status(status_str):
+def map_upstream_status(status_str):
     if not status_str:
         return 'OPEN'
     s = str(status_str).strip().upper()
     mapping = {
-        'SUBMITTED': 'OPEN',
-        'PENDING': 'OPEN',
+        'DRAFT': 'DRAFT',
+        'SUBMITTED': 'PENDING_APPROVAL',
+        'NEEDS_APPROVAL': 'PENDING_APPROVAL',
+        'PENDING': 'PENDING_APPROVAL',
+        'PENDING_APPROVAL': 'PENDING_APPROVAL',
         'OPEN': 'OPEN',
         'IN_PROGRESS': 'IN_PROGRESS',
-        'APPROVED': 'IN_PROGRESS',
+        'APPROVED': 'APPROVED',
         'IN_REVIEW': 'IN_REVIEW',
-        'REJECTED': 'ESCALATED',
+        'REJECTED': 'REJECTED',
         'ESCALATED': 'ESCALATED',
         'COMPLETED': 'RESOLVED',
         'RESOLVED': 'RESOLVED',
@@ -58,7 +62,7 @@ def map_ilync_status(status_str):
     return mapping.get(s, 'OPEN')
 
 
-def map_ilync_severity(severity_str):
+def map_upstream_severity(severity_str):
     if not severity_str:
         return 'MEDIUM'
     s = str(severity_str).strip().upper()
@@ -69,11 +73,12 @@ def map_ilync_severity(severity_str):
 
 def sync_ilync_hindrances(user=None):
     """
-    Synchronizes HINDRANCE tasks from iLync into HERO Web.
+    Synchronizes HINDRANCE tasks from NetInfra/iLync into HERO Web.
     Read-only integration respecting all security and duplicate-prevention rules:
     - Never writes to or modifies Net Infra/iLync.
-    - Uses unique external_task_id matching to prevent duplicates.
+    - Uses unique combination (source_system, external_task_id) to prevent duplicates.
     - Preserves locally updated HERO records from overwrite.
+    - Populates exact Java dual-state structures: proposedHindrance & approvedHindrance.
     """
     client = IlyncClient()
     stats = {
@@ -86,23 +91,23 @@ def sync_ilync_hindrances(user=None):
     }
 
     try:
-        # Fetch HINDRANCE tasks from iLync
+        # Fetch HINDRANCE tasks from NetInfra / iLync API
         res = client.get("api/tasks/my-tasks", params={"taskType": "HINDRANCE", "page": 0, "size": 100})
     except IlyncAuthException as auth_exc:
-        logger.warning("[HINDRANCE_SYNC] iLync authentication not available: %s", auth_exc)
+        logger.warning("[HINDRANCE_SYNC] NetInfra authentication not available: %s", auth_exc)
         return {
             "success": False,
-            "message": "iLync service authentication expired or not configured.",
+            "message": "NetInfra / iLync service authentication expired or not configured.",
             "total_upstream": 0,
             "imported": 0,
             "updated": 0,
             "skipped": 0
         }
     except Exception as exc:
-        logger.error("[HINDRANCE_SYNC] Error fetching tasks from iLync: %s", exc)
+        logger.error("[HINDRANCE_SYNC] Error fetching tasks from NetInfra: %s", exc)
         return {
             "success": False,
-            "message": f"Failed to connect to iLync API: {str(exc)}",
+            "message": f"Failed to connect to NetInfra API: {str(exc)}",
             "total_upstream": 0,
             "imported": 0,
             "updated": 0,
@@ -120,7 +125,7 @@ def sync_ilync_hindrances(user=None):
     if not task_items:
         return {
             "success": True,
-            "message": "Sync completed. No external hindrance tasks found in iLync scope.",
+            "message": "Sync completed. No external hindrance tasks found in NetInfra scope.",
             "total_upstream": 0,
             "imported": 0,
             "updated": 0,
@@ -138,18 +143,17 @@ def sync_ilync_hindrances(user=None):
         task_code = str(task.get('taskCode') or task.get('code') or '').strip()
         display_name = task.get('displayName') or task.get('title') or f"Hindrance {task_code}"
 
-        # Check existing record by external_task_id
-        existing = Hindrance.objects.filter(source_system='ILYNC', external_task_id=task_id).first()
+        # Duplicate Prevention: Check existing record by external_task_id
+        existing = Hindrance.objects.filter(source_system__in=['NetInfra', 'ILYNC'], external_task_id=task_id).first()
         if not existing and task_code:
-            existing = Hindrance.objects.filter(source_system='ILYNC', external_hindrance_id=task_code).first()
+            existing = Hindrance.objects.filter(source_system__in=['NetInfra', 'ILYNC'], external_hindrance_id=task_code).first()
 
-        # Duplicate & Overwrite Protection:
-        # If record exists and was updated locally, DO NOT overwrite with older imported data!
+        # Overwrite Protection: If record exists and was updated locally, DO NOT overwrite!
         if existing and existing.sync_status == 'LOCAL':
             stats["skipped"] += 1
             continue
 
-        # Fetch Execution Details for proposedHindrance payload
+        # Fetch Execution Details for proposedHindrance & approvedHindrance payloads
         execution_data = {}
         try:
             exec_res = client.get_task_execution(task_id)
@@ -159,7 +163,12 @@ def sync_ilync_hindrances(user=None):
             logger.warning("[HINDRANCE_SYNC] Could not fetch execution for task %s: %s", task_id, exec_err)
 
         field_data = execution_data.get('fieldData') or {}
-        proposed = field_data.get('proposedHindrance') or field_data
+        proposed = field_data.get('proposedHindrance') or {}
+        approved = field_data.get('approvedHindrance')
+
+        # Fallback if fieldData is flat
+        if not proposed:
+            proposed = field_data
 
         # Location snapshot
         loc_snapshot = task.get('locationSnapshot') or {}
@@ -174,53 +183,91 @@ def sync_ilync_hindrances(user=None):
         ch_to = str(proposed.get('chainageTo') or field_data.get('chainageTo') or '').strip()
         chainage_str = f"CH {ch_from} to {ch_to}" if (ch_from and ch_to) else (ch_from or ch_to or '')
 
-        # Category and Severity
-        category = proposed.get('hindranceType') or proposed.get('category') or field_data.get('hindranceType') or 'Utility Crossing'
-        sub_category = proposed.get('subHindranceType') or field_data.get('subHindranceType') or ''
-        severity = map_ilync_severity(proposed.get('severity') or field_data.get('severity') or 'HIGH')
-        status = map_ilync_status(task.get('status') or task.get('approvalStatus'))
+        # Classification
+        hindrance_type = proposed.get('hindranceType') or field_data.get('hindranceType') or proposed.get('category') or 'Linear'
+        sub_hindrance_type = proposed.get('subHindranceType') or field_data.get('subHindranceType') or ''
+        severity = map_upstream_severity(proposed.get('severity') or field_data.get('severity') or 'HIGH')
+        status = map_upstream_status(task.get('status') or task.get('approvalStatus'))
 
-        # GPS Coordinates
-        lat = safe_float(proposed.get('latitude') or proposed.get('startLat') or field_data.get('latitude'))
-        lng = safe_float(proposed.get('longitude') or proposed.get('startLng') or field_data.get('longitude'))
+        # Coordinates
+        lat = safe_float(proposed.get('latitude') or field_data.get('latitude'))
+        lng = safe_float(proposed.get('longitude') or field_data.get('longitude'))
+        s_lat = safe_float(proposed.get('sLatitude') or proposed.get('startLatitude') or proposed.get('slatitude'))
+        s_lng = safe_float(proposed.get('sLongitude') or proposed.get('startLongitude') or proposed.get('slongitude'))
+        e_lat = safe_float(proposed.get('eLatitude') or proposed.get('endLatitude') or proposed.get('elatitude'))
+        e_lng = safe_float(proposed.get('eLongitude') or proposed.get('endLongitude') or proposed.get('elongitude'))
 
-        # Media Keys
-        start_photo = proposed.get('startPhotoKey') or field_data.get('startPhotoKey')
-        end_photo = proposed.get('endPhotoKey') or field_data.get('endPhotoKey')
-        walkthrough_video = proposed.get('walkthroughVideoKey') or field_data.get('walkthroughVideoKey')
-        attachment_keys = execution_data.get('attachmentKeys') or []
+        # Media Keys & SurveyPhoto Objects
+        start_photo = normalize_survey_photo(proposed.get('startPhoto') or field_data.get('startPhoto') or field_data.get('startPhotoKey'))
+        end_photo = normalize_survey_photo(proposed.get('endPhoto') or field_data.get('endPhoto') or field_data.get('endPhotoKey'))
+        walkthrough_video = normalize_survey_photo(proposed.get('walkthroughVideo') or field_data.get('walkthroughVideo') or field_data.get('walkthroughVideoKey'))
+        photos_raw = proposed.get('photos') or field_data.get('photos') or []
+        add_photos_raw = proposed.get('additionalPhotos') or field_data.get('additionalPhotos') or []
+        add_videos_raw = proposed.get('additionalVideos') or field_data.get('additionalVideos') or []
+        shp_raw = proposed.get('shpFiles') or field_data.get('shpFiles') or []
 
-        # Resolve Photo URLs if keys present
-        photo_keys_to_resolve = [k for k in [start_photo, end_photo] if k and isinstance(k, str) and not k.startswith('http')]
-        resolved_urls = {}
-        if photo_keys_to_resolve:
-            try:
-                url_res = client.get_survey_photo_urls(photo_keys_to_resolve)
-                if isinstance(url_res, dict) and isinstance(url_res.get('data'), dict):
-                    resolved_urls = url_res['data']
-            except Exception:
-                pass
+        photos = [normalize_survey_photo(p) for p in photos_raw if normalize_survey_photo(p)]
+        additional_photos = [normalize_survey_photo(p) for p in add_photos_raw if normalize_survey_photo(p)]
+        additional_videos = [normalize_survey_photo(v) for v in add_videos_raw if normalize_survey_photo(v)]
+        shp_files = shp_raw if isinstance(shp_raw, list) else []
 
-        if start_photo and start_photo in resolved_urls:
-            start_photo = resolved_urls[start_photo]
-        if end_photo and end_photo in resolved_urls:
-            end_photo = resolved_urls[end_photo]
+        # Independent Engineer Details
+        ie_name = proposed.get('ieName') or field_data.get('ieName') or ''
+        ie_phone = proposed.get('iePhoneNumber') or field_data.get('iePhoneNumber') or ''
+        ie_needed = bool(proposed.get('iePhotoNeeded') or field_data.get('iePhotoNeeded'))
+        ie_photo = normalize_survey_photo(proposed.get('iePhoto') or field_data.get('iePhoto'))
 
         # Dates
         logged_date = parse_date(task.get('createdAt') or task.get('submittedAt')) or timezone.now().date()
         target_date = parse_date(task.get('dueDate'))
 
-        # Description & Mitigation
+        # Description & Remarks
         description = proposed.get('description') or task.get('description') or ''
-        mitigation = proposed.get('mitigation') or field_data.get('mitigation') or task.get('remarks') or ''
+        remarks = field_data.get('remarks') or proposed.get('remarks') or task.get('remarks') or ''
+        mitigation = proposed.get('mitigation') or field_data.get('mitigation') or remarks
 
-        # Unique Hindrance ID
-        local_h_id = f"HND-IL-{task_code or task_id[:8]}"
+        # External Hindrance Reference
+        external_h_id = (
+            proposed.get('hindranceId') or
+            field_data.get('hindranceId') or
+            task_code or
+            task_id
+        )
+        local_h_id = f"HND-NET-{task_code or task_id[:8]}"
+
+        # Canonical proposedHindrance structure
+        canonical_proposed = {
+            "hindranceId": external_h_id,
+            "hindranceType": hindrance_type,
+            "subHindranceType": sub_hindrance_type,
+            "description": description,
+            "status": status,
+            "remarks": remarks,
+            "latitude": lat,
+            "longitude": lng,
+            "sLatitude": s_lat,
+            "sLongitude": s_lng,
+            "eLatitude": e_lat,
+            "eLongitude": e_lng,
+            "startPhoto": start_photo or {},
+            "endPhoto": end_photo or {},
+            "walkthroughVideo": walkthrough_video or {},
+            "photos": photos,
+            "additionalPhotos": additional_photos,
+            "additionalVideos": additional_videos,
+            "ieName": ie_name,
+            "iePhoneNumber": ie_phone,
+            "iePhotoNeeded": ie_needed,
+            "iePhoto": ie_photo or {},
+            "shpFiles": shp_files,
+        }
 
         defaults = {
             "title": display_name,
-            "category": category,
-            "sub_category": sub_category,
+            "hindrance_type": hindrance_type,
+            "sub_hindrance_type": sub_hindrance_type,
+            "category": hindrance_type,
+            "sub_category": sub_hindrance_type,
             "severity": severity,
             "status": status,
             "circle": circle,
@@ -233,19 +280,40 @@ def sync_ilync_hindrances(user=None):
             "chainage_to": ch_to,
             "latitude": lat,
             "longitude": lng,
+            "s_latitude": s_lat,
+            "s_longitude": s_lng,
+            "e_latitude": e_lat,
+            "e_longitude": e_lng,
             "description": description,
             "mitigation": mitigation,
-            "contractor": task.get('vendorId') or "Assigned Contractor",
-            "department": proposed.get('department') or "Nodal Authority",
+            "remarks": remarks,
+            "contractor": task.get('vendorId') or "NetInfra Contractor",
+            "department": proposed.get('department') or "Field Operations",
             "logged_date": logged_date,
             "target_date": target_date,
-            "start_photo": start_photo,
-            "end_photo": end_photo,
-            "walkthrough_video": walkthrough_video,
-            "additional_media": attachment_keys if isinstance(attachment_keys, list) else [],
-            "source_system": 'ILYNC',
+            "start_photo": start_photo or {},
+            "end_photo": end_photo or {},
+            "walkthrough_video": walkthrough_video or {},
+            "photos": photos,
+            "additional_photos": additional_photos,
+            "additional_videos": additional_videos,
+            "ie_name": ie_name,
+            "ie_phone_number": ie_phone,
+            "ie_photo_needed": ie_needed,
+            "ie_photo": ie_photo or {},
+            "shp_files": shp_files,
+            "proposed_hindrance": canonical_proposed,
+            "approved_hindrance": approved if isinstance(approved, dict) else None,
+            "field_data": {
+                "surveyKind": "HINDRANCE",
+                "hindranceId": external_h_id,
+                "remarks": remarks,
+                "proposedHindrance": canonical_proposed,
+                "approvedHindrance": approved if isinstance(approved, dict) else None
+            },
+            "source_system": 'NetInfra',
             "external_task_id": task_id,
-            "external_hindrance_id": task_code or task_id,
+            "external_hindrance_id": external_h_id,
             "last_synced_at": timezone.now(),
             "sync_status": 'SYNCED',
             "raw_payload": {"task": task, "execution": execution_data}
@@ -268,6 +336,6 @@ def sync_ilync_hindrances(user=None):
             logger.error("[HINDRANCE_SYNC] Error saving hindrance for task %s: %s", task_id, save_err)
             stats["errors"].append(str(save_err))
 
-    msg = f"Sync completed. {stats['imported']} imported, {stats['updated']} updated, {stats['skipped']} skipped."
+    msg = f"NetInfra sync completed. {stats['imported']} imported, {stats['updated']} updated, {stats['skipped']} skipped."
     stats["message"] = msg
     return stats
