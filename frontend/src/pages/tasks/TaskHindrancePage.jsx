@@ -1,123 +1,23 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   LucideAlertTriangle, LucidePlus, LucideFilter, LucideSearch, LucideRefreshCw,
   LucideClock, LucideCheckCircle2, LucideAlertOctagon, LucideMapPin,
   LucideBuilding2, LucideFileText, LucideExternalLink, LucideX, LucideLayers,
-  LucideChevronRight, LucideCalendar, LucideUserCheck, LucideDownload
+  LucideChevronRight, LucideCalendar, LucideUserCheck, LucideDownload, LucideDatabase
 } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
-
-const INITIAL_HINDRANCES = [
-  {
-    id: 'HND-2026-104',
-    title: 'GAIL High-Pressure Gas Pipeline Crossing',
-    category: 'Utility Crossing',
-    severity: 'Critical',
-    status: 'Escalated',
-    chainage: 'CH 14+250 to 14+320 (70m)',
-    district: 'Ambala',
-    block: 'Saha',
-    section: 'Block PoP to GP Kesri',
-    contractor: 'Premium Infra Solutions',
-    department: 'GAIL (India) Limited',
-    loggedDate: '12 Oct 2026',
-    targetDate: '24 Oct 2026',
-    description: 'Encountered 18-inch cross-country natural gas pipeline at 2.4m depth. Requires GAIL NOC and supervised trial pit before HDD bore initiation.',
-    mitigation: 'Joint trial trenching scheduled with GAIL inspection engineer on 18 Oct. HDD entry point adjusted 15m away to maintain 3m safety clearance.'
-  },
-  {
-    id: 'HND-2026-103',
-    title: 'NHAI Highway Crossing ROW Permission Delay',
-    category: 'ROW Clearance',
-    severity: 'High',
-    status: 'In Review',
-    chainage: 'CH 08+100 to 08+180 (80m)',
-    district: 'Karnal',
-    block: 'Gharaunda',
-    section: 'Ring-A Feeder Route',
-    contractor: 'Naveen Telecom Network',
-    department: 'NHAI Project Unit Panipat',
-    loggedDate: '09 Oct 2026',
-    targetDate: '22 Oct 2026',
-    description: 'National Highway NH-44 crossing approval submitted. Demand note received; bank guarantee verification in progress with nodal office.',
-    mitigation: 'Demand note fee of ₹1,45,000 processed. Expedited clearance meeting requested with Project Director NHAI.'
-  },
-  {
-    id: 'HND-2026-102',
-    title: 'Hard Basalt Rock Strata at 2.8m Depth',
-    category: 'Strata Obstacle',
-    severity: 'High',
-    status: 'In Progress',
-    chainage: 'CH 21+400 to 21+750 (350m)',
-    district: 'Hisar',
-    block: 'Hansi-1',
-    section: 'GP Sisai to GP Kheri',
-    contractor: 'Harpaal Infra Development',
-    department: 'Geology & Mining / Project Tech',
-    loggedDate: '05 Oct 2026',
-    targetDate: '20 Oct 2026',
-    description: 'Machine encountering unweathered quartzitic rock exceeding 140 MPa compressive strength. Standard reamer wearing prematurely.',
-    mitigation: 'Mobilizing mud-motor roller cone rock bits and high-viscosity bentonite polymer mix from central depot.'
-  },
-  {
-    id: 'HND-2026-101',
-    title: 'Irrigation Canal Siphon Embankment Clearance',
-    category: 'Waterway / Canal',
-    severity: 'Medium',
-    status: 'Open',
-    chainage: 'CH 03+650 to 03+720 (70m)',
-    district: 'Sonipat',
-    block: 'Ganaur',
-    section: 'Western Yamuna Canal Spurt',
-    contractor: 'Shree Shyam Enterprises',
-    department: 'Haryana Irrigation Dept',
-    loggedDate: '14 Oct 2026',
-    targetDate: '28 Oct 2026',
-    description: 'HDD bore path passes 4.5m beneath lined distributary canal. Requires canal engineer permission and bund stability certification.',
-    mitigation: 'Engineering profile drawings submitted. Field inspection slated for Monday with Sub-Divisional Officer.'
-  },
-  {
-    id: 'HND-2026-100',
-    title: 'Gram Panchayat Village Road Trenching Dispute',
-    category: 'Local ROW',
-    severity: 'Medium',
-    status: 'Resolved',
-    chainage: 'CH 01+200 to 01+450 (250m)',
-    district: 'Rohtak',
-    block: 'Kalanaur',
-    section: 'GP Anwal Village Approach',
-    contractor: 'Premium Infra Solutions',
-    department: 'Block Development Officer (BDO)',
-    loggedDate: '01 Oct 2026',
-    targetDate: '10 Oct 2026',
-    description: 'Local panchayat raised objection regarding paver block dismantling along village main street.',
-    mitigation: 'Tri-party agreement executed with Sarpanch. Contractor committed to restoring paver blocks within 48h of duct laying. Clearance granted.'
-  },
-  {
-    id: 'HND-2026-099',
-    title: 'State Electricity 33kV Underground Power Cable Clash',
-    category: 'Utility Crossing',
-    severity: 'Critical',
-    status: 'Resolved',
-    chainage: 'CH 11+820 to 11+860 (40m)',
-    district: 'Faridabad',
-    block: 'Ballabgarh',
-    section: 'Substation Feeder Link',
-    contractor: 'Naveen Telecom',
-    department: 'DHBVN Electricity Board',
-    loggedDate: '28 Sept 2026',
-    targetDate: '08 Oct 2026',
-    description: 'Uncharted 33kV high-voltage transmission line located along proposed trench route.',
-    mitigation: 'Joint cable detection conducted. Depth profile revised to 3.8m beneath power conduit with concrete slab markers.'
-  }
-];
+import { hindranceService } from '../../services/hindranceService';
 
 export const TaskHindrancePage = () => {
-  const [hindrances, setHindrances] = useState(INITIAL_HINDRANCES);
+  const [hindrances, setHindrances] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [metrics, setMetrics] = useState({ total: 0, critical: 0, in_resolution: 0, resolved: 0 });
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [severityFilter, setSeverityFilter] = useState('ALL');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
+  const [sourceFilter, setSourceFilter] = useState('ALL');
   const [selectedHindrance, setSelectedHindrance] = useState(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const { showToast } = useToast();
@@ -125,73 +25,146 @@ export const TaskHindrancePage = () => {
   const [formData, setFormData] = useState({
     title: '',
     category: 'Utility Crossing',
+    sub_category: '',
     severity: 'High',
     chainage: '',
+    chainage_from: '',
+    chainage_to: '',
     district: 'Ambala',
     block: '',
     section: '',
+    location: '',
     contractor: '',
     department: '',
     description: '',
-    mitigation: ''
+    mitigation: '',
+    latitude: '',
+    longitude: ''
   });
 
-  const filteredHindrances = useMemo(() => {
-    return hindrances.filter(item => {
-      if (statusFilter !== 'ALL' && item.status.toUpperCase() !== statusFilter.toUpperCase()) return false;
-      if (severityFilter !== 'ALL' && item.severity.toUpperCase() !== severityFilter.toUpperCase()) return false;
-      if (categoryFilter !== 'ALL' && item.category !== categoryFilter) return false;
-      if (search.trim()) {
-        const q = search.toLowerCase();
-        const match = item.id.toLowerCase().includes(q) ||
-          item.title.toLowerCase().includes(q) ||
-          item.district.toLowerCase().includes(q) ||
-          item.block.toLowerCase().includes(q) ||
-          item.chainage.toLowerCase().includes(q) ||
-          item.contractor.toLowerCase().includes(q) ||
-          item.department.toLowerCase().includes(q);
-        if (!match) return false;
+  const loadHindrances = useCallback(async () => {
+    try {
+      setLoading(true);
+      const params = {};
+      if (statusFilter !== 'ALL') params.status = statusFilter;
+      if (severityFilter !== 'ALL') params.severity = severityFilter;
+      if (categoryFilter !== 'ALL') params.category = categoryFilter;
+      if (sourceFilter !== 'ALL') params.source = sourceFilter;
+      if (search.trim()) params.search = search.trim();
+
+      const res = await hindranceService.getAll(params);
+      const data = res?.results || res?.data?.results || res?.data || (Array.isArray(res) ? res : []);
+      setHindrances(data);
+      if (res?.metrics) {
+        setMetrics(res.metrics);
+      } else {
+        const total = data.length;
+        const critical = data.filter(h => (h.severity || '').toUpperCase() === 'CRITICAL' || (h.status || '').toUpperCase() === 'ESCALATED').length;
+        const inProgress = data.filter(h => ['IN_PROGRESS', 'IN PROGRESS', 'IN REVIEW', 'IN_REVIEW', 'OPEN'].includes((h.status || '').toUpperCase())).length;
+        const resolved = data.filter(h => (h.status || '').toUpperCase() === 'RESOLVED').length;
+        setMetrics({ total, critical, in_resolution: inProgress, resolved });
       }
-      return true;
-    });
-  }, [hindrances, statusFilter, severityFilter, categoryFilter, search]);
+    } catch (err) {
+      console.error('Failed to load hindrances:', err);
+      showToast('Could not load hindrances from server', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [statusFilter, severityFilter, categoryFilter, sourceFilter, search, showToast]);
 
-  const metrics = useMemo(() => {
-    const total = hindrances.length;
-    const critical = hindrances.filter(h => h.severity === 'Critical' || h.status === 'Escalated').length;
-    const inProgress = hindrances.filter(h => h.status === 'In Progress' || h.status === 'In Review' || h.status === 'Open').length;
-    const resolved = hindrances.filter(h => h.status === 'Resolved').length;
-    return { total, critical, inProgress, resolved };
-  }, [hindrances]);
+  useEffect(() => {
+    loadHindrances();
+  }, [loadHindrances]);
 
-  const handleCreateSubmit = (e) => {
+  const handleSync = async () => {
+    try {
+      setSyncing(true);
+      showToast('Connecting to iLync / Net Infra API...', 'info');
+      const res = await hindranceService.syncExternal();
+      const msg = res?.message || res?.data?.message || 'Sync completed successfully.';
+      showToast(`✓ ${msg}`, 'success');
+      loadHindrances();
+    } catch (err) {
+      console.error('iLync sync error:', err);
+      showToast('iLync synchronization encountered an issue. See logs for details.', 'error');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleExport = () => {
+    const url = hindranceService.exportCsvUrl();
+    window.open(url, '_blank');
+    showToast('Exporting hindrance register to CSV...', 'info');
+  };
+
+  const handleCreateSubmit = async (e) => {
     e.preventDefault();
     if (!formData.title || !formData.chainage || !formData.district) {
       showToast('Please fill all required hindrance details', 'error');
       return;
     }
 
-    const newRecord = {
-      id: `HND-2026-${Math.floor(105 + Math.random() * 900)}`,
-      title: formData.title,
-      category: formData.category,
-      severity: formData.severity,
-      status: 'Open',
-      chainage: formData.chainage,
-      district: formData.district,
-      block: formData.block || 'Central',
-      section: formData.section || 'Trenching Route Span',
-      contractor: formData.contractor || 'Assigned Vendor',
-      department: formData.department || 'Local Nodal Agency',
-      loggedDate: 'Today',
-      targetDate: 'In 14 Days',
-      description: formData.description || 'Hindrance logged by field operational supervisor.',
-      mitigation: formData.mitigation || 'Awaiting initial authority coordination meeting.'
-    };
+    try {
+      await hindranceService.create({
+        title: formData.title,
+        category: formData.category,
+        sub_category: formData.sub_category,
+        severity: formData.severity.toUpperCase(),
+        status: 'OPEN',
+        chainage: formData.chainage,
+        chainage_from: formData.chainage_from,
+        chainage_to: formData.chainage_to,
+        district: formData.district,
+        block: formData.block || 'Central',
+        section: formData.section || '',
+        location: formData.location || '',
+        contractor: formData.contractor || '',
+        department: formData.department || '',
+        description: formData.description || '',
+        mitigation: formData.mitigation || '',
+        latitude: formData.latitude ? parseFloat(formData.latitude) : null,
+        longitude: formData.longitude ? parseFloat(formData.longitude) : null,
+      });
 
-    setHindrances([newRecord, ...hindrances]);
-    setIsCreateOpen(false);
-    showToast('✓ Hindrance logged successfully in register', 'success');
+      setIsCreateOpen(false);
+      showToast('✓ Hindrance logged successfully in register', 'success');
+      setFormData({
+        title: '',
+        category: 'Utility Crossing',
+        sub_category: '',
+        severity: 'High',
+        chainage: '',
+        chainage_from: '',
+        chainage_to: '',
+        district: 'Ambala',
+        block: '',
+        section: '',
+        location: '',
+        contractor: '',
+        department: '',
+        description: '',
+        mitigation: '',
+        latitude: '',
+        longitude: ''
+      });
+      loadHindrances();
+    } catch (err) {
+      console.error('Failed to create hindrance:', err);
+      showToast('Failed to create hindrance record', 'error');
+    }
+  };
+
+  const handleResolve = async (item) => {
+    try {
+      await hindranceService.update(item.id, { status: 'RESOLVED' });
+      showToast(`✓ Marked ${item.hindrance_id || item.id} as Resolved`, 'success');
+      setSelectedHindrance(null);
+      loadHindrances();
+    } catch (err) {
+      console.error('Failed to resolve hindrance:', err);
+      showToast('Failed to update hindrance status', 'error');
+    }
   };
 
   const getSeverityBadge = (severity) => {
@@ -223,11 +196,13 @@ export const TaskHindrancePage = () => {
     const styles = {
       RESOLVED: { bg: '#ecfdf5', color: '#047857', border: '#a7f3d0', dot: '#10b981' },
       ESCALATED: { bg: '#fef2f2', color: '#b91c1c', border: '#fecaca', dot: '#ef4444' },
+      'IN_PROGRESS': { bg: '#eef2ff', color: '#4338ca', border: '#c7d2fe', dot: '#6366f1' },
       'IN PROGRESS': { bg: '#eef2ff', color: '#4338ca', border: '#c7d2fe', dot: '#6366f1' },
+      'IN_REVIEW': { bg: '#eef2ff', color: '#4338ca', border: '#c7d2fe', dot: '#6366f1' },
       'IN REVIEW': { bg: '#eef2ff', color: '#4338ca', border: '#c7d2fe', dot: '#6366f1' },
       OPEN: { bg: '#fffbeb', color: '#b45309', border: '#fde68a', dot: '#f59e0b' }
     };
-    const s = (status || 'OPEN').toUpperCase();
+    const s = (status || 'OPEN').toUpperCase().replace('_', ' ');
     const style = styles[s] || styles.OPEN;
     return (
       <span style={{
@@ -248,6 +223,46 @@ export const TaskHindrancePage = () => {
     );
   };
 
+  const getSourceBadge = (source) => {
+    const isIlync = (source || '').toUpperCase().includes('ILYNC') || (source || '').toUpperCase().includes('NET_INFRA');
+    if (isIlync) {
+      return (
+        <span style={{
+          padding: '2px 8px',
+          borderRadius: '12px',
+          fontSize: '0.70rem',
+          fontWeight: '600',
+          background: '#f5f3ff',
+          color: '#6d28d9',
+          border: '1px solid #ddd6fe',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '4px'
+        }}>
+          <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#8b5cf6' }}></span>
+          iLync / Net Infra
+        </span>
+      );
+    }
+    return (
+      <span style={{
+        padding: '2px 8px',
+        borderRadius: '12px',
+        fontSize: '0.70rem',
+        fontWeight: '600',
+        background: '#f0fdf4',
+        color: '#15803d',
+        border: '1px solid #bbf7d0',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px'
+      }}>
+        <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#22c55e' }}></span>
+        HERO
+      </span>
+    );
+  };
+
   return (
     <div style={{ padding: '24px 32px', maxWidth: '1440px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
       {/* Top Header */}
@@ -262,9 +277,19 @@ export const TaskHindrancePage = () => {
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
           <button
-            onClick={() => showToast('Exporting hindrance register to Excel...', 'info')}
+            onClick={handleSync}
+            disabled={syncing}
+            className="btn-secondary"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '36px', padding: '0 14px', fontSize: '0.82rem', fontWeight: '600' }}
+            title="Safely sync external hindrance tasks from iLync / Net Infra API"
+          >
+            <LucideRefreshCw size={15} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? 'Syncing...' : 'Sync iLync'}
+          </button>
+          <button
+            onClick={handleExport}
             className="btn-secondary"
             style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', height: '36px', padding: '0 14px', fontSize: '0.82rem', fontWeight: '600' }}
           >
@@ -309,7 +334,7 @@ export const TaskHindrancePage = () => {
         <div className="app-card" style={{ padding: '16px 20px', borderRadius: '12px', border: '1px solid #c7d2fe', background: '#fafbff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontSize: '0.75rem', fontWeight: '600', color: '#4338ca', textTransform: 'uppercase', letterSpacing: '0.04em' }}>In Resolution</div>
-            <div style={{ fontSize: '1.6rem', fontWeight: '700', color: '#4f46e5', marginTop: '4px' }}>{metrics.inProgress}</div>
+            <div style={{ fontSize: '1.6rem', fontWeight: '700', color: '#4f46e5', marginTop: '4px' }}>{metrics.in_resolution}</div>
             <div style={{ fontSize: '0.72rem', color: '#6366f1', marginTop: '2px' }}>Trial pits & review ongoing</div>
           </div>
           <div style={{ width: '44px', height: '44px', borderRadius: '10px', background: '#e0e7ff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4338ca' }}>
@@ -331,7 +356,7 @@ export const TaskHindrancePage = () => {
 
       {/* Search and Filters Bar */}
       <div className="app-card" style={{ padding: '12px 18px', borderRadius: '10px', border: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px' }}>
-        <div style={{ position: 'relative', flex: '1', minWidth: '280px', maxWidth: '420px' }}>
+        <div style={{ position: 'relative', flex: '1', minWidth: '260px', maxWidth: '380px' }}>
           <LucideSearch size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
           <input
             type="text"
@@ -342,7 +367,20 @@ export const TaskHindrancePage = () => {
           />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-muted)' }}>Source:</span>
+            <select
+              value={sourceFilter}
+              onChange={(e) => setSourceFilter(e.target.value)}
+              style={{ fontSize: '0.8rem', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
+            >
+              <option value="ALL">All Sources</option>
+              <option value="HERO">HERO Web</option>
+              <option value="ILYNC">iLync / Net Infra</option>
+            </select>
+          </div>
+
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-muted)' }}>Category:</span>
             <select
@@ -383,7 +421,8 @@ export const TaskHindrancePage = () => {
             >
               <option value="ALL">All Statuses</option>
               <option value="OPEN">Open</option>
-              <option value="IN PROGRESS">In Progress</option>
+              <option value="IN_PROGRESS">In Progress</option>
+              <option value="IN_REVIEW">In Review</option>
               <option value="ESCALATED">Escalated</option>
               <option value="RESOLVED">Resolved</option>
             </select>
@@ -400,6 +439,7 @@ export const TaskHindrancePage = () => {
                 <th style={{ padding: '12px 16px' }}>Hindrance ID</th>
                 <th style={{ padding: '12px 16px' }}>Obstacle & Description</th>
                 <th style={{ padding: '12px 16px' }}>Location / Chainage</th>
+                <th style={{ padding: '12px 16px' }}>Source</th>
                 <th style={{ padding: '12px 16px' }}>Responsible Agency</th>
                 <th style={{ padding: '12px 16px' }}>Severity</th>
                 <th style={{ padding: '12px 16px' }}>Status</th>
@@ -408,14 +448,23 @@ export const TaskHindrancePage = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredHindrances.length === 0 ? (
+              {loading ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <td colSpan={9} style={{ padding: '36px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                      <LucideRefreshCw size={18} className="animate-spin" />
+                      Loading hindrance register from database...
+                    </div>
+                  </td>
+                </tr>
+              ) : hindrances.length === 0 ? (
+                <tr>
+                  <td colSpan={9} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)' }}>
                     No hindrance records match the selected filters.
                   </td>
                 </tr>
               ) : (
-                filteredHindrances.map((item) => (
+                hindrances.map((item) => (
                   <tr
                     key={item.id}
                     onClick={() => setSelectedHindrance(item)}
@@ -426,20 +475,23 @@ export const TaskHindrancePage = () => {
                     <td style={{ padding: '14px 16px', fontWeight: '600', fontFamily: 'monospace', color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#94a3b8' }}></span>
-                        {item.id}
+                        {item.hindrance_id || `HND-${item.id}`}
                       </div>
                     </td>
                     <td style={{ padding: '14px 16px', maxWidth: '280px' }}>
                       <div style={{ fontWeight: '600', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description || '—'}</div>
                     </td>
                     <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
-                      <div style={{ fontWeight: '500', color: 'var(--text-primary)' }}>{item.chainage}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.district} • {item.block}</div>
+                      <div style={{ fontWeight: '500', color: 'var(--text-primary)' }}>{item.chainage || '—'}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.district || '—'} • {item.block || '—'}</div>
                     </td>
                     <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
-                      <div style={{ fontWeight: '500', color: 'var(--text-primary)' }}>{item.department}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.contractor}</div>
+                      {getSourceBadge(item.source_system)}
+                    </td>
+                    <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
+                      <div style={{ fontWeight: '500', color: 'var(--text-primary)' }}>{item.department || '—'}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.contractor || item.vendor_name || '—'}</div>
                     </td>
                     <td style={{ padding: '14px 16px', whiteSpace: 'nowrap' }}>
                       {getSeverityBadge(item.severity)}
@@ -450,7 +502,7 @@ export const TaskHindrancePage = () => {
                     <td style={{ padding: '14px 16px', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <LucideCalendar size={13} color="#94a3b8" />
-                        {item.targetDate}
+                        {item.target_date || item.targetDate || '—'}
                       </div>
                     </td>
                     <td style={{ padding: '14px 16px', textAlign: 'right', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
@@ -473,15 +525,19 @@ export const TaskHindrancePage = () => {
       {/* Inspect Hindrance Modal */}
       {selectedHindrance && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15, 23, 42, 0.45)', backdropFilter: 'blur(4px)', padding: '16px' }}>
-          <div style={{ background: '#fff', borderRadius: '14px', maxWidth: '580px', width: '100%', border: '1px solid var(--border)', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+          <div style={{ background: '#fff', borderRadius: '14px', maxWidth: '640px', width: '100%', border: '1px solid var(--border)', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
             <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f8fafc' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: '#fee2e2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#b91c1c' }}>
                   <LucideAlertTriangle size={18} />
                 </div>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)' }}>{selectedHindrance.id}: {selectedHindrance.title}</h3>
-                  <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>{selectedHindrance.category} • Logged on {selectedHindrance.loggedDate}</p>
+                  <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)' }}>{selectedHindrance.hindrance_id || selectedHindrance.id}: {selectedHindrance.title}</h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{selectedHindrance.category}</span>
+                    <span style={{ color: '#cbd5e1' }}>•</span>
+                    {getSourceBadge(selectedHindrance.source_system)}
+                  </div>
                 </div>
               </div>
               <button onClick={() => setSelectedHindrance(null)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748b' }}>
@@ -489,33 +545,65 @@ export const TaskHindrancePage = () => {
               </button>
             </div>
 
-            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', fontSize: '0.82rem' }}>
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', fontSize: '0.82rem', maxHeight: '80vh', overflowY: 'auto' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', padding: '12px 14px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
                 <div>
                   <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>Location Chainage</div>
-                  <div style={{ fontWeight: '600', color: '#1e293b', marginTop: '2px' }}>{selectedHindrance.chainage}</div>
-                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{selectedHindrance.district}, {selectedHindrance.block}</div>
+                  <div style={{ fontWeight: '600', color: '#1e293b', marginTop: '2px' }}>{selectedHindrance.chainage || '—'}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{selectedHindrance.district || '—'}, {selectedHindrance.block || '—'}</div>
+                  {selectedHindrance.latitude && selectedHindrance.longitude && (
+                    <div style={{ fontSize: '0.72rem', color: '#2563eb', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <LucideMapPin size={12} />
+                      GPS: {selectedHindrance.latitude.toFixed(5)}, {selectedHindrance.longitude.toFixed(5)}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>Responsible Agency</div>
-                  <div style={{ fontWeight: '600', color: '#1e293b', marginTop: '2px' }}>{selectedHindrance.department}</div>
-                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Contractor: {selectedHindrance.contractor}</div>
+                  <div style={{ fontWeight: '600', color: '#1e293b', marginTop: '2px' }}>{selectedHindrance.department || '—'}</div>
+                  <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Contractor: {selectedHindrance.contractor || selectedHindrance.vendor_name || '—'}</div>
+                  {selectedHindrance.external_task_id && (
+                    <div style={{ fontSize: '0.70rem', color: '#7c3aed', marginTop: '4px', fontFamily: 'monospace' }}>
+                      Ext Task: {selectedHindrance.external_task_id.substring(0, 16)}...
+                    </div>
+                  )}
                 </div>
               </div>
 
               <div>
                 <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600' }}>Obstacle Description</div>
                 <div style={{ marginTop: '4px', padding: '12px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', lineHeight: '1.5', color: '#334155' }}>
-                  {selectedHindrance.description}
+                  {selectedHindrance.description || 'No description provided.'}
                 </div>
               </div>
 
               <div>
                 <div style={{ fontSize: '0.7rem', color: '#047857', textTransform: 'uppercase', fontWeight: '600' }}>Mitigation Action & Clearance Plan</div>
                 <div style={{ marginTop: '4px', padding: '12px', background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: '8px', lineHeight: '1.5', color: '#065f46' }}>
-                  {selectedHindrance.mitigation}
+                  {selectedHindrance.mitigation || selectedHindrance.remarks || 'Awaiting initial authority coordination meeting.'}
                 </div>
               </div>
+
+              {/* Photos & Media if available */}
+              {(selectedHindrance.start_photo || selectedHindrance.end_photo) && (
+                <div>
+                  <div style={{ fontSize: '0.7rem', color: '#64748b', textTransform: 'uppercase', fontWeight: '600', marginBottom: '6px' }}>Site Photos</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
+                    {selectedHindrance.start_photo && (
+                      <div>
+                        <div style={{ fontSize: '0.68rem', color: '#64748b', marginBottom: '2px' }}>Start Photo</div>
+                        <img src={selectedHindrance.start_photo} alt="Start" style={{ width: '100%', height: '90px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #e2e8f0' }} />
+                      </div>
+                    )}
+                    {selectedHindrance.end_photo && (
+                      <div>
+                        <div style={{ fontSize: '0.68rem', color: '#64748b', marginBottom: '2px' }}>End Photo</div>
+                        <img src={selectedHindrance.end_photo} alt="End" style={{ width: '100%', height: '90px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #e2e8f0' }} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '10px', borderTop: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -524,17 +612,15 @@ export const TaskHindrancePage = () => {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <button
-                    onClick={() => {
-                      setHindrances(prev => prev.map(h => h.id === selectedHindrance.id ? { ...h, status: 'Resolved' } : h));
-                      setSelectedHindrance(null);
-                      showToast(`✓ Marked ${selectedHindrance.id} as Resolved`, 'success');
-                    }}
-                    className="btn-primary"
-                    style={{ padding: '6px 14px', fontSize: '0.8rem' }}
-                  >
-                    Mark as Resolved
-                  </button>
+                  {selectedHindrance.status !== 'RESOLVED' && (
+                    <button
+                      onClick={() => handleResolve(selectedHindrance)}
+                      className="btn-primary"
+                      style={{ padding: '6px 14px', fontSize: '0.8rem' }}
+                    >
+                      Mark as Resolved
+                    </button>
+                  )}
                   <button
                     onClick={() => setSelectedHindrance(null)}
                     className="btn-secondary"
@@ -552,7 +638,7 @@ export const TaskHindrancePage = () => {
       {/* Log New Hindrance Modal */}
       {isCreateOpen && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15, 23, 42, 0.45)', backdropFilter: 'blur(4px)', padding: '16px' }}>
-          <div style={{ background: '#fff', borderRadius: '14px', maxWidth: '520px', width: '100%', border: '1px solid var(--border)', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+          <div style={{ background: '#fff', borderRadius: '14px', maxWidth: '580px', width: '100%', border: '1px solid var(--border)', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
             <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f8fafc' }}>
               <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)' }}>Log New Site Hindrance</h3>
               <button onClick={() => setIsCreateOpen(false)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#64748b' }}>
@@ -560,7 +646,7 @@ export const TaskHindrancePage = () => {
               </button>
             </div>
 
-            <form onSubmit={handleCreateSubmit} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '0.82rem' }}>
+            <form onSubmit={handleCreateSubmit} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '0.82rem', maxHeight: '80vh', overflowY: 'auto' }}>
               <div>
                 <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', color: '#334155' }}>Hindrance Title *</label>
                 <input
@@ -586,6 +672,9 @@ export const TaskHindrancePage = () => {
                     <option value="Strata Obstacle">Strata Obstacle</option>
                     <option value="Waterway / Canal">Waterway / Canal</option>
                     <option value="Local ROW">Local ROW</option>
+                    <option value="Forest Clearance">Forest Clearance</option>
+                    <option value="Railway Crossing">Railway Crossing</option>
+                    <option value="Other Obstacle">Other Obstacle</option>
                   </select>
                 </div>
                 <div>
@@ -609,7 +698,7 @@ export const TaskHindrancePage = () => {
                   <input
                     type="text"
                     required
-                    placeholder="e.g. CH 12+400 to 12+480"
+                    placeholder="e.g. CH 12+400 to 12+480 (80m)"
                     value={formData.chainage}
                     onChange={(e) => setFormData({ ...formData, chainage: e.target.value })}
                     style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', boxSizing: 'border-box' }}
@@ -628,24 +717,95 @@ export const TaskHindrancePage = () => {
                 </div>
               </div>
 
-              <div>
-                <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', color: '#334155' }}>Responsible Agency / Department</label>
-                <input
-                  type="text"
-                  placeholder="e.g. GAIL, NHAI, Irrigation Dept, State PWD"
-                  value={formData.department}
-                  onChange={(e) => setFormData({ ...formData, department: e.target.value })}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', boxSizing: 'border-box' }}
-                />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', color: '#334155' }}>Block</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Saha"
+                    value={formData.block}
+                    onChange={(e) => setFormData({ ...formData, block: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', color: '#334155' }}>Location / Section</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Kesri Village Approach"
+                    value={formData.location}
+                    onChange={(e) => setFormData({ ...formData, location: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', color: '#334155' }}>GPS Latitude</label>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="e.g. 30.2458"
+                    value={formData.latitude}
+                    onChange={(e) => setFormData({ ...formData, latitude: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', color: '#334155' }}>GPS Longitude</label>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="e.g. 77.0125"
+                    value={formData.longitude}
+                    onChange={(e) => setFormData({ ...formData, longitude: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', color: '#334155' }}>Responsible Agency / Department</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. GAIL, NHAI, Irrigation Dept"
+                    value={formData.department}
+                    onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', color: '#334155' }}>Contractor / Vendor</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Premium Infra Solutions"
+                    value={formData.contractor}
+                    onChange={(e) => setFormData({ ...formData, contractor: e.target.value })}
+                    style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', boxSizing: 'border-box' }}
+                  />
+                </div>
               </div>
 
               <div>
                 <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', color: '#334155' }}>Obstacle Description</label>
                 <textarea
                   rows={2}
-                  placeholder="Detailed description of obstacle..."
+                  placeholder="Detailed description of obstacle on site..."
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', boxSizing: 'border-box', fontFamily: 'inherit' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontWeight: '600', marginBottom: '4px', color: '#047857' }}>Mitigation Plan / Remarks</label>
+                <textarea
+                  rows={2}
+                  placeholder="Proposed mitigation action, trial trenching, authority meeting plan..."
+                  value={formData.mitigation}
+                  onChange={(e) => setFormData({ ...formData, mitigation: e.target.value })}
                   style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem', boxSizing: 'border-box', fontFamily: 'inherit' }}
                 />
               </div>
@@ -674,3 +834,5 @@ export const TaskHindrancePage = () => {
     </div>
   );
 };
+
+export default TaskHindrancePage;

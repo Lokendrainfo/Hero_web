@@ -1,7 +1,12 @@
+import csv
+from django.http import HttpResponse
+from django.utils import timezone
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
-from .models import Task
-from .serializers import TaskSerializer
+from rest_framework.response import Response
+from .models import Task, Hindrance
+from .serializers import TaskSerializer, HindranceSerializer
+from .hindrance_service import sync_ilync_hindrances
 from apps.common.permissions import IsVendorAuthorized
 from apps.common.responses import success_response
 
@@ -114,3 +119,162 @@ class TaskViewSet(viewsets.ModelViewSet):
         task.progress_percent = 100
         task.save()
         return success_response(data=TaskSerializer(task).data, message="Task completed")
+
+
+class HindranceViewSet(viewsets.ModelViewSet):
+    """
+    HERO Web Hindrance Management API.
+    Provides register management, filtering, creation, metrics, export,
+    and safe authorized read-only sync from iLync/Net Infra.
+    """
+    queryset = Hindrance.objects.all().order_by('-created_at')
+    serializer_class = HindranceSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        from django.db.models import Q
+        qs = Hindrance.objects.all().order_by('-created_at')
+        params = self.request.query_params
+
+        # 1. Search across key fields
+        search = (params.get('search') or '').strip()
+        if search:
+            qs = qs.filter(
+                Q(hindrance_id__icontains=search) |
+                Q(title__icontains=search) |
+                Q(district__icontains=search) |
+                Q(block__icontains=search) |
+                Q(location__icontains=search) |
+                Q(section__icontains=search) |
+                Q(contractor__icontains=search) |
+                Q(department__icontains=search) |
+                Q(chainage__icontains=search)
+            )
+
+        # 2. Category
+        category = params.get('category')
+        if category and str(category).upper() != 'ALL':
+            qs = qs.filter(category__iexact=category)
+
+        # 3. Severity
+        severity = params.get('severity')
+        if severity and str(severity).upper() != 'ALL':
+            qs = qs.filter(severity__iexact=severity)
+
+        # 4. Status
+        status_param = params.get('status')
+        if status_param and str(status_param).upper() != 'ALL':
+            qs = qs.filter(status__iexact=status_param)
+
+        # 5. Source System
+        source = params.get('source') or params.get('source_system')
+        if source and str(source).upper() != 'ALL':
+            qs = qs.filter(source_system__iexact=source)
+
+        # 6. Geography filters
+        district = params.get('district')
+        if district and str(district).upper() != 'ALL':
+            qs = qs.filter(district__iexact=district)
+
+        block = params.get('block')
+        if block and str(block).upper() != 'ALL':
+            qs = qs.filter(block__iexact=block)
+
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        from django.db.models import Q
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+
+        # Calculate high-level metrics across all records
+        all_qs = Hindrance.objects.all()
+        total_count = all_qs.count()
+        critical_count = all_qs.filter(Q(severity__iexact='CRITICAL') | Q(status__iexact='ESCALATED')).count()
+        in_res_count = all_qs.filter(status__in=['OPEN', 'IN_PROGRESS', 'IN_REVIEW', 'In Progress', 'In Review', 'Open']).count()
+        resolved_count = all_qs.filter(status__in=['RESOLVED', 'Resolved', 'CLEARED']).count()
+        hero_count = all_qs.filter(source_system='HERO').count()
+        ilync_count = all_qs.filter(source_system='ILYNC').count()
+
+        return Response({
+            "success": True,
+            "count": len(serializer.data),
+            "results": serializer.data,
+            "metrics": {
+                "total": total_count,
+                "critical": critical_count,
+                "in_resolution": in_res_count,
+                "resolved": resolved_count,
+                "source_hero": hero_count,
+                "source_ilync": ilync_count,
+            }
+        })
+
+    def perform_create(self, serializer):
+        user = self.request.user if self.request.user and self.request.user.is_authenticated else None
+        hindrance_id = self.request.data.get('hindrance_id')
+        if not hindrance_id:
+            count = Hindrance.objects.count() + 105
+            hindrance_id = f"HND-2026-{count:03d}"
+            while Hindrance.objects.filter(hindrance_id=hindrance_id).exists():
+                count += 1
+                hindrance_id = f"HND-2026-{count:03d}"
+
+        serializer.save(
+            hindrance_id=hindrance_id,
+            created_by=user,
+            source_system='HERO',
+            sync_status='LOCAL',
+            logged_date=self.request.data.get('logged_date') or timezone.now().date()
+        )
+
+    @action(detail=False, methods=['post'], url_path='sync')
+    def sync_external(self, request):
+        """
+        Triggers safe, authorized synchronization of HINDRANCE tasks from iLync.
+        """
+        stats = sync_ilync_hindrances(user=request.user)
+        return Response({
+            "success": stats.get("success", False),
+            "message": stats.get("message", "Sync completed"),
+            "data": stats
+        })
+
+    @action(detail=False, methods=['get'], url_path='export')
+    def export_csv(self, request):
+        """
+        Exports all hindrances as a CSV register.
+        """
+        queryset = self.get_queryset()
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="hindrance_register_{timezone.now().strftime("%Y%m%d_%H%M%S")}.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow([
+            'Hindrance ID', 'Title', 'Category', 'Severity', 'Status',
+            'District', 'Block', 'Location/Section', 'Chainage',
+            'Contractor', 'Department', 'Logged Date', 'Target Date',
+            'Source', 'Description', 'Mitigation Plan'
+        ])
+
+        for h in queryset:
+            writer.writerow([
+                h.hindrance_id,
+                h.title,
+                h.category,
+                h.severity,
+                h.status,
+                h.district or '—',
+                h.block or '—',
+                h.location or h.section or '—',
+                h.chainage or '—',
+                h.contractor or '—',
+                h.department or '—',
+                h.logged_date.strftime('%d %b %Y') if h.logged_date else '—',
+                h.target_date.strftime('%d %b %Y') if h.target_date else '—',
+                h.source_system,
+                h.description or '—',
+                h.mitigation or h.remarks or '—'
+            ])
+
+        return response

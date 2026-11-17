@@ -137,3 +137,4 @@ def check_machine_live_rate_limit(request, rate_limit=10, window=1.0):
         timestamps.append(now)
         _window_history[ident] = timestamps
         return True, 0.0
+
