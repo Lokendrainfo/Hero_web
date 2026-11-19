@@ -335,14 +335,17 @@ export default function GisExecutionMap3D({
   mapType = 'satellite',
   fitNonce = 0,
   onOpenLightbox,
+  onOpenDepthChart,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef([]);
   const sceneRef = useRef(null);
   const onOpenRef = useRef(onOpenLightbox);
+  const onOpenDepthChartRef = useRef(onOpenDepthChart);
   const [initError, setInitError] = useState(null);
   onOpenRef.current = onOpenLightbox;
+  onOpenDepthChartRef.current = onOpenDepthChart;
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return undefined;
@@ -469,6 +472,12 @@ export default function GisExecutionMap3D({
       map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mousemove', layer, showHover);
       map.on('mouseleave', layer, hideHover);
+    });
+
+    map.on('click', 'trench-line', () => {
+      if (onOpenDepthChartRef.current && executionData?.shots?.length > 0) {
+        onOpenDepthChartRef.current(executionData.shots[0]);
+      }
     });
 
     // 3D Depth-to-Depth Measurement popup and midpoint badge

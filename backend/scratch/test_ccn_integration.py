@@ -258,3 +258,4 @@ if __name__ == '__main__':
     test_ccn_kml_media_upload()
     test_ccn_list_metrics_and_export(pk)
     print("\n[SUCCESS] ALL 6 CCN INTEGRATION TESTS PASSED!")
+

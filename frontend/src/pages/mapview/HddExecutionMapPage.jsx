@@ -29,6 +29,7 @@ import {
 } from '../../utils/mapHddExecutionResponse';
 import { trackingService } from '../../services/trackingService';
 import { PhotoLightbox, formatImageUrl } from '../../components/common/PhotoLightbox';
+import { DepthChartModal } from '../../components/common/DepthChartModal';
 import { LoadingSpinner } from '../../components/common/LoadingSpinner';
 import { EmptyState } from '../../components/common/EmptyState';
 import { DateField } from '../../components/common/DateField';
@@ -318,6 +319,9 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
   // Lightbox State
   const [lightboxPhotos, setLightboxPhotos] = useState(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+
+  // Depth Chart Modal State
+  const [depthChartShot, setDepthChartShot] = useState(null);
 
   // KMZ Export State
   const [isExportingKmz, setIsExportingKmz] = useState(false);
@@ -1384,13 +1388,13 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
       };
 
       if (shot.route && shot.route.length > 1) {
-        L.polyline(shot.route, {
+        const halo = L.polyline(shot.route, {
           color: '#ffffff',
           weight: 8,
           opacity: 0.62,
           lineCap: 'round',
           lineJoin: 'round',
-          interactive: false
+          interactive: true
         }).addTo(layerGroup);
 
         const line = L.polyline(shot.route, {
@@ -1398,7 +1402,8 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
           weight: 3.5,
           opacity: 0.95,
           lineCap: 'round',
-          lineJoin: 'round'
+          lineJoin: 'round',
+          interactive: true
         }).addTo(layerGroup);
 
         shot.route.forEach((pt) => {
@@ -1406,6 +1411,48 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
           frameBounds.push(pt);
         });
 
+        // Hover tooltip matching Screenshot 2: "Click for depth chart"
+        const tooltipHtml = `
+          <div style="display:flex;align-items:center;gap:6px;font-family:Inter,system-ui,sans-serif;font-weight:600;font-size:12px;color:#ffffff;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3v18h18" />
+              <path d="m19 9-5 5-4-4-3 3" />
+            </svg>
+            <span>Click for depth chart</span>
+          </div>
+        `;
+
+        line.bindTooltip(tooltipHtml, {
+          sticky: true,
+          direction: 'top',
+          offset: [0, -8],
+          className: 'gis-depth-chart-line-tooltip'
+        });
+
+        halo.bindTooltip(tooltipHtml, {
+          sticky: true,
+          direction: 'top',
+          offset: [0, -8],
+          className: 'gis-depth-chart-line-tooltip'
+        });
+
+        const onTrenchClick = (e) => {
+          if (e) {
+            if (e.originalEvent) {
+              e.originalEvent.stopPropagation();
+              e.originalEvent.preventDefault();
+            }
+            L.DomEvent.stopPropagation(e);
+          }
+          if (line.closePopup) line.closePopup();
+          setDepthChartShot(shot);
+        };
+
+        // Left click opens Depth Chart modal directly
+        line.on('click', onTrenchClick);
+        halo.on('click', onTrenchClick);
+
+        // Right-click / context menu opens the detailed trench stats popup
         const popupContent = gisPopupHtml({
           eyebrow: 'Trench',
           title: shot.serialNo || shot.id || 'Trench',
@@ -1417,16 +1464,30 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
             ['Captures', shot.depthReadingsCount],
             ['Strata', shot.strataType],
           ],
-          actionLabel: shot.photos?.length ? `View media (${shot.photos.length})` : '',
+          actionLabel: '📊 View Depth Chart' + (shot.photos?.length ? ` · Media (${shot.photos.length})` : ''),
         });
 
-        line.bindPopup(popupContent, { maxWidth: 260, className: 'gis-popup' });
-        if (shot.photos?.length) {
-          line.on('popupopen', (e) => {
-            const btn = e.popup.getElement()?.querySelector('.gis-popup-btn');
-            if (btn) btn.onclick = () => window[`__openTrenchLightbox_${cleanShotId}`]();
-          });
-        }
+        const showContextPopup = (e) => {
+          if (e && mapInstanceRef.current) {
+            L.DomEvent.stopPropagation(e);
+            const popup = L.popup({ maxWidth: 260, className: 'gis-popup' })
+              .setLatLng(e.latlng)
+              .setContent(popupContent)
+              .openOn(mapInstanceRef.current);
+            setTimeout(() => {
+              const btn = popup.getElement()?.querySelector('.gis-popup-btn');
+              if (btn) {
+                btn.onclick = () => {
+                  mapInstanceRef.current.closePopup();
+                  setDepthChartShot(shot);
+                };
+              }
+            }, 50);
+          }
+        };
+
+        line.on('contextmenu', showContextPopup);
+        halo.on('contextmenu', showContextPopup);
       }
     });
 
@@ -2196,6 +2257,17 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
         />
       )}
 
+      {depthChartShot && (
+        <DepthChartModal
+          isOpen={Boolean(depthChartShot)}
+          onClose={() => setDepthChartShot(null)}
+          shot={depthChartShot}
+          executionData={executionData}
+          selectedDate={selectedDate}
+          onOpenLightbox={(photos, idx) => openLightbox(photos, idx)}
+        />
+      )}
+
       <div className="map-viewer-toolbar">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
           {!isBharatNetMap && (
@@ -2627,6 +2699,7 @@ export const HddExecutionMapPage = ({ isBharatNetMap: isBharatNetMapProp } = {})
                 mapType={mapType}
                 fitNonce={fitNonce}
                 onOpenLightbox={openLightbox}
+                onOpenDepthChart={setDepthChartShot}
               />
             </Suspense>
           </Map3dBoundary>

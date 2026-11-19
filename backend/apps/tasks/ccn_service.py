@@ -339,3 +339,4 @@ def sync_ilync_ccn(user=None):
     msg = f"NetInfra CCN sync completed. {stats['imported']} imported, {stats['updated']} updated, {stats['skipped']} skipped."
     stats["message"] = msg
     return stats
+
