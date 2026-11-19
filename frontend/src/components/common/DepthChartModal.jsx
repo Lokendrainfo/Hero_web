@@ -532,3 +532,4 @@ export const DepthChartModal = ({
 };
 
 export default DepthChartModal;
+
