@@ -46,6 +46,14 @@ const Refuel = lazyComponent(() => import('../pages/refuel/Refuel'), 'Refuel');
 const Reports = lazyComponent(() => import('../pages/reports/Reports'), 'Reports');
 const ExecutionReportPage = lazyComponent(() => import('../pages/reports/ExecutionReportPage'), 'ExecutionReportPage');
 const Maintenance = lazyComponent(() => import('../pages/maintenance/Maintenance'), 'Maintenance');
+const PmDashboardPage = lazyComponent(() => import('../pages/machine_pm/PmDashboardPage'), 'PmDashboardPage');
+const PmMyChecklistPage = lazyComponent(() => import('../pages/machine_pm/PmMyChecklistPage'), 'PmMyChecklistPage');
+const PmFormPage = lazyComponent(() => import('../pages/machine_pm/PmFormPage'), 'PmFormPage');
+const PmHistoryPage = lazyComponent(() => import('../pages/machine_pm/PmHistoryPage'), 'PmHistoryPage');
+const PmMachineHistoryPage = lazyComponent(() => import('../pages/machine_pm/PmMachineHistoryPage'), 'PmMachineHistoryPage');
+const PmPhotoGalleryPage = lazyComponent(() => import('../pages/machine_pm/PmPhotoGalleryPage'), 'PmPhotoGalleryPage');
+const PmSafetyGuidelinesPage = lazyComponent(() => import('../pages/machine_pm/PmSafetyGuidelinesPage'), 'PmSafetyGuidelinesPage');
+const PmAdminConfigPage = lazyComponent(() => import('../pages/machine_pm/PmAdminConfigPage'), 'PmAdminConfigPage');
 const Breakdowns = lazyComponent(() => import('../pages/breakdown/Breakdowns'), 'Breakdowns');
 const Alerts = lazyComponent(() => import('../pages/alerts/Alerts'), 'Alerts');
 const Stock = lazyComponent(() => import('../pages/stock/Stock'), 'Stock');
@@ -138,6 +146,15 @@ export const AppRoutes = () => {
             <Route path="/reports/hdd-shots" element={<Navigate to="/reports/execution" replace />} />
             <Route path="/execution-report" element={<Navigate to="/reports/execution" replace />} />
             <Route path="/maintenance" element={<Maintenance />} />
+            <Route path="/operations/machine-maintenance" element={<PmDashboardPage />} />
+            <Route path="/operations/machine-maintenance/my-checklists" element={<PmMyChecklistPage />} />
+            <Route path="/operations/machine-maintenance/perform" element={<PmFormPage />} />
+            <Route path="/operations/machine-maintenance/perform/:machineId/:frequency" element={<PmFormPage />} />
+            <Route path="/operations/machine-maintenance/history" element={<PmHistoryPage />} />
+            <Route path="/operations/machine-maintenance/machine/:machineId" element={<PmMachineHistoryPage />} />
+            <Route path="/operations/machine-maintenance/photos" element={<PmPhotoGalleryPage />} />
+            <Route path="/operations/machine-maintenance/safety-guidelines" element={<PmSafetyGuidelinesPage />} />
+            <Route path="/operations/machine-maintenance/admin-config" element={<PmAdminConfigPage />} />
             <Route path="/breakdown" element={<Breakdowns />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/stock" element={<Stock />} />

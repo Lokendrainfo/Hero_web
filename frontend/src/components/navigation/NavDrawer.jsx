@@ -63,6 +63,7 @@ export const NavDrawer = ({ isOpen, isVisible = true, isMobileOpen, onClose }) =
       title: 'Operations',
       items: [
         { label: 'Machines', path: '/machines', icon: LucideTruck, perm: 'machines.view' },
+        { label: 'Machine Maintenance', path: '/operations/machine-maintenance', icon: LucideWrench, perm: 'maintenance.view' },
         { label: 'Live Tracking', path: '/tracking', icon: LucideNavigation, perm: 'tracking.view' },
         { label: 'Refuel', path: '/refuel', icon: LucideFuel, perm: 'refuel.view' },
         { label: 'Machine Shift Request', path: '/machine-shift', icon: LucideArrowLeftRight, perm: 'machine_shift.view' },

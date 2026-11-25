@@ -444,6 +444,227 @@ const ENDPOINTS_CATALOG = [
       },
     ],
   },
+  {
+    category: 'MACHINE PREVENTIVE MAINTENANCE (MOBILE APK)',
+    items: [
+      {
+        id: 'machine_maintenance_check',
+        method: 'GET',
+        title: 'Machine Maintenance Check API',
+        path: '/api/v1/machine-maintenance/check',
+        description: 'Pre-flight eligibility check for Mobile APK. Validates machine ID, user ID and assigned role, maintenance frequency, retrieves current HERO hour-meter reading, checks maintenance due/overdue status, verifies duplicate submissions, and returns user eligibility.',
+        authHeaders: [
+          { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
+        ],
+        params: [
+          { name: 'machine_id', in: 'query', type: 'integer | string', required: true, default: '8', desc: 'HERO Machine ID, chassis number (e.g. 600202608403), or machine code (MAC-8403)' },
+          { name: 'user_id', in: 'query', type: 'integer', required: true, default: '2', desc: 'HERO User ID performing the maintenance check (required when using X-API-Key)' },
+          { name: 'frequency', in: 'query', type: 'string', required: true, default: 'DAILY', desc: 'Maintenance frequency code: DAILY, 50_HOURS, 100_HOURS, 250_HOURS, 500_HOURS, 1000_HOURS' },
+          { name: 'hour_meter_reading', in: 'query', type: 'number', required: false, default: '', desc: 'Optional current hour-meter reading override for duplicate/cycle check' },
+        ],
+        statusCodes: [
+          { code: '200 OK', meaning: 'Machine, user, and frequency validated; eligibility & due status returned.' },
+          { code: '400 Bad Request', meaning: 'Missing/invalid machine_id, user_id, frequency, or negative hour_meter_reading.' },
+          { code: '401 Unauthorized', meaning: 'Missing or invalid X-API-Key / Bearer token.' },
+          { code: '403 Forbidden', meaning: 'Non-admin JWT caller attempting to check another user_id.' },
+          { code: '404 Not Found', meaning: 'Machine, User, or Frequency not found in HERO master tables.' },
+        ],
+        sampleResponse: {
+          success: true,
+          message: 'Machine maintenance eligibility check completed',
+          data: {
+            eligible: true,
+            eligibility_reasons: [],
+            checks: {
+              machine_valid: true,
+              user_valid: true,
+              frequency_valid: true,
+              role_authorized: true,
+              vendor_authorized: true,
+              duplicate_submission_exists: false,
+            },
+            machine: {
+              id: 8,
+              machine_number: '600202608403',
+              name: 'A600 HDD (8403)',
+              machine_model: 'APOLLO A600 V2',
+              machine_type: 'HDD',
+              vendor_name: 'HERO Direct',
+              assigned_operator: 'Ravi Kumar',
+              engine_hours: 185,
+            },
+            user: {
+              id: 2,
+              username: 'admin',
+              name: 'Admin',
+              primary_role: 'ADMIN',
+              allowed_frequencies: ['DAILY', '50_HOURS', '100_HOURS', '250_HOURS', '500_HOURS', '1000_HOURS'],
+            },
+            frequency: { id: 1, code: 'DAILY', name: 'Daily', interval_hours: null, interval_days: 1 },
+            hour_meter: { current_machine_hours: 185, checked_hour_meter: 185.0, last_pm_hour_meter: null },
+            maintenance_due_status: 'DUE',
+            maintenance_due_message: 'Daily Check Due',
+            existing_submission: null,
+            duplicate_submission: null,
+          },
+          meta: {},
+        },
+        errorResponse: {
+          success: false,
+          message: "Machine '999999' not found in HERO Machine Master.",
+          errors: { detail: "Machine '999999' not found in HERO Machine Master." },
+          status_code: 404,
+        },
+      },
+      {
+        id: 'machine_maintenance_data',
+        method: 'POST',
+        isMultipart: true,
+        title: 'Machine Maintenance Data Post API',
+        path: '/api/v1/machine-maintenance/data',
+        description: 'Submit completed preventive maintenance checklist from Mobile APK with mandatory individual photo uploads for every checklist activity. Validates all required items, enforces unique SHA-256 photo per item and remarks for Not Completed items, saves atomically, and returns a unique submission reference ID.',
+        authHeaders: [
+          { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
+          { name: 'Content-Type', value: 'multipart/form-data', required: true, desc: 'Multipart form payload carrying JSON responses string and per-item image files' },
+        ],
+        multipartInstructions: [
+          'Send the request as multipart/form-data (do NOT manually set boundary in headers; let HTTP client generate it).',
+          'Include scalar form fields: machine_id, user_id, frequency, hour_meter_reading, and optional general_remarks / client_request_id.',
+          'Include a JSON-serialized array string in the "responses" field containing each checklist_item_id, status ("COMPLETED" or "NOT_COMPLETED"), and remarks (mandatory when status is "NOT_COMPLETED").',
+          'Attach ONE separate image file (JPEG, PNG, or WEBP, max 10 MB) per checklist activity using field name "photo_<checklist_item_id>" (e.g. photo_1, photo_2) or specify a custom "photo_field" inside each response object.',
+          'Server-side rules reject submissions if any checklist item is missing a photo, if the same photo bytes (SHA-256) are reused across multiple items, or if a duplicate submission already exists for the cycle.',
+        ],
+        requestBodySchema: {
+          machine_id: 'integer | string (required) — HERO Machine ID or chassis number',
+          user_id: 'integer (required for X-API-Key) — HERO User ID submitting the checklist',
+          frequency: 'string (required) — DAILY | 50_HOURS | 100_HOURS | 250_HOURS | 500_HOURS | 1000_HOURS',
+          hour_meter_reading: 'number (required) — Current machine hour-meter reading (>= 0)',
+          general_remarks: 'string (optional) — Overall inspection summary',
+          client_request_id: 'string (optional) — UUID for duplicate/retry protection',
+          responses: [
+            {
+              checklist_item_id: 16,
+              status: 'COMPLETED',
+              remarks: 'Greased all points',
+              photo_field: 'photo_16',
+            },
+          ],
+          'photo_<checklist_item_id>': 'file (required per item) — Image binary (JPEG/PNG/WEBP, max 10 MB)',
+        },
+        params: [
+          { name: 'machine_id', in: 'body', type: 'integer | string', required: true, default: '8', desc: 'HERO Machine ID or chassis number' },
+          { name: 'user_id', in: 'body', type: 'integer', required: true, default: '2', desc: 'HERO User ID performing the maintenance' },
+          { name: 'frequency', in: 'body', type: 'string', required: true, default: '50_HOURS', desc: 'Maintenance frequency code (e.g. DAILY, 50_HOURS, 100_HOURS)' },
+          { name: 'hour_meter_reading', in: 'body', type: 'number', required: true, default: '185.5', desc: 'Current hour-meter reading captured on site' },
+          { name: 'general_remarks', in: 'body', type: 'string', required: false, default: 'Routine check completed via mobile APK', desc: 'Overall maintenance remarks' },
+          { name: 'responses', in: 'body', type: 'json-string', required: true, default: '[{"checklist_item_id": 16, "status": "COMPLETED", "remarks": "Checked OK"}, {"checklist_item_id": 17, "status": "COMPLETED", "remarks": "Greased"}, {"checklist_item_id": 18, "status": "COMPLETED", "remarks": "Verified"}]', desc: 'JSON array string of checklist responses' },
+        ],
+        statusCodes: [
+          { code: '201 Created', meaning: 'Submission, responses, and all individual photos saved; submission_reference_id returned.' },
+          { code: '400 Bad Request', meaning: 'Missing/invalid photo, reused photo hash, missing checklist items, or missing remarks for NOT_COMPLETED.' },
+          { code: '401 Unauthorized', meaning: 'Missing or invalid X-API-Key / Bearer token.' },
+          { code: '403 Forbidden', meaning: 'User role not authorized for requested frequency or machine vendor.' },
+          { code: '409 Conflict', meaning: 'Duplicate submission already recorded for this machine, frequency, and day/reading.' },
+        ],
+        sampleResponse: {
+          success: true,
+          message: 'Maintenance submission PM-20261125-0001 saved successfully',
+          data: {
+            submission_id: 12,
+            submission_reference_id: 'PM-20261125-0001',
+            submission_number: 'PM-20261125-0001',
+            status: 'COMPLETED',
+            approval_status: 'PENDING_REVIEW',
+            machine_id: 8,
+            machine_number: '600202608403',
+            user_id: 2,
+            submitted_by_name: 'Admin',
+            submitted_by_role: 'ADMIN',
+            frequency: '50_HOURS',
+            hour_meter_reading: 185.5,
+            total_items: 3,
+            completed_items_count: 3,
+            not_completed_items_count: 0,
+            photo_count: 3,
+            submitted_at: '2026-11-25T11:20:00+05:30',
+          },
+          meta: {},
+        },
+        errorResponse: {
+          success: false,
+          message: "Photo evidence is mandatory for checklist activity 'Roller Guides – Greasing'. Cannot mark as Completed without its own photograph.",
+          errors: {
+            photos: "Photo evidence is mandatory for checklist activity 'Roller Guides – Greasing'. Cannot mark as Completed without its own photograph.",
+          },
+          status_code: 400,
+        },
+      },
+      {
+        id: 'machine_maintenance_list',
+        method: 'GET',
+        title: 'Machine Maintenance List API',
+        path: '/api/v1/machine-maintenance/list',
+        description: 'Retrieves maintenance checklist master records grouped by Machine and Engine categories and maintenance frequencies, along with assigned role mappings, SOP remarks, special instructions, and safety guidelines. Supports filtering by machine_id, frequency, and user_role.',
+        authHeaders: [
+          { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
+        ],
+        params: [
+          { name: 'machine_id', in: 'query', type: 'integer | string', required: false, default: '8', desc: 'Optional HERO machine ID or chassis number to include machine context' },
+          { name: 'frequency', in: 'query', type: 'string', required: false, default: '', desc: 'Filter by frequency code (DAILY, 50_HOURS, 100_HOURS, 250_HOURS, 500_HOURS, 1000_HOURS)' },
+          { name: 'user_role', in: 'query', type: 'string', required: false, default: '', desc: 'Filter by assigned role (OPERATOR, FIELD_ENGINEER, AREA_MANAGER, ADMIN)' },
+          { name: 'category', in: 'query', type: 'string', required: false, default: '', desc: 'Filter by category (MACHINE or ENGINE)' },
+          { name: 'include_safety_guidelines', in: 'query', type: 'boolean', required: false, default: 'true', desc: 'Include General Safety Guidelines sections (true/false)' },
+        ],
+        statusCodes: [
+          { code: '200 OK', meaning: 'Checklist master, categories, role assignments, and frequency-wise items returned.' },
+          { code: '401 Unauthorized', meaning: 'Missing or invalid X-API-Key / Bearer token.' },
+          { code: '403 Forbidden', meaning: 'Requested machine_id belongs to an unauthorized vendor.' },
+          { code: '404 Not Found', meaning: 'Requested machine_id not found.' },
+        ],
+        sampleResponse: {
+          success: true,
+          message: 'Machine maintenance checklist master retrieved successfully',
+          data: {
+            filters_applied: { machine_id: '8', frequency: 'ALL', user_role: 'OPERATOR', category: 'ALL' },
+            categories: [
+              { id: 1, code: 'MACHINE', name: 'Machine', is_checkable: true },
+              { id: 2, code: 'ENGINE', name: 'Engine', is_checkable: true },
+              { id: 3, code: 'GENERAL_SAFETY_GUIDELINES', name: 'General Safety Guidelines', is_checkable: false },
+            ],
+            role_assignments: [
+              { role_code: 'OPERATOR', role_name: 'Operator', frequencies: ['DAILY', '50_HOURS'] },
+            ],
+            total_checklist_items: 12,
+            checklist_items: [
+              {
+                id: 4,
+                checklist_item_id: 4,
+                item_code: 'SOP-MCH-004',
+                category_code: 'MACHINE',
+                category_name: 'Machine',
+                description: 'Fuel tank – Fill',
+                frequencies: ['DAILY'],
+                assigned_roles: [{ role_code: 'OPERATOR', role_name: 'Operator' }],
+                remarks: '',
+                special_instructions: 'Check level of fuel in the tank before starting work.',
+                service_interval: 'Daily',
+                requires_photo: true,
+              },
+            ],
+            frequency_wise_checklists: [],
+            safety_guidelines: [],
+          },
+          meta: {},
+        },
+        errorResponse: {
+          success: false,
+          message: 'Invalid or inactive API key.',
+          errors: { detail: 'Invalid or inactive API key.' },
+          status_code: 401,
+        },
+      },
+    ],
+  },
 ];
 
 export const ApiDocs = () => {
@@ -471,6 +692,7 @@ export const ApiDocs = () => {
   const [selectedEndpointId, setSelectedEndpointId] = useState('list_machines');
   const [codeTab, setCodeTab] = useState('curl');
   const [paramValues, setParamValues] = useState({});
+  const [pgMultipartFiles, setPgMultipartFiles] = useState([{ fieldName: 'photo_16', file: null }]);
   const [pgLoading, setPgLoading] = useState(false);
   const [pgResponse, setPgResponse] = useState(null);
   const [toastMsg, setToastMsg] = useState(null);
@@ -644,11 +866,26 @@ export const ApiDocs = () => {
             'X-API-Key': token,
           };
 
+      let requestData = Object.keys(bodyParams).length > 0 ? bodyParams : undefined;
+      if (selectedEndpoint.isMultipart) {
+        const fd = new FormData();
+        Object.entries(bodyParams).forEach(([k, v]) => {
+          fd.append(k, v);
+        });
+        pgMultipartFiles.forEach((entry) => {
+          if (entry.fieldName && entry.file) {
+            fd.append(entry.fieldName.trim(), entry.file);
+          }
+        });
+        requestData = fd;
+        headers['Content-Type'] = 'multipart/form-data';
+      }
+
       const response = await axios({
         method: selectedEndpoint.method,
         url: resolvedPath,
         params: qParams,
-        data: Object.keys(bodyParams).length > 0 ? bodyParams : undefined,
+        data: requestData,
         headers,
       });
 
@@ -682,6 +919,9 @@ export const ApiDocs = () => {
       if (isTD) {
         return `curl -X GET "${url}" \\\n  -u "td_service_user:your_service_password" \\\n  -H "Accept: application/json"`;
       }
+      if (selectedEndpoint.isMultipart) {
+        return `curl -X POST "${url}" \\\n  -H "X-API-Key: ${key}" \\\n  -F "machine_id=${paramValues.machine_id || '8'}" \\\n  -F "user_id=${paramValues.user_id || '2'}" \\\n  -F "frequency=${paramValues.frequency || '50_HOURS'}" \\\n  -F "hour_meter_reading=${paramValues.hour_meter_reading || '185.5'}" \\\n  -F "general_remarks=${paramValues.general_remarks || 'Routine check'}" \\\n  -F 'responses=${paramValues.responses || '[{"checklist_item_id":16,"status":"COMPLETED","remarks":"OK"}]'}' \\\n  -F "photo_16=@/path/to/photo_16.jpg"`;
+      }
       if (selectedEndpoint.method === 'GET') {
         return `curl -X GET "${url}" \\\n  -H "X-API-Key: ${key}" \\\n  -H "Content-Type: application/json"`;
       } else {
@@ -706,6 +946,25 @@ const response = await fetch("${url}", {
 const data = await response.json();
 console.log(data);`;
       }
+      if (selectedEndpoint.isMultipart) {
+        return `const formData = new FormData();
+formData.append("machine_id", "${paramValues.machine_id || '8'}");
+formData.append("user_id", "${paramValues.user_id || '2'}");
+formData.append("frequency", "${paramValues.frequency || '50_HOURS'}");
+formData.append("hour_meter_reading", "${paramValues.hour_meter_reading || '185.5'}");
+formData.append("responses", JSON.stringify([
+  { checklist_item_id: 16, status: "COMPLETED", remarks: "Checked OK" }
+]));
+formData.append("photo_16", fileInput16.files[0]); // One unique photo per checklist_item_id
+
+const response = await fetch("${url}", {
+  method: "POST",
+  headers: { "X-API-Key": "${key}" },
+  body: formData
+});
+const data = await response.json();
+console.log(data);`;
+      }
       return `const response = await fetch("${url}", {
   method: "${selectedEndpoint.method}",
   headers: {
@@ -725,6 +984,29 @@ auth = HTTPBasicAuth("td_service_user", "your_service_password")
 
 response = requests.get(url, auth=auth, headers={"Accept": "application/json"})
 print(f"Status: {response.status_code}")
+print(response.json())`;
+      }
+      if (selectedEndpoint.isMultipart) {
+        return `import json
+import requests
+
+url = "${url}"
+headers = {"X-API-Key": "${key}"}
+data = {
+    "machine_id": "${paramValues.machine_id || '8'}",
+    "user_id": "${paramValues.user_id || '2'}",
+    "frequency": "${paramValues.frequency || '50_HOURS'}",
+    "hour_meter_reading": "${paramValues.hour_meter_reading || '185.5'}",
+    "responses": json.dumps([
+        {"checklist_item_id": 16, "status": "COMPLETED", "remarks": "Checked OK"}
+    ]),
+}
+files = {
+    "photo_16": ("photo_16.jpg", open("photo_16.jpg", "rb"), "image/jpeg"),
+}
+
+response = requests.post(url, headers=headers, data=data, files=files)
+print(response.status_code)
 print(response.json())`;
       }
       return `import requests
@@ -988,6 +1270,60 @@ print(response.json())`;
             <span className="endpoint-url-text">{currentEndpointUrl}</span>
           </div>
 
+          {/* Authentication Headers Section */}
+          <div className="section-subtitle-row" style={{ marginTop: 14 }}>
+            <h3 className="section-h3">Required Authentication Headers</h3>
+            <p className="section-hint">Accepted authentication credentials</p>
+          </div>
+          <table className="params-table">
+            <thead>
+              <tr>
+                <th>Header</th>
+                <th>Format</th>
+                <th>Required</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(selectedEndpoint.authHeaders || [
+                { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key from above (or Authorization: Bearer <jwt_token>)' },
+              ]).map((h) => (
+                <tr key={h.name}>
+                  <td className="param-name">{h.name}</td>
+                  <td className="param-type">{h.value}</td>
+                  <td>{h.required ? <span className="param-badge-req">Required</span> : <span className="param-badge-opt">Optional</span>}</td>
+                  <td>{h.desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {/* Multipart Upload Instructions */}
+          {selectedEndpoint.multipartInstructions && (
+            <div style={{ padding: '12px 14px', borderRadius: '8px', background: '#fffbeb', border: '1px solid #fde68a', marginBottom: '16px', fontSize: '12.5px', color: '#78350f' }}>
+              <strong style={{ display: 'block', marginBottom: '6px' }}>Multipart Photo Upload Instructions (Mandatory Individual Evidence)</strong>
+              <ol style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {selectedEndpoint.multipartInstructions.map((step, i) => (
+                  <li key={i}>{step}</li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {/* Request Body Schema */}
+          {selectedEndpoint.requestBodySchema && (
+            <div className="code-box-container" style={{ marginBottom: '16px' }}>
+              <div className="code-box-header">
+                <div style={{ fontSize: '0.82rem', fontWeight: '700', color: '#f8fafc' }}>
+                  Request Body Schema ({selectedEndpoint.isMultipart ? 'multipart/form-data' : 'application/json'})
+                </div>
+              </div>
+              <pre className="code-pre" style={{ margin: 0 }}>
+                {JSON.stringify(selectedEndpoint.requestBodySchema, null, 2)}
+              </pre>
+            </div>
+          )}
+
           {/* Query / Request Fields Table */}
           <div className="section-subtitle-row">
             <h3 className="section-h3">Query / request fields</h3>
@@ -1087,24 +1423,54 @@ print(response.json())`;
                   </pre>
                 </div>
 
-                <div>
-                  <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#eab308', marginBottom: '6px', textTransform: 'uppercase' }}>
-                    2. Empty Response (200 OK — Unknown Circle or Zero Captures)
+                {selectedEndpoint.emptyResponse && (
+                  <div>
+                    <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#eab308', marginBottom: '6px', textTransform: 'uppercase' }}>
+                      2. Empty Response (200 OK — Zero Captures)
+                    </div>
+                    <pre className="code-pre" style={{ margin: 0 }}>
+                      {JSON.stringify(selectedEndpoint.emptyResponse, null, 2)}
+                    </pre>
                   </div>
-                  <pre className="code-pre" style={{ margin: 0 }}>
-                    {JSON.stringify(selectedEndpoint.emptyResponse, null, 2)}
-                  </pre>
-                </div>
+                )}
 
-                <div>
-                  <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#f87171', marginBottom: '6px', textTransform: 'uppercase' }}>
-                    3. Error Response (401 Unauthorized / 403 Forbidden)
+                {selectedEndpoint.errorResponse && (
+                  <div>
+                    <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#f87171', marginBottom: '6px', textTransform: 'uppercase' }}>
+                      Error Response (4xx)
+                    </div>
+                    <pre className="code-pre" style={{ margin: 0 }}>
+                      {JSON.stringify(selectedEndpoint.errorResponse, null, 2)}
+                    </pre>
                   </div>
-                  <pre className="code-pre" style={{ margin: 0 }}>
-                    {JSON.stringify(selectedEndpoint.errorResponse, null, 2)}
-                  </pre>
-                </div>
+                )}
               </div>
+            </div>
+          )}
+
+          {/* HTTP Status Codes */}
+          {selectedEndpoint.statusCodes && (
+            <div style={{ marginTop: '18px' }}>
+              <div className="section-subtitle-row">
+                <h3 className="section-h3">HTTP Status Codes</h3>
+                <p className="section-hint">Expected response codes</p>
+              </div>
+              <table className="params-table">
+                <thead>
+                  <tr>
+                    <th>Status Code</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedEndpoint.statusCodes.map((sc) => (
+                    <tr key={sc.code}>
+                      <td className="param-name">{sc.code}</td>
+                      <td>{sc.meaning}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
 
@@ -1136,6 +1502,57 @@ print(response.json())`;
                     />
                   </div>
                 ))}
+              </div>
+            )}
+
+            {selectedEndpoint.isMultipart && (
+              <div style={{ marginTop: '12px', padding: '12px', border: '1px dashed #cbd5e1', borderRadius: '8px', background: '#f8fafc' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <strong style={{ fontSize: '12.5px', color: '#111827' }}>Multipart Photo Attachments (photo_&lt;checklist_item_id&gt;)</strong>
+                  <button
+                    type="button"
+                    className="btn-action-secondary"
+                    style={{ padding: '4px 10px', fontSize: '12px' }}
+                    onClick={() => setPgMultipartFiles((prev) => [...prev, { fieldName: `photo_${16 + prev.length}`, file: null }])}
+                  >
+                    + Add Photo Field
+                  </button>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {pgMultipartFiles.map((entry, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input
+                        type="text"
+                        className="pg-input"
+                        style={{ maxWidth: '170px' }}
+                        placeholder="photo_16"
+                        value={entry.fieldName}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setPgMultipartFiles((prev) => prev.map((it, i) => (i === idx ? { ...it, fieldName: val } : it)));
+                        }}
+                      />
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] || null;
+                          setPgMultipartFiles((prev) => prev.map((it, i) => (i === idx ? { ...it, file } : it)));
+                        }}
+                      />
+                      {pgMultipartFiles.length > 1 && (
+                        <button
+                          type="button"
+                          className="btn-action-danger"
+                          style={{ padding: '4px 8px', fontSize: '11px' }}
+                          onClick={() => setPgMultipartFiles((prev) => prev.filter((_, i) => i !== idx))}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 

@@ -9,6 +9,15 @@ export default defineConfig(({ mode }) => {
       port: parseInt(process.env.PORT || env.PORT || '3000'),
       host: true,
       proxy: {
+        '/api/v1/machine-maintenance': {
+          target: env.VITE_PM_API_PROXY_TARGET || 'http://127.0.0.1:8001',
+          changeOrigin: true,
+        },
+        '/pm-api': {
+          target: env.VITE_PM_API_PROXY_TARGET || 'http://127.0.0.1:8001',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/pm-api/, '/api'),
+        },
         '/api': {
           target: env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000',
           changeOrigin: true,
