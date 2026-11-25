@@ -79,8 +79,6 @@ class HeroAPIKeyAuthentication(authentication.BaseAuthentication):
         if not key_obj:
             raise AuthenticationFailed("Invalid or inactive API key.")
 
-        HeroAPIKey.objects.filter(id=key_obj.id).update(last_used_at=timezone.now())
-
         user = key_obj.user
         if not user:
             user = HeroUser.objects.select_related('vendor').filter(is_superuser=True, is_active=True).first()

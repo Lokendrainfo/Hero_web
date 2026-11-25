@@ -1,7 +1,29 @@
+from django.conf import settings
 from django.db import models
 
+from config.db_router import HeroReadOnlyDatabaseError
 
-class HeroVendor(models.Model):
+
+class _HeroReadOnlyModelMixin(models.Model):
+    class Meta:
+        abstract = True
+
+    def save(self, *args, **kwargs):
+        if not getattr(settings, 'TESTING', False):
+            raise HeroReadOnlyDatabaseError(
+                f"Cannot write to read-only HERO table '{self._meta.db_table}'."
+            )
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if not getattr(settings, 'TESTING', False):
+            raise HeroReadOnlyDatabaseError(
+                f"Cannot delete from read-only HERO table '{self._meta.db_table}'."
+            )
+        return super().delete(*args, **kwargs)
+
+
+class HeroVendor(_HeroReadOnlyModelMixin):
     external_vendor_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
     name = models.CharField(max_length=255, unique=True)
     code = models.CharField(max_length=50, blank=True, null=True)
@@ -25,7 +47,7 @@ class HeroVendor(models.Model):
         return f"{self.name} ({self.code or self.external_vendor_id})"
 
 
-class HeroUser(models.Model):
+class HeroUser(_HeroReadOnlyModelMixin):
     password = models.CharField(max_length=128)
     last_login = models.DateTimeField(null=True, blank=True)
     is_superuser = models.BooleanField(default=False)
@@ -71,7 +93,7 @@ class HeroUser(models.Model):
         return f"{self.get_display_name()} ({self.username})"
 
 
-class HeroAPIKey(models.Model):
+class HeroAPIKey(_HeroReadOnlyModelMixin):
     user = models.ForeignKey(HeroUser, on_delete=models.CASCADE, related_name='api_keys', null=True, blank=True)
     name = models.CharField(max_length=100)
     key = models.CharField(max_length=128, unique=True)
@@ -85,7 +107,7 @@ class HeroAPIKey(models.Model):
         db_table = 'authentication_apikey'
 
 
-class HeroRole(models.Model):
+class HeroRole(_HeroReadOnlyModelMixin):
     name = models.CharField(max_length=100, unique=True)
     code = models.CharField(max_length=50, unique=True)
     description = models.TextField(blank=True, null=True)
@@ -102,7 +124,7 @@ class HeroRole(models.Model):
         return f"{self.name} ({self.code})"
 
 
-class HeroUserRole(models.Model):
+class HeroUserRole(_HeroReadOnlyModelMixin):
     user = models.ForeignKey(HeroUser, on_delete=models.CASCADE, related_name='user_roles')
     role = models.ForeignKey(HeroRole, on_delete=models.CASCADE, related_name='user_roles')
     assigned_at = models.DateTimeField(null=True, blank=True)
@@ -113,7 +135,7 @@ class HeroUserRole(models.Model):
         unique_together = ('user', 'role')
 
 
-class HeroVendorAssignment(models.Model):
+class HeroVendorAssignment(_HeroReadOnlyModelMixin):
     user = models.ForeignKey(HeroUser, on_delete=models.CASCADE, related_name='hero_vendor_assignments')
     vendor = models.ForeignKey(HeroVendor, on_delete=models.CASCADE, related_name='user_assignments')
     assigned_at = models.DateTimeField(null=True, blank=True)
@@ -125,7 +147,7 @@ class HeroVendorAssignment(models.Model):
         unique_together = ('user', 'vendor')
 
 
-class HeroMachine(models.Model):
+class HeroMachine(_HeroReadOnlyModelMixin):
     vendor = models.ForeignKey(HeroVendor, on_delete=models.CASCADE, related_name='machines', null=True, blank=True)
     serial_number = models.CharField(max_length=100, unique=True)
     name = models.CharField(max_length=255)
@@ -175,7 +197,7 @@ class HeroMachine(models.Model):
         return f"{self.name} [{self.machine_chassis_no or self.serial_number}]"
 
 
-class HeroMachineVendorAssignmentHistory(models.Model):
+class HeroMachineVendorAssignmentHistory(_HeroReadOnlyModelMixin):
     machine = models.ForeignKey(HeroMachine, on_delete=models.CASCADE, related_name='vendor_history')
     vendor = models.ForeignKey(HeroVendor, on_delete=models.SET_NULL, null=True, blank=True)
     assigned_at = models.DateTimeField(null=True, blank=True)
@@ -187,7 +209,7 @@ class HeroMachineVendorAssignmentHistory(models.Model):
         db_table = 'machines_machinevendorassignmenthistory'
 
 
-class HeroMachineShiftRequest(models.Model):
+class HeroMachineShiftRequest(_HeroReadOnlyModelMixin):
     request_id = models.CharField(max_length=64, unique=True)
     vendor = models.ForeignKey(HeroVendor, on_delete=models.PROTECT)
     machine = models.ForeignKey(HeroMachine, on_delete=models.PROTECT)

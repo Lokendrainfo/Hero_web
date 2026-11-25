@@ -61,7 +61,7 @@ def _check_duplicate_submission(machine, freq, hour_meter: Decimal, client_reque
 
     today = timezone.localdate()
     active_non_rejected = MaintenanceSubmission.objects.filter(
-        machine=machine,
+        machine_id=machine.id,
         frequency=freq,
         submission_date=today,
     ).exclude(approval_status=MaintenanceSubmission.APPROVAL_REJECTED)
@@ -145,6 +145,11 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
     if not machine_id:
         raise ValidationError({"machine_id": "Machine selection is required."})
     machine = get_authorized_machine_or_403(user, machine_id)
+
+    # Application-level referential validation against HERO User Master (`hero` DB)
+    from apps.hero_integration.models import HeroUser
+    if not HeroUser.objects.filter(id=user.id, is_active=True).exists():
+        raise PermissionDenied("Authenticated user is missing or inactive in HERO User Master.")
 
     hour_meter = _parse_hour_meter(payload.get('hour_meter_reading'))
     client_request_id = (str(payload.get('client_request_id') or '').strip() or None)
@@ -361,7 +366,7 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
 
     submission = MaintenanceSubmission.objects.create(
         submission_number=MaintenanceSubmission.generate_submission_number(),
-        machine=machine,
+        machine_id=machine.id,
         machine_number=machine_number,
         machine_name=machine.name,
         machine_model=machine.model_name or '',
@@ -372,7 +377,7 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
         machine_assignment_snapshot=assignment_snapshot,
         frequency=freq,
         hour_meter_reading=hour_meter,
-        submitted_by=user,
+        submitted_by_id=user.id,
         submitted_by_name=user.get_display_name(),
         submitted_by_role=get_primary_pm_role(user),
         status=overall_status,
@@ -397,7 +402,7 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
             description_snapshot=ci.description,
             status=entry["status"],
             remarks=entry["remarks"],
-            responded_by=user,
+            responded_by_id=user.id,
             responded_at=entry["responded_at"],
         )
         photo_obj = entry["photo"]

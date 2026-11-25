@@ -5,7 +5,7 @@ from apps.maintenance.models import MaintenanceAuditLog, MaintenanceSubmission
 from .conftest import make_test_image
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=['default', 'hero'])
 class TestMaintenanceWorkflows:
     def _upload_and_build_responses(self, client, machine_id, frequency, checklist_items, not_completed_idx=None, color_seed=0):
         responses = []

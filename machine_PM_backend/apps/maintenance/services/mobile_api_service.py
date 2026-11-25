@@ -116,8 +116,8 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
 
     # Latest submission & cycle due status
     latest_sub = (
-        MaintenanceSubmission.objects.select_related('frequency', 'submitted_by')
-        .filter(machine=machine, frequency=freq)
+        MaintenanceSubmission.objects.select_related('frequency')
+        .filter(machine_id=machine.id, frequency=freq)
         .exclude(approval_status=MaintenanceSubmission.APPROVAL_REJECTED)
         .order_by('-submitted_at', '-id')
         .first()
@@ -128,7 +128,7 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
     # Duplicate submission check
     duplicate_sub = None
     today_subs = MaintenanceSubmission.objects.filter(
-        machine=machine,
+        machine_id=machine.id,
         frequency=freq,
         submission_date=today,
     ).exclude(approval_status=MaintenanceSubmission.APPROVAL_REJECTED)

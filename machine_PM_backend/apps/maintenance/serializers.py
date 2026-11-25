@@ -103,11 +103,19 @@ class MaintenancePhotoAttachmentSerializer(serializers.ModelSerializer):
         ]
 
     def get_uploaded_by_name(self, obj):
-        return obj.uploaded_by.get_display_name() if obj.uploaded_by else ''
+        if obj.submission and obj.submission.submitted_by_name:
+            return obj.submission.submitted_by_name
+        from apps.hero_integration.models import HeroUser
+        user = HeroUser.objects.filter(id=obj.uploaded_by_id).first()
+        return user.get_display_name() if user else ''
 
     def get_machine_number(self, obj):
-        if obj.machine:
-            return obj.machine.machine_chassis_no or obj.machine.code or obj.machine.serial_number
+        if obj.submission and obj.submission.machine_number:
+            return obj.submission.machine_number
+        from apps.hero_integration.models import HeroMachine
+        machine = HeroMachine.objects.filter(id=obj.machine_id).first()
+        if machine:
+            return machine.machine_chassis_no or machine.code or machine.serial_number
         return ''
 
     def get_view_url(self, obj):

@@ -1,7 +1,7 @@
 import pytest
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=['default', 'hero'])
 class TestRoleBasedAccess:
     def test_unauthenticated_rejected(self, seeded_masters):
         from rest_framework.test import APIClient

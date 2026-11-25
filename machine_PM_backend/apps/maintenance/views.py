@@ -125,7 +125,7 @@ class MachineValidateView(APIView):
         data = serialize_machine_info(machine, include_assignment=True)
         latest_sub = (
             MaintenanceSubmission.objects.select_related('frequency')
-            .filter(machine=machine)
+            .filter(machine_id=machine.id)
             .exclude(approval_status=MaintenanceSubmission.APPROVAL_REJECTED)
             .order_by('-submitted_at', '-id')
             .first()
@@ -150,7 +150,7 @@ class MachineHourMeterView(APIView):
         machine = get_authorized_machine_or_403(request.user, machine_id)
         latest_sub = (
             MaintenanceSubmission.objects.select_related('frequency')
-            .filter(machine=machine)
+            .filter(machine_id=machine.id)
             .exclude(approval_status=MaintenanceSubmission.APPROVAL_REJECTED)
             .order_by('-submitted_at', '-id')
             .first()
@@ -242,9 +242,9 @@ class PhotoUploadView(APIView):
 
 class PhotoEvidenceListView(APIView):
     def get(self, request):
-        allowed_machines = get_authorized_machines_queryset(request.user).values_list('id', flat=True)
+        allowed_machines = list(get_authorized_machines_queryset(request.user).values_list('id', flat=True))
         qs = (
-            MaintenancePhotoAttachment.objects.select_related('machine', 'checklist_item', 'uploaded_by', 'submission')
+            MaintenancePhotoAttachment.objects.select_related('checklist_item', 'submission')
             .filter(machine_id__in=allowed_machines, is_bound=True)
             .order_by('-captured_at', '-id')
         )
@@ -281,13 +281,15 @@ class PhotoProtectedView(APIView):
 
 
 def _filter_submissions_queryset(request):
-    allowed_machine_ids = get_authorized_machines_queryset(
-        request.user,
-        vendor_id=request.query_params.get('vendor_id') or request.query_params.get('vendor'),
-    ).values_list('id', flat=True)
+    allowed_machine_ids = list(
+        get_authorized_machines_queryset(
+            request.user,
+            vendor_id=request.query_params.get('vendor_id') or request.query_params.get('vendor'),
+        ).values_list('id', flat=True)
+    )
 
     qs = (
-        MaintenanceSubmission.objects.select_related('frequency', 'machine', 'submitted_by')
+        MaintenanceSubmission.objects.select_related('frequency')
         .prefetch_related('responses__photo_attachment', 'photos', 'reviews')
         .filter(machine_id__in=allowed_machine_ids)
         .order_by('-submitted_at', '-id')
@@ -358,7 +360,7 @@ class SubmissionListCreateView(APIView):
 class SubmissionDetailView(APIView):
     def get(self, request, submission_id):
         submission = (
-            MaintenanceSubmission.objects.select_related('frequency', 'machine', 'submitted_by')
+            MaintenanceSubmission.objects.select_related('frequency')
             .prefetch_related('responses__photo_attachment', 'responses__checklist_item__category', 'reviews', 'photos')
             .filter(id=submission_id)
             .first()
@@ -377,7 +379,7 @@ class SubmissionReviewView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsPMReviewer]
 
     def post(self, request, submission_id):
-        submission = MaintenanceSubmission.objects.select_related('frequency', 'machine').filter(id=submission_id).first()
+        submission = MaintenanceSubmission.objects.select_related('frequency').filter(id=submission_id).first()
         if not submission:
             raise NotFound("Maintenance submission not found.")
 
@@ -401,9 +403,9 @@ class MachineHistoryView(APIView):
     def get(self, request, machine_id):
         machine = get_authorized_machine_or_403(request.user, machine_id)
         qs = (
-            MaintenanceSubmission.objects.select_related('frequency', 'submitted_by')
+            MaintenanceSubmission.objects.select_related('frequency')
             .prefetch_related('photos')
-            .filter(machine=machine)
+            .filter(machine_id=machine.id)
             .order_by('-submitted_at', '-id')
         )
         freq = request.query_params.get('frequency')
@@ -429,9 +431,9 @@ class UserHistoryView(APIView):
             if allowed_vendors == []:
                 raise PermissionDenied("Not authorized to view other users' history.")
 
-        allowed_machine_ids = get_authorized_machines_queryset(request.user).values_list('id', flat=True)
+        allowed_machine_ids = list(get_authorized_machines_queryset(request.user).values_list('id', flat=True))
         qs = (
-            MaintenanceSubmission.objects.select_related('frequency', 'machine', 'submitted_by')
+            MaintenanceSubmission.objects.select_related('frequency')
             .prefetch_related('photos')
             .filter(submitted_by_id=target_uid_int, machine_id__in=allowed_machine_ids)
             .order_by('-submitted_at', '-id')
@@ -487,7 +489,7 @@ class AuditLogListView(APIView):
         qs = MaintenanceAuditLog.objects.all().order_by('-created_at', '-id')
         if not is_pm_admin(request.user):
             allowed_machine_ids = list(get_authorized_machines_queryset(request.user).values_list('id', flat=True))
-            qs = qs.filter(Q(actor=request.user) | Q(machine_id__in=allowed_machine_ids))
+            qs = qs.filter(Q(actor_id=request.user.id) | Q(machine_id__in=allowed_machine_ids))
 
         entity_type = request.query_params.get('entity_type')
         if entity_type:
@@ -562,7 +564,7 @@ class AdminChecklistItemViewSet(_BaseAdminConfigViewSet):
     search_fields = ['item_code', 'description', 'remarks', 'service_interval']
 
     def perform_create(self, serializer):
-        obj = serializer.save(created_by=self.request.user)
+        obj = serializer.save(created_by_id=self.request.user.id)
         record_audit_log(
             entity_type=self.audit_entity_type,
             entity_id=obj.id,

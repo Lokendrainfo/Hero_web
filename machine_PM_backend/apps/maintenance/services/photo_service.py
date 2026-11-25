@@ -114,9 +114,9 @@ def validate_and_store_photo(
     staged_other = MaintenancePhotoAttachment.objects.filter(
         sha256_hash=sha256_hash,
         is_bound=False,
-        uploaded_by=user,
+        uploaded_by_id=user.id,
     ).exclude(
-        machine=machine,
+        machine_id=machine.id,
         checklist_item=checklist_item,
         frequency_code=frequency_code,
     ).exists()
@@ -140,9 +140,9 @@ def validate_and_store_photo(
             parsed_captured_at = captured_at
 
     photo = MaintenancePhotoAttachment.objects.create(
-        machine=machine,
+        machine_id=machine.id,
         checklist_item=checklist_item,
-        uploaded_by=user,
+        uploaded_by_id=user.id,
         frequency_code=frequency_code,
         file=file_obj,
         original_filename=(getattr(file_obj, 'name', 'capture.jpg') or 'capture.jpg')[:255],
@@ -175,7 +175,7 @@ def validate_and_store_photo(
 
 def get_authorized_photo_or_403(user, photo_id: int) -> MaintenancePhotoAttachment:
     photo = MaintenancePhotoAttachment.objects.select_related(
-        'machine', 'checklist_item', 'uploaded_by', 'submission', 'response'
+        'checklist_item', 'submission', 'response'
     ).filter(id=photo_id).first()
     if not photo:
         raise NotFound("Photo attachment not found.")

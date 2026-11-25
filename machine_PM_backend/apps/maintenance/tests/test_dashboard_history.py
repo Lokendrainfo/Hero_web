@@ -3,7 +3,7 @@ import pytest
 from .conftest import make_test_image
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=['default', 'hero'])
 class TestDashboardHistoryAndReports:
     def test_dashboard_history_pending_overdue_and_reports(self, seeded_masters, users, machines, make_auth_client):
         m1, m2 = machines

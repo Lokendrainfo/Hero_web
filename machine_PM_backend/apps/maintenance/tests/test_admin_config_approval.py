@@ -3,7 +3,7 @@ import pytest
 from apps.maintenance.models import MaintenanceAuditLog, MaintenanceCategoryMaster, MaintenanceFrequencyMaster
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=['default', 'hero'])
 class TestAdminConfigAndSafety:
     def test_admin_can_configure_checklist_and_role_mappings(self, seeded_masters, users, make_auth_client):
         admin_client = make_auth_client(users['admin'])

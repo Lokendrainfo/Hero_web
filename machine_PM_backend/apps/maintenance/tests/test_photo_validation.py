@@ -4,7 +4,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from .conftest import make_test_image
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=['default', 'hero'])
 class TestMandatoryPhotoValidation:
     def test_reject_invalid_file_type_and_corrupt_image(self, seeded_masters, users, machines, make_auth_client):
         m1, _ = machines

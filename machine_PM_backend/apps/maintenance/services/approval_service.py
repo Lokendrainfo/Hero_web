@@ -37,7 +37,7 @@ def review_submission(user, submission: MaintenanceSubmission, action: str, rema
 
     review = MaintenanceApprovalReview.objects.create(
         submission=submission,
-        reviewer=user,
+        reviewer_id=user.id,
         reviewer_name=user.get_display_name(),
         reviewer_role=get_primary_pm_role(user),
         action=norm_action,

@@ -20,7 +20,7 @@ def api_key_client(db, users):
     return client, key_obj
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(databases=['default', 'hero'])
 class TestMobileApkApis:
     def test_api_key_auth_rejects_invalid_and_accepts_valid(self, seeded_masters, users, machines, api_key_client):
         client, _ = api_key_client

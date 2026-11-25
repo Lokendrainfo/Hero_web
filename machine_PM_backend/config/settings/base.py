@@ -60,30 +60,36 @@ TEMPLATES = [
     },
 ]
 
-# Database Connection (Shared HERO PostgreSQL by default)
-DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@127.0.0.1:5432/hero_hdd_db')
-
-if DATABASE_URL.startswith('sqlite'):
-    parsed = urlparse.urlparse(DATABASE_URL)
-    sqlite_name = parsed.path if (parsed.path and parsed.path not in ('/', ':memory:')) else BASE_DIR / 'pm_db.sqlite3'
-    DATABASES = {
-        'default': {
+def _parse_database_url(db_url: str, fallback_sqlite_path: Path) -> dict:
+    if db_url.startswith('sqlite'):
+        parsed = urlparse.urlparse(db_url)
+        sqlite_name = parsed.path if (parsed.path and parsed.path not in ('/', ':memory:')) else fallback_sqlite_path
+        return {
             'ENGINE': 'django.db.backends.sqlite3',
             'NAME': sqlite_name,
         }
+    url = urlparse.urlparse(db_url)
+    return {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': url.path.lstrip('/') or 'machine_pm_db',
+        'USER': url.username or 'postgres',
+        'PASSWORD': url.password or 'postgres',
+        'HOST': url.hostname or '127.0.0.1',
+        'PORT': str(url.port or 5432),
     }
-else:
-    url = urlparse.urlparse(DATABASE_URL)
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': url.path.lstrip('/') or 'hero_hdd_db',
-            'USER': url.username or 'postgres',
-            'PASSWORD': url.password or 'postgres',
-            'HOST': url.hostname or '127.0.0.1',
-            'PORT': str(url.port or 5432),
-        }
-    }
+
+
+# Primary Database – Machine PM (`machine_pm_db`)
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:postgres@127.0.0.1:5432/machine_pm_db')
+# Secondary Database – HERO Integration (`hero_hdd_db`, read-only)
+HERO_DATABASE_URL = os.environ.get('HERO_DATABASE_URL', 'postgresql://postgres:postgres@127.0.0.1:5432/hero_hdd_db')
+
+DATABASES = {
+    'default': _parse_database_url(DATABASE_URL, BASE_DIR / 'pm_db.sqlite3'),
+    'hero': _parse_database_url(HERO_DATABASE_URL, BASE_DIR / 'hero_db.sqlite3'),
+}
+
+DATABASE_ROUTERS = ['config.db_router.HeroPMDatabaseRouter']
 
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'Asia/Kolkata'

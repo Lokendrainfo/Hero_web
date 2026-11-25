@@ -1,12 +1,11 @@
 from django.db import models
 from django.utils import timezone
 
-from apps.hero_integration.models import HeroMachine, HeroUser
-
 
 class MaintenanceFrequencyMaster(models.Model):
     """
     Master table of Preventive Maintenance frequencies (Daily, 50 Hours, 100 Hours, 250 Hours, 500 Hours, 1000 Hours).
+    Stored in `machine_pm_db`.
     """
 
     code = models.CharField(max_length=30, unique=True, db_index=True)
@@ -34,6 +33,7 @@ class MaintenanceCategoryMaster(models.Model):
     1. Machine
     2. Engine
     3. General Safety Guidelines
+    Stored in `machine_pm_db`.
     """
 
     code = models.CharField(max_length=50, unique=True, db_index=True)
@@ -56,7 +56,7 @@ class MaintenanceCategoryMaster(models.Model):
 class MaintenanceChecklistMaster(models.Model):
     """
     Master catalog of all maintenance activities & safety guidelines imported from Apollo HDD A600V2 SOP.
-    Preserves original descriptions, remarks, special instructions, and service intervals.
+    References `created_by_id` from HERO User Master (`hero_hdd_db`) via application-level validation.
     """
 
     item_code = models.CharField(max_length=50, unique=True, db_index=True)
@@ -75,13 +75,7 @@ class MaintenanceChecklistMaster(models.Model):
     is_as_required = models.BooleanField(default=False, help_text="True for items performed as per requirement / condition-based")
     sort_order = models.PositiveIntegerField(default=0, db_index=True)
     is_active = models.BooleanField(default=True, db_index=True)
-    created_by = models.ForeignKey(
-        HeroUser,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='pm_created_checklist_items',
-    )
+    created_by_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -99,8 +93,7 @@ class MaintenanceChecklistMaster(models.Model):
 
 class ChecklistFrequencyMapping(models.Model):
     """
-    Maps checklist master activities to applicable maintenance frequencies.
-    Admin can reconfigure mappings without changing backend code.
+    Maps checklist master activities to applicable maintenance frequencies inside `machine_pm_db`.
     """
 
     checklist_item = models.ForeignKey(
@@ -133,8 +126,7 @@ class ChecklistFrequencyMapping(models.Model):
 
 class RoleFrequencyMapping(models.Model):
     """
-    Maps HERO user role codes to permitted preventive maintenance frequencies.
-    Admin can adjust role-frequency assignments without code changes.
+    Maps HERO user role codes to permitted preventive maintenance frequencies inside `machine_pm_db`.
     """
 
     role_code = models.CharField(max_length=60, db_index=True)
@@ -164,7 +156,9 @@ class RoleFrequencyMapping(models.Model):
 
 class MaintenanceSubmission(models.Model):
     """
-    Immutable preventive maintenance submission record referencing existing HERO Machine & User Masters.
+    Immutable preventive maintenance submission record stored in `machine_pm_db`.
+    Stores validated HERO `machine_id` and `submitted_by_id` (plus point-in-time snapshots)
+    without cross-database foreign keys or duplicating HERO master tables.
     """
 
     STATUS_COMPLETED = 'COMPLETED'
@@ -186,12 +180,9 @@ class MaintenanceSubmission(models.Model):
     )
 
     submission_number = models.CharField(max_length=40, unique=True, db_index=True)
-    machine = models.ForeignKey(
-        HeroMachine,
-        on_delete=models.PROTECT,
-        related_name='pm_submissions',
-    )
-    # Historical snapshots at submission time (no duplicate master tables)
+    # Validated HERO Machine Master ID (stored in `hero_hdd_db`)
+    machine_id = models.BigIntegerField(db_index=True)
+    # Historical snapshots at submission time
     machine_number = models.CharField(max_length=100, db_index=True)
     machine_name = models.CharField(max_length=255)
     machine_model = models.CharField(max_length=120, blank=True, default='')
@@ -208,11 +199,8 @@ class MaintenanceSubmission(models.Model):
     )
     hour_meter_reading = models.DecimalField(max_digits=12, decimal_places=2)
 
-    submitted_by = models.ForeignKey(
-        HeroUser,
-        on_delete=models.PROTECT,
-        related_name='pm_submissions',
-    )
+    # Validated HERO User Master ID (stored in `hero_hdd_db`)
+    submitted_by_id = models.BigIntegerField(db_index=True)
     submitted_by_name = models.CharField(max_length=255)
     submitted_by_role = models.CharField(max_length=60, db_index=True)
 
@@ -235,8 +223,8 @@ class MaintenanceSubmission(models.Model):
         db_table = 'pm_submission'
         ordering = ['-submitted_at', '-id']
         indexes = [
-            models.Index(fields=['machine', 'frequency', 'submission_date']),
-            models.Index(fields=['submitted_by', 'submitted_at']),
+            models.Index(fields=['machine_id', 'frequency', 'submission_date']),
+            models.Index(fields=['submitted_by_id', 'submitted_at']),
             models.Index(fields=['vendor_id', 'submitted_at']),
             models.Index(fields=['status', 'approval_status']),
         ]
@@ -264,7 +252,7 @@ class MaintenanceSubmission(models.Model):
 
 class MaintenanceChecklistResponse(models.Model):
     """
-    Individual checklist activity response within a maintenance submission.
+    Individual checklist activity response within a maintenance submission (`machine_pm_db`).
     """
 
     STATUS_COMPLETED = 'COMPLETED'
@@ -289,11 +277,7 @@ class MaintenanceChecklistResponse(models.Model):
     description_snapshot = models.CharField(max_length=500)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, db_index=True)
     remarks = models.TextField(blank=True, default='')
-    responded_by = models.ForeignKey(
-        HeroUser,
-        on_delete=models.PROTECT,
-        related_name='pm_checklist_responses',
-    )
+    responded_by_id = models.BigIntegerField(db_index=True)
     responded_at = models.DateTimeField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -308,9 +292,9 @@ class MaintenanceChecklistResponse(models.Model):
 
 class MaintenancePhotoAttachment(models.Model):
     """
-    Mandatory individual photo evidence for each checklist activity.
-    Stores machine_id, checklist_item_id, user_id, maintenance frequency, timestamp, SHA256 hash, and file reference.
-    Enforces 1-to-1 binding with a checklist response so one photograph cannot be reused across activities.
+    Mandatory individual photo evidence for each checklist activity (`machine_pm_db`).
+    Stores validated HERO `machine_id`, `uploaded_by_id`, local `checklist_item_id`,
+    maintenance frequency, timestamp, SHA256 hash, and file reference.
     """
 
     submission = models.ForeignKey(
@@ -327,21 +311,13 @@ class MaintenancePhotoAttachment(models.Model):
         blank=True,
         related_name='photo_attachment',
     )
-    machine = models.ForeignKey(
-        HeroMachine,
-        on_delete=models.PROTECT,
-        related_name='pm_photos',
-    )
+    machine_id = models.BigIntegerField(db_index=True)
     checklist_item = models.ForeignKey(
         MaintenanceChecklistMaster,
         on_delete=models.PROTECT,
         related_name='photos',
     )
-    uploaded_by = models.ForeignKey(
-        HeroUser,
-        on_delete=models.PROTECT,
-        related_name='pm_uploaded_photos',
-    )
+    uploaded_by_id = models.BigIntegerField(db_index=True)
     frequency_code = models.CharField(max_length=30, db_index=True)
     file = models.FileField(upload_to='pm_photos/%Y/%m/%d/')
     original_filename = models.CharField(max_length=255)
@@ -358,7 +334,7 @@ class MaintenancePhotoAttachment(models.Model):
         db_table = 'pm_photo_attachment'
         ordering = ['-captured_at', '-id']
         indexes = [
-            models.Index(fields=['machine', 'frequency_code', 'captured_at']),
+            models.Index(fields=['machine_id', 'frequency_code', 'captured_at']),
             models.Index(fields=['sha256_hash', 'is_bound']),
         ]
 
@@ -368,7 +344,7 @@ class MaintenancePhotoAttachment(models.Model):
 
 class MaintenanceApprovalReview(models.Model):
     """
-    Approval / Review trail for Maintenance Submissions (Area Manager / Admin).
+    Approval / Review trail for Maintenance Submissions (`machine_pm_db`).
     """
 
     ACTION_APPROVED = 'APPROVED'
@@ -385,11 +361,7 @@ class MaintenanceApprovalReview(models.Model):
         on_delete=models.CASCADE,
         related_name='reviews',
     )
-    reviewer = models.ForeignKey(
-        HeroUser,
-        on_delete=models.PROTECT,
-        related_name='pm_reviews',
-    )
+    reviewer_id = models.BigIntegerField(db_index=True)
     reviewer_name = models.CharField(max_length=255)
     reviewer_role = models.CharField(max_length=60)
     action = models.CharField(max_length=30, choices=ACTION_CHOICES)
@@ -408,19 +380,13 @@ class MaintenanceApprovalReview(models.Model):
 
 class MaintenanceAuditLog(models.Model):
     """
-    Immutable audit log for all PM actions (uploads, submissions, validation blocks, approvals, admin config changes).
+    Immutable audit log for all PM actions stored exclusively in `machine_pm_db`.
     """
 
     entity_type = models.CharField(max_length=60, db_index=True)
     entity_id = models.CharField(max_length=64, db_index=True)
     action = models.CharField(max_length=60, db_index=True)
-    actor = models.ForeignKey(
-        HeroUser,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='pm_audit_logs',
-    )
+    actor_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     actor_username = models.CharField(max_length=150, blank=True, default='')
     actor_role = models.CharField(max_length=60, blank=True, default='')
     machine_id = models.BigIntegerField(null=True, blank=True, db_index=True)
@@ -439,4 +405,3 @@ class MaintenanceAuditLog(models.Model):
 
     def __str__(self):
         return f"[{self.created_at}] {self.entity_type}:{self.entity_id} {self.action}"
-

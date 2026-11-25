@@ -82,7 +82,7 @@ def get_dashboard_data(user, query_params: dict) -> dict:
     )
 
     subs_qs = (
-        MaintenanceSubmission.objects.select_related('frequency', 'submitted_by')
+        MaintenanceSubmission.objects.select_related('frequency')
         .filter(machine_id__in=machine_ids)
         .exclude(approval_status=MaintenanceSubmission.APPROVAL_REJECTED)
         .order_by('-submitted_at', '-id')
@@ -263,7 +263,7 @@ def get_maintenance_report(user, query_params: dict) -> dict:
     machine_ids = [m["id"] for m in dash["machines"]]
 
     subs_qs = (
-        MaintenanceSubmission.objects.select_related('frequency', 'machine', 'submitted_by')
+        MaintenanceSubmission.objects.select_related('frequency')
         .filter(machine_id__in=machine_ids)
         .order_by('-submitted_at')
     )

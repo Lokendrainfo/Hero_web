@@ -25,7 +25,7 @@ def record_audit_log(
         entity_type=entity_type,
         entity_id=str(entity_id),
         action=action,
-        actor=actor if (actor and getattr(actor, 'id', None)) else None,
+        actor_id=actor.id if (actor and getattr(actor, 'id', None)) else None,
         actor_username=getattr(actor, 'username', '') if actor else '',
         actor_role=get_primary_pm_role(actor) if actor else '',
         machine_id=machine_id,
