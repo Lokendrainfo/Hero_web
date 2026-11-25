@@ -522,17 +522,17 @@ const ENDPOINTS_CATALOG = [
         isMultipart: true,
         title: 'Machine Maintenance Data Post API',
         path: '/api/v1/machine-maintenance/data',
-        description: 'Submit completed preventive maintenance checklist from Mobile APK with mandatory individual photo uploads for every checklist activity. Validates all required items, enforces unique SHA-256 photo per item and remarks for Not Completed items, saves atomically, and returns a unique submission reference ID.',
+        description: 'Submit completed preventive maintenance checklist from Mobile APK with mandatory individual camera-captured photographs for every checklist activity. Validates all required items, resizes/compresses camera images, enforces unique SHA-256 hash per item, stores image binaries directly inside machine_pm_db PostgreSQL BYTEA atomically, and returns a unique submission reference ID.',
         authHeaders: [
           { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
-          { name: 'Content-Type', value: 'multipart/form-data', required: true, desc: 'Multipart form payload carrying JSON responses string and per-item image files' },
+          { name: 'Content-Type', value: 'multipart/form-data', required: true, desc: 'Multipart form payload carrying JSON responses string and per-item camera image files (base64 JSON strings are rejected)' },
         ],
         multipartInstructions: [
           'Send the request as multipart/form-data (do NOT manually set boundary in headers; let HTTP client generate it).',
           'Include scalar form fields: machine_id, user_id, frequency, hour_meter_reading, capture_source ("CAMERA"), and optional general_remarks / client_request_id.',
           'Include a JSON-serialized array string in the "responses" field containing each checklist_item_id, status ("COMPLETED" or "NOT_COMPLETED"), and remarks (mandatory when status is "NOT_COMPLETED").',
           'Attach ONE separate camera-captured image file (JPEG, PNG, or WEBP, max 10 MB) per checklist activity using field name "photo_<checklist_item_id>" (e.g. photo_1, photo_2) or specify a custom "photo_field" inside each response object.',
-          'Server-side rules reject submissions if any checklist item is missing a photo, if gallery/file uploads are indicated (capture_source="GALLERY" / "FILE_UPLOAD"), if the same photo bytes (SHA-256) are reused across multiple items, or if a duplicate submission already exists for the cycle.',
+          'Server-side transaction resizes/compresses images, computes SHA-256 hash, validates uniqueness, and saves image binaries directly in PostgreSQL BYTEA (pm_photo_attachment.photo_data) within machine_pm_db. Gallery uploads and base64 JSON strings are rejected.',
         ],
         requestBodySchema: {
           machine_id: 'integer | string (required) — HERO Machine ID or chassis number',
@@ -661,6 +661,40 @@ const ENDPOINTS_CATALOG = [
           message: 'Invalid or inactive API key.',
           errors: { detail: 'Invalid or inactive API key.' },
           status_code: 401,
+        },
+      },
+      {
+        id: 'machine_maintenance_photo_get',
+        method: 'GET',
+        isBinaryResponse: true,
+        title: 'Machine Maintenance Photo Retrieval API',
+        path: '/api/v1/machine-maintenance/photos/{photo_id}',
+        description: 'Retrieves an authenticated maintenance checklist camera photograph directly from PostgreSQL BYTEA storage (machine_pm_db.pm_photo_attachment.photo_data) with verified machine/vendor authorization and original Content-Type header.',
+        authHeaders: [
+          { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
+        ],
+        params: [
+          { name: 'photo_id', in: 'path', type: 'integer', required: true, default: '1', desc: 'ID of the maintenance photo attachment stored in machine_pm_db' },
+        ],
+        statusCodes: [
+          { code: '200 OK', meaning: 'Raw image binary streamed from machine_pm_db with Content-Type (image/jpeg, image/png, or image/webp).' },
+          { code: '401 Unauthorized', meaning: 'Missing or invalid X-API-Key / Bearer token.' },
+          { code: '403 Forbidden', meaning: 'Caller is not authorized to view photographs for this machine/vendor.' },
+          { code: '404 Not Found', meaning: 'Photo attachment ID not found in machine_pm_db.' },
+        ],
+        sampleResponse: {
+          note: 'Returns binary image bytes (e.g. image/jpeg) directly from PostgreSQL BYTEA.',
+          headers: {
+            'Content-Type': 'image/jpeg',
+            'Content-Disposition': 'inline; filename="camera_SOP-MCH-004.jpg"',
+            'Cache-Control': 'private, max-age=3600',
+          },
+        },
+        errorResponse: {
+          success: false,
+          message: 'You are not authorized to view this photograph.',
+          errors: { detail: 'You are not authorized to view this photograph.' },
+          status_code: 403,
         },
       },
     ],
@@ -887,14 +921,26 @@ export const ApiDocs = () => {
         params: qParams,
         data: requestData,
         headers,
+        responseType: selectedEndpoint.isBinaryResponse ? 'blob' : 'json',
       });
 
       const elapsed = Math.round(performance.now() - startTime);
+      let respPayload = response.data;
+      let imagePreviewUrl = null;
+      if (selectedEndpoint.isBinaryResponse && response.data instanceof Blob) {
+        imagePreviewUrl = URL.createObjectURL(response.data);
+        respPayload = {
+          content_type: response.headers?.['content-type'] || response.data.type,
+          byte_size: response.data.size,
+          source: 'machine_pm_db (PostgreSQL BYTEA)',
+        };
+      }
       setPgResponse({
         status: response.status,
         statusText: response.statusText || 'OK',
         latency: elapsed,
-        data: response.data,
+        data: respPayload,
+        imagePreviewUrl,
       });
     } catch (err) {
       const elapsed = Math.round(performance.now() - startTime);
@@ -1602,6 +1648,15 @@ print(response.json())`;
                     {copiedResponse ? 'Copied' : 'Copy JSON'}
                   </button>
                 </div>
+                {pgResponse.imagePreviewUrl && (
+                  <div style={{ padding: '12px', background: '#0f172a', borderBottom: '1px solid #1e293b', textAlign: 'center' }}>
+                    <img
+                      src={pgResponse.imagePreviewUrl}
+                      alt="Retrieved maintenance photo binary"
+                      style={{ maxWidth: '100%', maxHeight: '280px', borderRadius: '6px', objectFit: 'contain' }}
+                    />
+                  </div>
+                )}
                 <pre className="response-pre">
                   {JSON.stringify(pgResponse.data, null, 2)}
                 </pre>

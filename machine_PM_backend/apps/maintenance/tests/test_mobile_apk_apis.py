@@ -141,6 +141,14 @@ class TestMobileApkApis:
         assert ok_data['submission_reference_id'].startswith('PM-')
         assert ok_data['status'] == 'COMPLETED'
         assert ok_data['photo_count'] == 3
+        assert len(ok_data['photos']) == 3
+
+        # Verify each returned photo URL serves real binary directly from DB via X-API-Key
+        for photo_meta in ok_data['photos']:
+            photo_res = client.get(photo_meta['photo_url'])
+            assert photo_res.status_code == 200
+            assert photo_res['Content-Type'] == photo_meta['mime_type']
+            assert len(photo_res.content) == photo_meta['file_size']
 
         # Re-checking eligibility at same hour-meter reading now reports duplicate
         recheck = client.get(
@@ -182,4 +190,56 @@ class TestMobileApkApis:
         freq_codes = [f['frequency_code'] for f in data['frequency_wise_checklists']]
         assert freq_codes == ['100_HOURS', '250_HOURS']
         assert len(data['safety_guidelines']) == 5
+
+    def test_web_jwt_multipart_submit_via_data_api_and_retrieve_photos(
+        self, seeded_masters, users, machines, make_auth_client
+    ):
+        client = make_auth_client(users['operator'])
+        m1, _ = machines
+
+        checklist = client.get('/api/v1/pm/checklist/?frequency=50_HOURS').json()['data']['items']
+        assert len(checklist) == 3
+
+        responses = [
+            {
+                'checklist_item_id': it['id'],
+                'status': 'NOT_COMPLETED' if idx == 1 else 'COMPLETED',
+                'remarks': 'Oil cap loose' if idx == 1 else 'Checked OK',
+                'capture_source': 'CAMERA',
+            }
+            for idx, it in enumerate(checklist)
+        ]
+        files = {
+            f"photo_{it['id']}": make_test_image(color=(idx * 55 + 20, 90, 175), filename=f'web_cam_{idx}.jpg', fmt='JPEG')
+            for idx, it in enumerate(checklist)
+        }
+
+        res = client.post(
+            '/api/v1/machine-maintenance/data',
+            {
+                'machine_id': str(m1.id),
+                'frequency': '50_HOURS',
+                'hour_meter_reading': '248.5',
+                'capture_source': 'CAMERA',
+                'general_remarks': 'Submitted from Perform Maintenance UI',
+                'responses': json.dumps(responses),
+                **files,
+            },
+            format='multipart',
+        )
+        assert res.status_code == 201, res.json()
+        data = res.json()['data']
+        assert data['photo_count'] == 3
+        assert len(data['photos']) == 3
+
+        # Fetch submission detail (as used by History modal & post-submit modal) and verify every photo retrieves
+        detail_res = client.get(f"/api/v1/pm/submissions/{data['submission_id']}/")
+        assert detail_res.status_code == 200
+        detail_data = detail_res.json()['data']
+        for resp_item in detail_data['responses']:
+            assert resp_item['photo_id'] is not None
+            img_res = client.get(resp_item['photo_url'])
+            assert img_res.status_code == 200
+            assert img_res['Content-Type'] == 'image/jpeg'
+            assert len(img_res.content) > 0
 

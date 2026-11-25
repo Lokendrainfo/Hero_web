@@ -103,11 +103,20 @@ export const PmCameraCaptureModal = ({ isOpen, onClose, item, onConfirmCapture }
       return;
     }
 
+    const maxDim = 1600;
+    let targetW = video.videoWidth;
+    let targetH = video.videoHeight;
+    if (Math.max(targetW, targetH) > maxDim) {
+      const scale = maxDim / Math.max(targetW, targetH);
+      targetW = Math.round(targetW * scale);
+      targetH = Math.round(targetH * scale);
+    }
+
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    canvas.width = targetW;
+    canvas.height = targetH;
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, 0, 0, targetW, targetH);
 
     canvas.toBlob(
       (blob) => {
@@ -122,7 +131,7 @@ export const PmCameraCaptureModal = ({ isOpen, onClose, item, onConfirmCapture }
         stopStream();
       },
       'image/jpeg',
-      0.9
+      0.85
     );
   };
 
@@ -134,11 +143,11 @@ export const PmCameraCaptureModal = ({ isOpen, onClose, item, onConfirmCapture }
   };
 
   const handleUsePhoto = () => {
-    if (!capturedBlob) return;
+    if (!capturedBlob || !item) return;
     const file = new File([capturedBlob], `camera_${item.item_code || item.id}_${Date.now()}.jpg`, {
       type: 'image/jpeg',
     });
-    onConfirmCapture(file);
+    onConfirmCapture(file, item);
   };
 
   return (

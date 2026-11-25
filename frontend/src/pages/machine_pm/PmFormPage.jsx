@@ -1,11 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  LucideAlertTriangle,
   LucideCamera,
   LucideCheckCircle2,
   LucideEye,
-  LucideLoader2,
   LucideRefreshCw,
   LucideSend,
   LucideXCircle,
@@ -24,10 +22,14 @@ const genRequestId = () => {
   return `pm-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 };
 
+const getPhotoStateKey = (item) => String(item?.item_code || item?.id || '');
+
 export const PmFormPage = () => {
   const { machineId: routeMachineId, frequency: routeFreq } = useParams();
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
 
   const [roleInfo, setRoleInfo] = useState(null);
   const [machines, setMachines] = useState([]);
@@ -44,37 +46,60 @@ export const PmFormPage = () => {
   const [checklist, setChecklist] = useState(null);
   const [loadingChecklist, setLoadingChecklist] = useState(false);
 
-  // Map: checklist_item_id -> { status, remarks, photo_id, view_url, sha256_hash, captured_at, uploading, error }
+  // Per-item completion status and remarks keyed by item.id
   const [responsesMap, setResponsesMap] = useState({});
+  // Independent per-item camera capture state keyed by unique item_code (e.g. "SOP-MCH-004") / fallback item.id
+  const [capturedPhotos, setCapturedPhotos] = useState({});
+  const objectUrlsRef = useRef(new Set());
   const [cameraTargetItem, setCameraTargetItem] = useState(null);
   const [previewPhoto, setPreviewPhoto] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [submittedRecord, setSubmittedRecord] = useState(null);
   const [clientRequestId] = useState(genRequestId);
 
+  const revokeAllObjectUrls = () => {
+    objectUrlsRef.current.forEach((u) => {
+      try {
+        URL.revokeObjectURL(u);
+      } catch {
+        // ignore
+      }
+    });
+    objectUrlsRef.current.clear();
+  };
+
+  useEffect(() => () => revokeAllObjectUrls(), []);
+
   useEffect(() => {
+    let active = true;
     Promise.all([pmService.getMachines(), pmService.getFrequencies()])
       .then(([mRes, fRes]) => {
+        if (!active) return;
         setMachines(mRes?.data || []);
         const fData = fRes?.data || {};
         setRoleInfo(fData.role_info || null);
         const submittable = (fData.frequencies || []).filter((f) => f.can_submit);
         setAllowedFrequencies(submittable);
         if (!routeFreq && submittable.length > 0) {
-          setSelectedFreq(submittable[0].code);
+          setSelectedFreq((prev) => prev || submittable[0].code);
         }
       })
-      .catch((err) => showToast(err?.message || 'Failed to initialize maintenance form.', 'error'));
-  }, [routeFreq, showToast]);
+      .catch((err) => showToastRef.current(err?.message || 'Failed to initialize maintenance form.', 'error'));
+    return () => {
+      active = false;
+    };
+  }, [routeFreq]);
 
   // Fetch & validate selected HERO machine
   useEffect(() => {
     if (!selectedMachineId) {
       setMachineDetail(null);
-      return;
+      return undefined;
     }
+    let active = true;
     pmService.validateMachine(selectedMachineId)
       .then((res) => {
+        if (!active) return;
         const d = res?.data || null;
         setMachineDetail(d);
         if (d && d.engine_hours !== undefined && d.engine_hours !== null) {
@@ -82,150 +107,195 @@ export const PmFormPage = () => {
         }
       })
       .catch((err) => {
+        if (!active) return;
         setMachineDetail(null);
-        showToast(err?.message || 'Failed to validate selected machine.', 'error');
+        showToastRef.current(err?.message || 'Failed to validate selected machine.', 'error');
       });
-  }, [selectedMachineId, showToast]);
+    return () => {
+      active = false;
+    };
+  }, [selectedMachineId]);
 
-  // Fetch role-authorized checklist when frequency changes
+  // Fetch role-authorized checklist ONLY when frequency changes (never re-run on toast changes)
   useEffect(() => {
     if (!selectedFreq) {
       setChecklist(null);
-      return;
+      return undefined;
     }
+    let active = true;
     setLoadingChecklist(true);
     pmService.getChecklist(selectedFreq)
       .then((res) => {
+        if (!active) return;
         const data = res?.data || null;
         setChecklist(data);
-        const initMap = {};
-        (data?.items || []).forEach((it) => {
-          initMap[it.id] = {
-            status: 'COMPLETED',
-            remarks: '',
-            photo_id: null,
-            view_url: '',
-            sha256_hash: '',
-            captured_at: '',
-            uploading: false,
-            error: '',
-          };
+        setResponsesMap((prev) => {
+          const initMap = {};
+          (data?.items || []).forEach((it) => {
+            initMap[it.id] = prev[it.id] || {
+              status: 'COMPLETED',
+              remarks: '',
+            };
+          });
+          return initMap;
         });
-        setResponsesMap(initMap);
       })
       .catch((err) => {
+        if (!active) return;
         setChecklist(null);
-        showToast(err?.message || 'Not authorized for this maintenance frequency.', 'error');
+        showToastRef.current(err?.message || 'Not authorized for this maintenance frequency.', 'error');
       })
-      .finally(() => setLoadingChecklist(false));
-  }, [selectedFreq, showToast]);
+      .finally(() => {
+        if (active) setLoadingChecklist(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedFreq]);
 
   const updateItemState = (itemId, patch) => {
     setResponsesMap((prev) => ({
       ...prev,
-      [itemId]: { ...(prev[itemId] || {}), ...patch },
+      [itemId]: { ...(prev[itemId] || { status: 'COMPLETED', remarks: '' }), ...patch },
     }));
   };
 
-  const handleCameraPhotoCaptured = async (item, file) => {
-    if (!file || !item) return;
+  const handleCameraPhotoCaptured = (capturedItem, file) => {
+    const target = capturedItem || cameraTargetItem;
+    if (!file || !target) return;
     if (!selectedMachineId) {
-      showToast('Please select a machine before capturing photos.', 'error');
+      showToastRef.current('Please select a machine before capturing photos.', 'error');
       return;
     }
 
-    setCameraTargetItem(null);
-    updateItemState(item.id, { uploading: true, error: '' });
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('machine_id', selectedMachineId);
-    fd.append('checklist_item_id', String(item.id));
-    fd.append('frequency', selectedFreq);
-    fd.append('capture_source', 'CAMERA');
-    fd.append('captured_at', new Date().toISOString());
+    const photoKey = getPhotoStateKey(target);
+    const previewUrl = URL.createObjectURL(file);
+    objectUrlsRef.current.add(previewUrl);
 
-    try {
-      const res = await pmService.uploadPhoto(fd);
-      const p = res?.data;
-      updateItemState(item.id, {
-        uploading: false,
-        photo_id: p.id,
-        view_url: p.view_url,
-        sha256_hash: p.sha256_hash,
-        captured_at: p.captured_at,
-        error: '',
-      });
-      showToast(`Camera photo captured for "${item.description}"`, 'success');
-    } catch (err) {
-      const msg = err?.message || 'Camera photo verification failed.';
-      updateItemState(item.id, { uploading: false, error: msg });
-      showToast(msg, 'error');
-    }
+    // Replace only this checklist item's captured image; preserve all other items' captures
+    setCapturedPhotos((prev) => {
+      const prevUrl = prev[photoKey]?.previewUrl;
+      if (prevUrl && prevUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(prevUrl);
+        objectUrlsRef.current.delete(prevUrl);
+      }
+      return {
+        ...prev,
+        [photoKey]: {
+          checklistItemId: target.id,
+          itemCode: target.item_code,
+          file,
+          previewUrl,
+          capturedAt: new Date().toISOString(),
+          captureSource: 'CAMERA',
+        },
+      };
+    });
+
+    setCameraTargetItem(null);
+    showToastRef.current(`Camera photo captured for "${target.description}"`, 'success');
   };
 
   const itemsList = checklist?.items || [];
   const photosUploadedCount = useMemo(
-    () => itemsList.filter((it) => Boolean(responsesMap[it.id]?.photo_id)).length,
-    [itemsList, responsesMap]
+    () => itemsList.filter((it) => Boolean(capturedPhotos[getPhotoStateKey(it)]?.file)).length,
+    [itemsList, capturedPhotos]
   );
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!selectedMachineId) {
-      showToast('Please select a machine.', 'error');
+      showToastRef.current('Please select a machine.', 'error');
       return;
     }
     if (!selectedFreq) {
-      showToast('Please select a maintenance frequency.', 'error');
+      showToastRef.current('Please select a maintenance frequency.', 'error');
       return;
     }
     if (hourMeter === '' || Number(hourMeter) < 0 || Number.isNaN(Number(hourMeter))) {
-      showToast('Please enter a valid machine hour-meter reading.', 'error');
+      showToastRef.current('Please enter a valid machine hour-meter reading.', 'error');
       return;
     }
 
-    // Validate every checklist item has a photo + remarks if NOT_COMPLETED
+    // Validate every checklist item has its own captured camera photo + remarks if NOT_COMPLETED
     for (const item of itemsList) {
-      const st = responsesMap[item.id] || {};
-      if (!st.photo_id) {
-        showToast(`Mandatory photo missing for: ${item.description}`, 'error');
+      const st = responsesMap[item.id] || { status: 'COMPLETED', remarks: '' };
+      const cap = capturedPhotos[getPhotoStateKey(item)];
+      if (!cap || !cap.file) {
+        showToastRef.current(`Mandatory camera photo missing for: ${item.description}`, 'error');
         return;
       }
       if (st.status === 'NOT_COMPLETED' && !(st.remarks || '').trim()) {
-        showToast(`Explanatory remarks required for Not Completed item: ${item.description}`, 'error');
+        showToastRef.current(`Explanatory remarks required for Not Completed item: ${item.description}`, 'error');
         return;
       }
     }
 
-    const payload = {
-      machine_id: Number(selectedMachineId),
-      frequency: selectedFreq,
-      hour_meter_reading: Number(hourMeter),
-      general_remarks: generalRemarks.trim(),
-      client_request_id: clientRequestId,
-      responses: itemsList.map((item) => ({
+    const fd = new FormData();
+    fd.append('machine_id', String(Number(selectedMachineId)));
+    fd.append('frequency', selectedFreq);
+    fd.append('hour_meter_reading', String(Number(hourMeter)));
+    fd.append('general_remarks', generalRemarks.trim());
+    fd.append('client_request_id', clientRequestId);
+    fd.append('capture_source', 'CAMERA');
+
+    const responseMeta = itemsList.map((item) => {
+      const st = responsesMap[item.id] || { status: 'COMPLETED', remarks: '' };
+      const cap = capturedPhotos[getPhotoStateKey(item)];
+      fd.append(`photo_${item.id}`, cap.file);
+      return {
         checklist_item_id: item.id,
-        status: responsesMap[item.id].status,
-        remarks: (responsesMap[item.id].remarks || '').trim(),
-        photo_id: responsesMap[item.id].photo_id,
-      })),
-    };
+        status: st.status,
+        remarks: (st.remarks || '').trim(),
+        captured_at: cap.capturedAt || new Date().toISOString(),
+        capture_source: 'CAMERA',
+      };
+    });
+    fd.append('responses', JSON.stringify(responseMeta));
 
     try {
       setSubmitting(true);
-      const res = await pmService.submitChecklist(payload, false);
-      showToast(`Maintenance submitted: ${res?.data?.submission_number}`, 'success');
-      setSubmittedRecord(res?.data || null);
+      const res = await pmService.postMaintenanceData(fd);
+      const createdId = res?.data?.submission_id;
+      showToastRef.current(`Maintenance submitted: ${res?.data?.submission_number}`, 'success');
+      if (createdId) {
+        const detailRes = await pmService.getSubmissionDetail(createdId);
+        setSubmittedRecord(detailRes?.data || null);
+      }
+      setCapturedPhotos({});
+      revokeAllObjectUrls();
     } catch (err) {
-      showToast(err?.message || 'Maintenance submission failed.', 'error');
+      showToastRef.current(err?.message || 'Maintenance submission failed.', 'error');
     } finally {
       setSubmitting(false);
     }
   };
 
+  const openCapturedPreview = (item, capturedPhoto) => {
+    setPreviewPhoto({
+      view_url: capturedPhoto.previewUrl,
+      checklist_description: item.description,
+      frequency_code: selectedFreq,
+      machine_number: machineDetail?.machine_number || selectedMachineId,
+      uploaded_by_name: 'Device Camera Capture',
+      captured_at: capturedPhoto.capturedAt,
+      sha256_hash: 'Calculated on submission',
+    });
+  };
+
+  const openCameraForItem = (item) => {
+    if (!selectedMachineId) {
+      showToastRef.current('Please select a machine before capturing photos.', 'error');
+      return;
+    }
+    setCameraTargetItem(item);
+  };
+
   const renderActivityCard = (item, idx) => {
-    const state = responsesMap[item.id] || { status: 'COMPLETED', remarks: '', photo_id: null };
+    const state = responsesMap[item.id] || { status: 'COMPLETED', remarks: '' };
+    const capturedPhoto = capturedPhotos[getPhotoStateKey(item)] || null;
     const isNotCompleted = state.status === 'NOT_COMPLETED';
+    const hasPhoto = Boolean(capturedPhoto?.file && capturedPhoto?.previewUrl);
 
     return (
       <div
@@ -314,88 +384,81 @@ export const PmFormPage = () => {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-            {state.photo_id ? (
+            {hasPhoto ? (
               <button
                 type="button"
-                onClick={() =>
-                  setPreviewPhoto({
-                    view_url: state.view_url,
-                    checklist_description: item.description,
-                    frequency_code: selectedFreq,
-                    machine_number: machineDetail?.machine_number || selectedMachineId,
-                    captured_at: state.captured_at,
-                    sha256_hash: state.sha256_hash,
-                  })
-                }
+                onClick={() => openCapturedPreview(item, capturedPhoto)}
                 style={{
                   position: 'relative',
-                  width: '56px',
-                  height: '56px',
+                  height: '64px',
+                  minWidth: '64px',
+                  maxWidth: '112px',
                   borderRadius: '6px',
                   overflow: 'hidden',
-                  border: '1px solid var(--live)',
+                  border: '1px solid #16a34a',
+                  background: '#0f172a',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                   flexShrink: 0,
                   padding: 0,
                   cursor: 'pointer',
                 }}
-                title="Click to preview captured photo"
+                title="Click to view captured photo"
               >
                 <PmAuthorizedPhoto
-                  viewUrl={state.view_url}
+                  viewUrl={capturedPhoto.previewUrl}
                   alt={item.description}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  style={{ height: '64px', width: 'auto', maxWidth: '112px', objectFit: 'contain', display: 'block' }}
                 />
-                <span
-                  style={{
-                    position: 'absolute',
-                    bottom: '2px',
-                    right: '2px',
-                    background: 'rgba(17,24,39,0.75)',
-                    color: '#fff',
-                    borderRadius: '4px',
-                    padding: '2px',
-                    display: 'inline-flex',
-                  }}
-                >
-                  <LucideEye size={10} />
-                </span>
               </button>
             ) : null}
 
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={state.uploading}
-                onClick={() => {
-                  if (!selectedMachineId) {
-                    showToast('Please select a machine before capturing photos.', 'error');
-                    return;
-                  }
-                  setCameraTargetItem(item);
-                }}
-                style={{ fontSize: '0.78rem' }}
-              >
-                {state.photo_id ? <LucideRefreshCw size={14} /> : <LucideCamera size={14} />}
-                <span>{state.photo_id ? 'Retake Photo' : 'Camera Capture'}</span>
-              </button>
-
-              {state.uploading ? (
-                <span className="badge-pill badge-blue"><LucideLoader2 size={11} className="spin" /> Saving Photo...</span>
-              ) : state.photo_id ? (
-                <span className="badge-pill badge-green">Photo Captured</span>
+              {hasPhoto ? (
+                <>
+                  <span className="badge-pill badge-green" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <LucideCheckCircle2 size={12} /> Photo Captured
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={submitting}
+                    onClick={() => openCapturedPreview(item, capturedPhoto)}
+                    style={{ fontSize: '0.78rem' }}
+                  >
+                    <LucideEye size={14} />
+                    <span>View Photo</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={submitting}
+                    onClick={() => openCameraForItem(item)}
+                    style={{ fontSize: '0.78rem' }}
+                  >
+                    <LucideRefreshCw size={14} />
+                    <span>Retake Photo</span>
+                  </button>
+                </>
               ) : (
-                <span className="badge-pill badge-breakdown">Photo Required *</span>
+                <>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={submitting}
+                    onClick={() => openCameraForItem(item)}
+                    style={{ fontSize: '0.78rem' }}
+                  >
+                    <LucideCamera size={14} />
+                    <span>Camera Capture</span>
+                  </button>
+                  <span className="badge-pill badge-breakdown">Photo Required *</span>
+                </>
               )}
             </div>
           </div>
         </div>
-
-        {state.error ? (
-          <div style={{ fontSize: '0.78rem', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <LucideAlertTriangle size={14} /> {state.error}
-          </div>
-        ) : null}
       </div>
     );
   };
@@ -603,7 +666,7 @@ export const PmFormPage = () => {
         isOpen={Boolean(cameraTargetItem)}
         onClose={() => setCameraTargetItem(null)}
         item={cameraTargetItem}
-        onConfirmCapture={(file) => handleCameraPhotoCaptured(cameraTargetItem, file)}
+        onConfirmCapture={(file, capturedItem) => handleCameraPhotoCaptured(capturedItem || cameraTargetItem, file)}
       />
 
       <PmPhotoLightboxModal

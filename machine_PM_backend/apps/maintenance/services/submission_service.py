@@ -29,6 +29,31 @@ class ConflictError(APIException):
     default_code = 'conflict'
 
 
+def extract_submission_payload(request) -> dict:
+    """
+    Safely extracts scalar/JSON payload fields from DRF `request.data` without
+    deep-copying `TemporaryUploadedFile` (`BufferedRandom`) instances in multipart QueryDicts.
+    """
+    import json
+    from django.http import QueryDict
+
+    if isinstance(request.data, QueryDict):
+        payload = {
+            key: request.data.get(key)
+            for key in request.data.keys()
+            if key not in request.FILES and not hasattr(request.data.get(key), 'read')
+        }
+    else:
+        payload = dict(request.data) if isinstance(request.data, dict) else {}
+
+    if isinstance(payload.get('responses'), str):
+        try:
+            payload['responses'] = json.loads(payload['responses'])
+        except json.JSONDecodeError:
+            raise ValidationError({"responses": "Invalid JSON format in 'responses' field."})
+    return payload
+
+
 def _parse_hour_meter(raw_value) -> Decimal:
     if raw_value is None or str(raw_value).strip() == '':
         raise ValidationError({"hour_meter_reading": "Machine hour-meter reading is required."})
@@ -244,6 +269,28 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
         else:
             not_completed_count += 1
 
+        # Reject base64 image payloads (photos must use multipart/form-data and PostgreSQL BYTEA storage)
+        for bad_key in ('photo_base64', 'image_base64', 'photo_data', 'image_data'):
+            if r_data.get(bad_key):
+                raise ValidationError(
+                    {
+                        "photos": (
+                            f"Base64 image field '{bad_key}' is not allowed for '{ci.description}'. "
+                            "Submit camera photographs via multipart/form-data."
+                        )
+                    }
+                )
+        for text_candidate in (r_data.get('photo_url'), r_data.get('photo_field'), r_data.get('file')):
+            if isinstance(text_candidate, str) and text_candidate.strip().lower().startswith('data:image/'):
+                raise ValidationError(
+                    {
+                        "photos": (
+                            f"Base64 data URL photographs are not allowed for '{ci.description}'. "
+                            "Submit camera photographs via multipart/form-data."
+                        )
+                    }
+                )
+
         # Mandatory Individual Photo Evidence Validation
         photo_id = r_data.get('photo_id')
         inline_file = (
@@ -279,7 +326,8 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
                 )
 
             photo_obj = (
-                MaintenancePhotoAttachment.objects.select_for_update()
+                MaintenancePhotoAttachment.objects.defer('photo_data')
+                .select_for_update()
                 .filter(id=pid)
                 .first()
             )

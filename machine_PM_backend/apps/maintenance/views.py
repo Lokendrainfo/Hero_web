@@ -3,8 +3,8 @@ import json
 from io import StringIO
 
 from django.db import connection
-from django.db.models import Q
-from django.http import FileResponse, HttpResponse
+from django.db.models import Prefetch, Q
+from django.http import HttpResponse
 from django.utils.dateparse import parse_date
 from rest_framework import permissions, status, viewsets
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -61,10 +61,14 @@ from apps.maintenance.services.dashboard_service import (
     get_maintenance_report,
 )
 from apps.maintenance.services.photo_service import (
+    build_photo_binary_response,
     get_authorized_photo_or_403,
     validate_and_store_photo,
 )
-from apps.maintenance.services.submission_service import create_maintenance_submission
+from apps.maintenance.services.submission_service import (
+    create_maintenance_submission,
+    extract_submission_payload,
+)
 
 
 class HealthCheckView(APIView):
@@ -247,6 +251,7 @@ class PhotoEvidenceListView(APIView):
         allowed_machines = list(get_authorized_machines_queryset(request.user).values_list('id', flat=True))
         qs = (
             MaintenancePhotoAttachment.objects.select_related('checklist_item', 'submission')
+            .defer('photo_data')
             .filter(machine_id__in=allowed_machines, is_bound=True)
             .order_by('-captured_at', '-id')
         )
@@ -272,14 +277,7 @@ class PhotoEvidenceListView(APIView):
 class PhotoProtectedView(APIView):
     def get(self, request, photo_id):
         photo = get_authorized_photo_or_403(request.user, photo_id)
-        if not photo.file or not photo.file.storage.exists(photo.file.name):
-            raise NotFound("Stored photo file could not be located.")
-
-        file_handle = photo.file.open('rb')
-        response = FileResponse(file_handle, content_type=photo.content_type or 'image/jpeg')
-        response['Content-Disposition'] = f'inline; filename="{photo.original_filename}"'
-        response['Cache-Control'] = 'private, max-age=3600'
-        return response
+        return build_photo_binary_response(photo)
 
 
 def _filter_submissions_queryset(request):
@@ -290,9 +288,14 @@ def _filter_submissions_queryset(request):
         ).values_list('id', flat=True)
     )
 
+    photo_no_blob_qs = MaintenancePhotoAttachment.objects.defer('photo_data')
     qs = (
         MaintenanceSubmission.objects.select_related('frequency')
-        .prefetch_related('responses__photo_attachment', 'photos', 'reviews')
+        .prefetch_related(
+            Prefetch('responses__photo_attachment', queryset=photo_no_blob_qs),
+            Prefetch('photos', queryset=photo_no_blob_qs),
+            'reviews',
+        )
         .filter(machine_id__in=allowed_machine_ids)
         .order_by('-submitted_at', '-id')
     )
@@ -337,14 +340,7 @@ class SubmissionListCreateView(APIView):
         return paginator.get_paginated_response(serializer.data)
 
     def post(self, request):
-        payload = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
-        # Parse JSON-encoded responses when submitted via multipart/form-data
-        if isinstance(payload.get('responses'), str):
-            try:
-                payload['responses'] = json.loads(payload['responses'])
-            except json.JSONDecodeError:
-                raise ValidationError({"responses": "Invalid JSON format in responses field."})
-
+        payload = extract_submission_payload(request)
         payload['_require_explicit_camera'] = True
         submission = create_maintenance_submission(
             user=request.user,
@@ -362,9 +358,15 @@ class SubmissionListCreateView(APIView):
 
 class SubmissionDetailView(APIView):
     def get(self, request, submission_id):
+        photo_no_blob_qs = MaintenancePhotoAttachment.objects.defer('photo_data')
         submission = (
             MaintenanceSubmission.objects.select_related('frequency')
-            .prefetch_related('responses__photo_attachment', 'responses__checklist_item__category', 'reviews', 'photos')
+            .prefetch_related(
+                Prefetch('responses__photo_attachment', queryset=photo_no_blob_qs),
+                'responses__checklist_item__category',
+                'reviews',
+                Prefetch('photos', queryset=photo_no_blob_qs),
+            )
             .filter(id=submission_id)
             .first()
         )
@@ -407,7 +409,7 @@ class MachineHistoryView(APIView):
         machine = get_authorized_machine_or_403(request.user, machine_id)
         qs = (
             MaintenanceSubmission.objects.select_related('frequency')
-            .prefetch_related('photos')
+            .prefetch_related(Prefetch('photos', queryset=MaintenancePhotoAttachment.objects.defer('photo_data')))
             .filter(machine_id=machine.id)
             .order_by('-submitted_at', '-id')
         )
@@ -437,7 +439,7 @@ class UserHistoryView(APIView):
         allowed_machine_ids = list(get_authorized_machines_queryset(request.user).values_list('id', flat=True))
         qs = (
             MaintenanceSubmission.objects.select_related('frequency')
-            .prefetch_related('photos')
+            .prefetch_related(Prefetch('photos', queryset=MaintenancePhotoAttachment.objects.defer('photo_data')))
             .filter(submitted_by_id=target_uid_int, machine_id__in=allowed_machine_ids)
             .order_by('-submitted_at', '-id')
         )

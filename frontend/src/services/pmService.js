@@ -27,6 +27,10 @@ export const pmService = {
   getPhotos: (params) => pmApi.get('/pm/photos/', { params }),
 
   // Maintenance Submission & History
+  postMaintenanceData: (formData) =>
+    pmApi.post('/machine-maintenance/data', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
   submitChecklist: (payload, isMultipart = false) =>
     pmApi.post(
       '/pm/submissions/',

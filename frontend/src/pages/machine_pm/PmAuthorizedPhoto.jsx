@@ -9,16 +9,18 @@ export const PmAuthorizedPhoto = ({
   style = {},
   onClick,
 }) => {
+  const isDirectClientUrl = Boolean(viewUrl && (viewUrl.startsWith('blob:') || viewUrl.startsWith('data:')));
   const [blobUrl, setBlobUrl] = useState('');
-  const [loading, setLoading] = useState(Boolean(viewUrl));
+  const [loading, setLoading] = useState(Boolean(viewUrl) && !isDirectClientUrl);
   const [error, setError] = useState(false);
 
   useEffect(() => {
     let active = true;
-    let createdUrl = '';
+    let ownedObjectUrl = '';
 
-    if (!viewUrl) {
+    if (!viewUrl || isDirectClientUrl) {
       setLoading(false);
+      setError(false);
       setBlobUrl('');
       return undefined;
     }
@@ -32,7 +34,7 @@ export const PmAuthorizedPhoto = ({
           if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
           return;
         }
-        createdUrl = url;
+        ownedObjectUrl = url;
         setBlobUrl(url);
       })
       .catch(() => {
@@ -44,11 +46,24 @@ export const PmAuthorizedPhoto = ({
 
     return () => {
       active = false;
-      if (createdUrl && createdUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(createdUrl);
+      if (ownedObjectUrl && ownedObjectUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(ownedObjectUrl);
       }
     };
-  }, [viewUrl]);
+  }, [viewUrl, isDirectClientUrl]);
+
+  // Render caller-owned blob:/data: preview URLs directly without async fetching or revoking them on StrictMode unmount
+  if (isDirectClientUrl) {
+    return (
+      <img
+        src={viewUrl}
+        alt={alt}
+        className={className}
+        style={style}
+        onClick={onClick}
+      />
+    );
+  }
 
   if (loading) {
     return (

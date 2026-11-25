@@ -2,8 +2,9 @@ import hashlib
 import os
 from io import BytesIO
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 from django.conf import settings
+from django.http import HttpResponse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -47,15 +48,50 @@ def validate_capture_source(raw_source: str | None, require_explicit: bool = Fal
     return norm
 
 
-def compute_sha256_and_validate_image(file_obj) -> tuple[str, str, int]:
+def _sanitize_filename(raw_name: str | None) -> str:
+    base = os.path.basename(str(raw_name or 'capture.jpg').strip()) or 'capture.jpg'
+    cleaned = ''.join(ch for ch in base if ch not in '\r\n"\\/;')
+    return (cleaned or 'capture.jpg')[:255]
+
+
+def _encode_resized_image(img: Image.Image, fmt: str, max_dim: int, quality: int) -> tuple[bytes, str]:
+    img = ImageOps.exif_transpose(img)
+    if max(img.size) > max_dim:
+        resampling = getattr(Image, 'Resampling', Image).LANCZOS
+        img.thumbnail((max_dim, max_dim), resampling)
+
+    out = BytesIO()
+    norm_fmt = fmt.upper()
+    if norm_fmt in ('JPG', 'JPEG'):
+        if img.mode not in ('RGB', 'L'):
+            img = img.convert('RGB')
+        img.save(out, format='JPEG', quality=quality, optimize=True)
+        return out.getvalue(), 'image/jpeg'
+    if norm_fmt == 'WEBP':
+        if img.mode not in ('RGB', 'RGBA'):
+            img = img.convert('RGB')
+        img.save(out, format='WEBP', quality=quality, method=4)
+        return out.getvalue(), 'image/webp'
+
+    # PNG fallback
+    if img.mode == 'P':
+        img = img.convert('RGBA')
+    img.save(out, format='PNG', optimize=True, compress_level=9)
+    return out.getvalue(), 'image/png'
+
+
+def compute_sha256_and_validate_image(file_obj) -> tuple[bytes, str, str, int, str]:
     if not file_obj:
         raise ValidationError({"file": "Photo file is required."})
 
     max_bytes = getattr(settings, 'PM_MAX_PHOTO_SIZE_BYTES', 10 * 1024 * 1024)
+    max_mb = getattr(settings, 'PM_MAX_PHOTO_SIZE_MB', 10)
+    max_dim = getattr(settings, 'PM_PHOTO_MAX_DIMENSION', 1600)
+    jpeg_quality = getattr(settings, 'PM_PHOTO_JPEG_QUALITY', 82)
     allowed_exts = getattr(settings, 'PM_ALLOWED_PHOTO_EXTENSIONS', ['jpg', 'jpeg', 'png', 'webp'])
 
-    original_name = getattr(file_obj, 'name', 'capture.jpg') or 'capture.jpg'
-    ext = os.path.splitext(original_name)[1].lower().lstrip('.')
+    safe_name = _sanitize_filename(getattr(file_obj, 'name', 'capture.jpg'))
+    ext = os.path.splitext(safe_name)[1].lower().lstrip('.')
     if ext not in allowed_exts:
         raise ValidationError(
             {"file": f"Unsupported file type '.{ext}'. Allowed types: {', '.join(allowed_exts)}."}
@@ -69,35 +105,42 @@ def compute_sha256_and_validate_image(file_obj) -> tuple[str, str, int]:
 
     file_size = getattr(file_obj, 'size', None)
     if file_size is not None and file_size > max_bytes:
-        max_mb = getattr(settings, 'PM_MAX_PHOTO_SIZE_MB', 10)
         raise ValidationError({"file": f"Photo exceeds maximum allowed size of {max_mb} MB."})
 
     file_obj.seek(0)
     raw_bytes = file_obj.read()
-    actual_size = len(raw_bytes)
-    if actual_size == 0:
+    raw_size = len(raw_bytes)
+    if raw_size == 0:
         raise ValidationError({"file": "Uploaded photo file is empty."})
-    if actual_size > max_bytes:
-        max_mb = getattr(settings, 'PM_MAX_PHOTO_SIZE_MB', 10)
+    if raw_size > max_bytes:
         raise ValidationError({"file": f"Photo exceeds maximum allowed size of {max_mb} MB."})
 
     try:
         with Image.open(BytesIO(raw_bytes)) as img:
             img.verify()
-        # Re-open to inspect format cleanly
         with Image.open(BytesIO(raw_bytes)) as img_check:
             fmt = (img_check.format or '').upper()
             if fmt not in ('JPEG', 'PNG', 'WEBP'):
                 raise ValidationError({"file": f"Invalid image format '{fmt}'. Only JPEG, PNG, and WEBP are supported."})
+            processed_bytes, detected_mime = _encode_resized_image(
+                img_check,
+                fmt=fmt,
+                max_dim=max_dim,
+                quality=jpeg_quality,
+            )
     except ValidationError:
         raise
     except (UnidentifiedImageError, Exception):
         raise ValidationError({"file": "Uploaded file is not a valid image."})
 
-    file_obj.seek(0)
-    sha256_hash = hashlib.sha256(raw_bytes).hexdigest()
-    detected_mime = content_type or f"image/{'jpeg' if fmt == 'JPEG' else fmt.lower()}"
-    return sha256_hash, detected_mime, actual_size
+    actual_size = len(processed_bytes)
+    if actual_size == 0:
+        raise ValidationError({"file": "Processed image is empty."})
+    if actual_size > max_bytes:
+        raise ValidationError({"file": f"Photo exceeds maximum allowed size of {max_mb} MB."})
+
+    sha256_hash = hashlib.sha256(processed_bytes).hexdigest()
+    return processed_bytes, sha256_hash, detected_mime, actual_size, safe_name
 
 
 def validate_and_store_photo(
@@ -114,7 +157,7 @@ def validate_and_store_photo(
     request=None,
 ) -> MaintenancePhotoAttachment:
     validated_source = validate_capture_source(capture_source, require_explicit=require_explicit_camera)
-    sha256_hash, detected_mime, actual_size = compute_sha256_and_validate_image(file_obj)
+    processed_bytes, sha256_hash, detected_mime, actual_size, safe_name = compute_sha256_and_validate_image(file_obj)
 
     # Rule 5: One photograph cannot be reused as evidence for multiple checklist activities
     already_bound = MaintenancePhotoAttachment.objects.filter(
@@ -155,10 +198,19 @@ def validate_and_store_photo(
             {
                 "file": (
                     "This photograph is already uploaded for a different checklist activity. "
-                    "Please capture or upload a separate photograph for each activity."
+                    "Please capture a separate photograph for each activity."
                 )
             }
         )
+
+    # Replace any previous unsaved staged capture for this exact user/machine/item/frequency
+    MaintenancePhotoAttachment.objects.filter(
+        is_bound=False,
+        uploaded_by_id=user.id,
+        machine_id=machine.id,
+        checklist_item=checklist_item,
+        frequency_code=frequency_code,
+    ).delete()
 
     parsed_captured_at = timezone.now()
     if captured_at:
@@ -169,13 +221,15 @@ def validate_and_store_photo(
         else:
             parsed_captured_at = captured_at
 
+    # Store image binary directly in machine_pm_db (`photo_data` BYTEA), with no local disk folder dependency.
     photo = MaintenancePhotoAttachment.objects.create(
         machine_id=machine.id,
         checklist_item=checklist_item,
         uploaded_by_id=user.id,
         frequency_code=frequency_code,
-        file=file_obj,
-        original_filename=(getattr(file_obj, 'name', 'capture.jpg') or 'capture.jpg')[:255],
+        photo_data=processed_bytes,
+        file=None,
+        original_filename=safe_name,
         content_type=detected_mime[:100],
         file_size=actual_size,
         sha256_hash=sha256_hash,
@@ -199,6 +253,7 @@ def validate_and_store_photo(
             "sha256_hash": sha256_hash,
             "file_size": actual_size,
             "capture_source": validated_source,
+            "storage": "postgresql_bytea",
         },
         request=request,
     )
@@ -220,4 +275,18 @@ def get_authorized_photo_or_403(user, photo_id: int) -> MaintenancePhotoAttachme
             raise PermissionDenied("You are not authorized to view this photograph.")
 
     return photo
+
+
+def build_photo_binary_response(photo: MaintenancePhotoAttachment) -> HttpResponse:
+    raw_bytes = bytes(photo.photo_data) if photo.photo_data is not None else b''
+    if not raw_bytes:
+        raise NotFound("Stored photo binary could not be located in database.")
+
+    safe_name = _sanitize_filename(photo.original_filename)
+    response = HttpResponse(raw_bytes, content_type=photo.content_type or 'image/jpeg')
+    response['Content-Length'] = str(len(raw_bytes))
+    response['Content-Disposition'] = f'inline; filename="{safe_name}"'
+    response['Cache-Control'] = 'private, max-age=3600'
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
 

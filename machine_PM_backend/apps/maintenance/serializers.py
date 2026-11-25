@@ -91,14 +91,20 @@ class MaintenancePhotoAttachmentSerializer(serializers.ModelSerializer):
     checklist_item_code = serializers.CharField(source='checklist_item.item_code', read_only=True)
     machine_number = serializers.SerializerMethodField()
     view_url = serializers.SerializerMethodField()
+    checklist_response_id = serializers.IntegerField(source='response_id', read_only=True)
+    user_id = serializers.IntegerField(source='uploaded_by_id', read_only=True)
+    photo_filename = serializers.CharField(source='original_filename', read_only=True)
+    mime_type = serializers.CharField(source='content_type', read_only=True)
+    image_hash = serializers.CharField(source='sha256_hash', read_only=True)
 
     class Meta:
         model = MaintenancePhotoAttachment
         fields = [
-            'id', 'submission_id', 'response_id', 'machine_id', 'machine_number',
+            'id', 'submission_id', 'response_id', 'checklist_response_id', 'machine_id', 'machine_number',
             'checklist_item_id', 'checklist_item_code', 'checklist_description',
-            'uploaded_by_id', 'uploaded_by_name', 'frequency_code',
-            'original_filename', 'content_type', 'file_size', 'sha256_hash',
+            'uploaded_by_id', 'user_id', 'uploaded_by_name', 'frequency_code',
+            'original_filename', 'photo_filename', 'content_type', 'mime_type',
+            'file_size', 'sha256_hash', 'image_hash',
             'capture_source', 'is_bound', 'captured_at', 'latitude', 'longitude', 'view_url', 'created_at',
         ]
 
@@ -119,7 +125,7 @@ class MaintenancePhotoAttachmentSerializer(serializers.ModelSerializer):
         return ''
 
     def get_view_url(self, obj):
-        return f"/api/v1/pm/photos/{obj.id}/view/"
+        return f"/api/v1/machine-maintenance/photos/{obj.id}"
 
 
 class MaintenanceChecklistResponseSerializer(serializers.ModelSerializer):
@@ -153,7 +159,7 @@ class MaintenanceChecklistResponseSerializer(serializers.ModelSerializer):
 
     def get_photo_url(self, obj):
         att = getattr(obj, 'photo_attachment', None)
-        return f"/api/v1/pm/photos/{att.id}/view/" if att else None
+        return f"/api/v1/machine-maintenance/photos/{att.id}" if att else None
 
     def get_photo_hash(self, obj):
         att = getattr(obj, 'photo_attachment', None)

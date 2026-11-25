@@ -1,7 +1,4 @@
-import json
-
 from rest_framework import status
-from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.views import APIView
 
@@ -11,6 +8,11 @@ from apps.maintenance.services.mobile_api_service import (
     get_mobile_maintenance_list,
     submit_mobile_maintenance_data,
 )
+from apps.maintenance.services.photo_service import (
+    build_photo_binary_response,
+    get_authorized_photo_or_403,
+)
+from apps.maintenance.services.submission_service import extract_submission_payload
 
 
 class MobileMaintenanceCheckView(APIView):
@@ -39,13 +41,7 @@ class MobileMaintenanceDataPostView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request):
-        payload = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
-        if isinstance(payload.get('responses'), str):
-            try:
-                payload['responses'] = json.loads(payload['responses'])
-            except json.JSONDecodeError:
-                raise ValidationError({"responses": "Invalid JSON string in 'responses' field."})
-
+        payload = extract_submission_payload(request)
         data = submit_mobile_maintenance_data(request, payload, request.FILES)
         return success_response(
             data=data,
@@ -67,4 +63,16 @@ class MobileMaintenanceListView(APIView):
             data=data,
             message="Machine maintenance checklist master retrieved successfully",
         )
+
+
+class MobilePhotoRetrieveView(APIView):
+    """
+    GET /api/v1/machine-maintenance/photos/{photo_id}
+    Retrieves the camera-captured photo binary directly from `machine_pm_db` (BYTEA)
+    after verifying user authentication and machine/vendor authorization.
+    """
+
+    def get(self, request, photo_id):
+        photo = get_authorized_photo_or_403(request.user, photo_id)
+        return build_photo_binary_response(photo)
 

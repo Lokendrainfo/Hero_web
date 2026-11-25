@@ -145,9 +145,11 @@ raw_csrf = os.environ.get(
 )
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in raw_csrf.split(',') if o.strip()]
 
-# Photo Upload & Storage Configuration
+# Photo Evidence Storage & Validation (stored as PostgreSQL BYTEA in machine_pm_db)
 PM_MAX_PHOTO_SIZE_MB = int(os.environ.get('PM_MAX_PHOTO_SIZE_MB', 10))
 PM_MAX_PHOTO_SIZE_BYTES = PM_MAX_PHOTO_SIZE_MB * 1024 * 1024
+PM_PHOTO_MAX_DIMENSION = int(os.environ.get('PM_PHOTO_MAX_DIMENSION', 1600))
+PM_PHOTO_JPEG_QUALITY = int(os.environ.get('PM_PHOTO_JPEG_QUALITY', 82))
 PM_ALLOWED_PHOTO_EXTENSIONS = [
     ext.strip().lower().lstrip('.')
     for ext in os.environ.get('PM_ALLOWED_PHOTO_EXTENSIONS', 'jpg,jpeg,png,webp').split(',')

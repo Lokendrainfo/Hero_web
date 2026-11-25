@@ -293,8 +293,9 @@ class MaintenanceChecklistResponse(models.Model):
 class MaintenancePhotoAttachment(models.Model):
     """
     Mandatory individual photo evidence for each checklist activity (`machine_pm_db`).
-    Stores validated HERO `machine_id`, `uploaded_by_id`, local `checklist_item_id`,
-    maintenance frequency, timestamp, SHA256 hash, and file reference.
+    Stores actual image binary directly in PostgreSQL `photo_data` (`BYTEA`),
+    alongside validated HERO `machine_id`, `user_id`, `checklist_item_id`,
+    `submission_id`, `checklist_response_id`, SHA-256 hash (`image_hash`), MIME type, and timestamps.
     """
 
     submission = models.ForeignKey(
@@ -310,6 +311,7 @@ class MaintenancePhotoAttachment(models.Model):
         null=True,
         blank=True,
         related_name='photo_attachment',
+        db_column='checklist_response_id',
     )
     machine_id = models.BigIntegerField(db_index=True)
     checklist_item = models.ForeignKey(
@@ -317,13 +319,14 @@ class MaintenancePhotoAttachment(models.Model):
         on_delete=models.PROTECT,
         related_name='photos',
     )
-    uploaded_by_id = models.BigIntegerField(db_index=True)
+    uploaded_by_id = models.BigIntegerField(db_column='user_id', db_index=True)
     frequency_code = models.CharField(max_length=30, db_index=True)
-    file = models.FileField(upload_to='pm_photos/%Y/%m/%d/')
-    original_filename = models.CharField(max_length=255)
-    content_type = models.CharField(max_length=100)
+    photo_data = models.BinaryField(default=b'')
+    file = models.FileField(upload_to='pm_photos/%Y/%m/%d/', null=True, blank=True, default=None)
+    original_filename = models.CharField(max_length=255, db_column='photo_filename')
+    content_type = models.CharField(max_length=100, db_column='mime_type')
     file_size = models.PositiveIntegerField()
-    sha256_hash = models.CharField(max_length=64, db_index=True)
+    sha256_hash = models.CharField(max_length=64, db_column='image_hash', db_index=True)
     capture_source = models.CharField(max_length=30, default='CAMERA', db_index=True)
     is_bound = models.BooleanField(default=False, db_index=True)
     captured_at = models.DateTimeField(default=timezone.now, db_index=True)
@@ -338,6 +341,26 @@ class MaintenancePhotoAttachment(models.Model):
             models.Index(fields=['machine_id', 'frequency_code', 'captured_at']),
             models.Index(fields=['sha256_hash', 'is_bound']),
         ]
+
+    @property
+    def checklist_response_id(self):
+        return self.response_id
+
+    @property
+    def user_id(self):
+        return self.uploaded_by_id
+
+    @property
+    def photo_filename(self):
+        return self.original_filename
+
+    @property
+    def mime_type(self):
+        return self.content_type
+
+    @property
+    def image_hash(self):
+        return self.sha256_hash
 
     def __str__(self):
         return f"Photo #{self.id} | Machine {self.machine_id} | Item {self.checklist_item_id} | {self.frequency_code}"

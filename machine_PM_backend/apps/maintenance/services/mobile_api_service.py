@@ -249,6 +249,12 @@ def submit_mobile_maintenance_data(request, payload: dict, files_map) -> dict:
         request=request,
     )
 
+    saved_photos = list(
+        submission.photos.select_related('checklist_item')
+        .defer('photo_data')
+        .order_by('id')
+    )
+
     return {
         "submission_id": submission.id,
         "submission_reference_id": submission.submission_number,
@@ -265,7 +271,21 @@ def submit_mobile_maintenance_data(request, payload: dict, files_map) -> dict:
         "total_items": submission.total_items,
         "completed_items_count": submission.completed_items_count,
         "not_completed_items_count": submission.not_completed_items_count,
-        "photo_count": submission.photos.count(),
+        "photo_count": len(saved_photos),
+        "photos": [
+            {
+                "photo_id": p.id,
+                "checklist_response_id": p.response_id,
+                "checklist_item_id": p.checklist_item_id,
+                "item_code": p.checklist_item.item_code,
+                "photo_filename": p.original_filename,
+                "mime_type": p.content_type,
+                "file_size": p.file_size,
+                "image_hash": p.sha256_hash,
+                "photo_url": f"/api/v1/machine-maintenance/photos/{p.id}",
+            }
+            for p in saved_photos
+        ],
         "submitted_at": submission.submitted_at.isoformat(),
     }
 
