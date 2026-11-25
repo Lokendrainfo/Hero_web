@@ -324,6 +324,7 @@ class MaintenancePhotoAttachment(models.Model):
     content_type = models.CharField(max_length=100)
     file_size = models.PositiveIntegerField()
     sha256_hash = models.CharField(max_length=64, db_index=True)
+    capture_source = models.CharField(max_length=30, default='CAMERA', db_index=True)
     is_bound = models.BooleanField(default=False, db_index=True)
     captured_at = models.DateTimeField(default=timezone.now, db_index=True)
     latitude = models.FloatField(null=True, blank=True)

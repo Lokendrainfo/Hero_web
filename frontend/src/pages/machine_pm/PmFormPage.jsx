@@ -4,9 +4,10 @@ import {
   LucideAlertTriangle,
   LucideCamera,
   LucideCheckCircle2,
+  LucideEye,
   LucideLoader2,
+  LucideRefreshCw,
   LucideSend,
-  LucideUpload,
   LucideXCircle,
 } from 'lucide-react';
 import { pmService } from '../../services/pmService';
@@ -14,6 +15,8 @@ import { useToast } from '../../context/ToastContext';
 import { SearchableSelect } from '../../components/common/Select';
 import { PmLayoutHeader, PM_FREQUENCY_LABELS } from './PmLayoutHeader';
 import { PmAuthorizedPhoto } from './PmAuthorizedPhoto';
+import { PmCameraCaptureModal } from './PmCameraCaptureModal';
+import { PmPhotoLightboxModal } from './PmPhotoLightboxModal';
 import { PmSubmissionDetailModal } from './PmSubmissionDetailModal';
 
 const genRequestId = () => {
@@ -43,6 +46,8 @@ export const PmFormPage = () => {
 
   // Map: checklist_item_id -> { status, remarks, photo_id, view_url, sha256_hash, captured_at, uploading, error }
   const [responsesMap, setResponsesMap] = useState({});
+  const [cameraTargetItem, setCameraTargetItem] = useState(null);
+  const [previewPhoto, setPreviewPhoto] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [submittedRecord, setSubmittedRecord] = useState(null);
   const [clientRequestId] = useState(genRequestId);
@@ -122,19 +127,21 @@ export const PmFormPage = () => {
     }));
   };
 
-  const handlePhotoFileSelected = async (item, file) => {
-    if (!file) return;
+  const handleCameraPhotoCaptured = async (item, file) => {
+    if (!file || !item) return;
     if (!selectedMachineId) {
-      showToast('Please select a machine before capturing or uploading photos.', 'error');
+      showToast('Please select a machine before capturing photos.', 'error');
       return;
     }
 
+    setCameraTargetItem(null);
     updateItemState(item.id, { uploading: true, error: '' });
     const fd = new FormData();
     fd.append('file', file);
     fd.append('machine_id', selectedMachineId);
     fd.append('checklist_item_id', String(item.id));
     fd.append('frequency', selectedFreq);
+    fd.append('capture_source', 'CAMERA');
     fd.append('captured_at', new Date().toISOString());
 
     try {
@@ -148,9 +155,9 @@ export const PmFormPage = () => {
         captured_at: p.captured_at,
         error: '',
       });
-      showToast(`Photo verified for "${item.description}"`, 'success');
+      showToast(`Camera photo captured for "${item.description}"`, 'success');
     } catch (err) {
-      const msg = err?.message || 'Photo upload failed.';
+      const msg = err?.message || 'Camera photo verification failed.';
       updateItemState(item.id, { uploading: false, error: msg });
       showToast(msg, 'error');
     }
@@ -308,51 +315,75 @@ export const PmFormPage = () => {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             {state.photo_id ? (
-              <div style={{ width: '52px', height: '52px', borderRadius: '6px', overflow: 'hidden', border: '1px solid var(--live)', flexShrink: 0 }}>
+              <button
+                type="button"
+                onClick={() =>
+                  setPreviewPhoto({
+                    view_url: state.view_url,
+                    checklist_description: item.description,
+                    frequency_code: selectedFreq,
+                    machine_number: machineDetail?.machine_number || selectedMachineId,
+                    captured_at: state.captured_at,
+                    sha256_hash: state.sha256_hash,
+                  })
+                }
+                style={{
+                  position: 'relative',
+                  width: '56px',
+                  height: '56px',
+                  borderRadius: '6px',
+                  overflow: 'hidden',
+                  border: '1px solid var(--live)',
+                  flexShrink: 0,
+                  padding: 0,
+                  cursor: 'pointer',
+                }}
+                title="Click to preview captured photo"
+              >
                 <PmAuthorizedPhoto
                   viewUrl={state.view_url}
                   alt={item.description}
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 />
-              </div>
+                <span
+                  style={{
+                    position: 'absolute',
+                    bottom: '2px',
+                    right: '2px',
+                    background: 'rgba(17,24,39,0.75)',
+                    color: '#fff',
+                    borderRadius: '4px',
+                    padding: '2px',
+                    display: 'inline-flex',
+                  }}
+                >
+                  <LucideEye size={10} />
+                </span>
+              </button>
             ) : null}
 
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <label className="btn-secondary" style={{ cursor: 'pointer', fontSize: '0.78rem' }}>
-                <LucideCamera size={14} />
-                <span>{state.photo_id ? 'Retake Camera' : 'Camera Capture'}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handlePhotoFileSelected(item, f);
-                    e.target.value = '';
-                  }}
-                />
-              </label>
-
-              <label className="btn-secondary" style={{ cursor: 'pointer', fontSize: '0.78rem' }}>
-                <LucideUpload size={14} />
-                <span>{state.photo_id ? 'Replace File' : 'Upload Photo'}</span>
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handlePhotoFileSelected(item, f);
-                    e.target.value = '';
-                  }}
-                />
-              </label>
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={state.uploading}
+                onClick={() => {
+                  if (!selectedMachineId) {
+                    showToast('Please select a machine before capturing photos.', 'error');
+                    return;
+                  }
+                  setCameraTargetItem(item);
+                }}
+                style={{ fontSize: '0.78rem' }}
+              >
+                {state.photo_id ? <LucideRefreshCw size={14} /> : <LucideCamera size={14} />}
+                <span>{state.photo_id ? 'Retake Photo' : 'Camera Capture'}</span>
+              </button>
 
               {state.uploading ? (
-                <span className="badge-pill badge-blue"><LucideLoader2 size={11} className="spin" /> Verifying...</span>
+                <span className="badge-pill badge-blue"><LucideLoader2 size={11} className="spin" /> Saving Photo...</span>
               ) : state.photo_id ? (
-                <span className="badge-pill badge-green">Photo Verified</span>
+                <span className="badge-pill badge-green">Photo Captured</span>
               ) : (
                 <span className="badge-pill badge-breakdown">Photo Required *</span>
               )}
@@ -489,10 +520,10 @@ export const PmFormPage = () => {
             }}
           >
             <span>
-              <strong>Mandatory Photo Policy:</strong> Every checklist activity requires its own separate photograph. Duplicate or missing photos are blocked on the server.
+              <strong>Mandatory Camera Policy:</strong> Every checklist activity requires its own photograph captured directly via device camera. Gallery selection and file uploads are disabled.
             </span>
             <strong style={{ fontFamily: 'var(--font-mono)' }}>
-              Photos Verified: {photosUploadedCount} / {itemsList.length}
+              Photos Captured: {photosUploadedCount} / {itemsList.length}
             </strong>
           </div>
 
@@ -541,8 +572,8 @@ export const PmFormPage = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                   <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                     {photosUploadedCount === itemsList.length && itemsList.length > 0
-                      ? 'All mandatory activity photos verified. Ready to submit.'
-                      : `Upload ${itemsList.length - photosUploadedCount} remaining photo(s) to enable submission.`}
+                      ? 'All mandatory camera photos captured. Ready to submit.'
+                      : `Capture ${itemsList.length - photosUploadedCount} remaining camera photo(s) to enable submission.`}
                   </span>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button
@@ -567,6 +598,19 @@ export const PmFormPage = () => {
           ) : null}
         </form>
       )}
+
+      <PmCameraCaptureModal
+        isOpen={Boolean(cameraTargetItem)}
+        onClose={() => setCameraTargetItem(null)}
+        item={cameraTargetItem}
+        onConfirmCapture={(file) => handleCameraPhotoCaptured(cameraTargetItem, file)}
+      />
+
+      <PmPhotoLightboxModal
+        isOpen={Boolean(previewPhoto)}
+        onClose={() => setPreviewPhoto(null)}
+        photo={previewPhoto}
+      />
 
       <PmSubmissionDetailModal
         isOpen={Boolean(submittedRecord)}

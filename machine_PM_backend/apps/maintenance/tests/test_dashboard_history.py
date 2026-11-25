@@ -17,7 +17,7 @@ class TestDashboardHistoryAndReports:
             img = make_test_image(color=(idx * 60 + 5, 110, 80), filename=f'dash_{idx}.png')
             up = op_client.post(
                 '/api/v1/pm/photos/upload/',
-                {'file': img, 'machine_id': m1.id, 'checklist_item_id': item['id'], 'frequency': '50_HOURS'},
+                {'file': img, 'machine_id': m1.id, 'checklist_item_id': item['id'], 'frequency': '50_HOURS', 'capture_source': 'CAMERA'},
                 format='multipart',
             )
             responses.append(

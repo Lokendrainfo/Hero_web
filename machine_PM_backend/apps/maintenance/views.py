@@ -231,6 +231,8 @@ class PhotoUploadView(APIView):
             captured_at=request.data.get('captured_at'),
             latitude=lat_val,
             longitude=lon_val,
+            capture_source=request.data.get('capture_source'),
+            require_explicit_camera=True,
             request=request,
         )
         return success_response(
@@ -343,6 +345,7 @@ class SubmissionListCreateView(APIView):
             except json.JSONDecodeError:
                 raise ValidationError({"responses": "Invalid JSON format in responses field."})
 
+        payload['_require_explicit_camera'] = True
         submission = create_maintenance_submission(
             user=request.user,
             payload=payload,

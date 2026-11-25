@@ -98,7 +98,26 @@ class TestMobileApkApis:
         )
         assert missing_photo.status_code == 400
 
-        # Valid multipart with unique photo per item succeeds
+        # Explicit GALLERY upload on mobile endpoint must be rejected
+        bad_source_res = client.post(
+            '/api/v1/machine-maintenance/data',
+            {
+                'machine_id': str(m1.id),
+                'user_id': str(users['operator'].id),
+                'frequency': '50_HOURS',
+                'hour_meter_reading': '245.5',
+                'capture_source': 'GALLERY',
+                'responses': json.dumps(responses),
+                **{
+                    f"photo_{it['id']}": make_test_image(color=(idx * 30 + 5, 60, 120), filename=f'gal_{idx}.png')
+                    for idx, it in enumerate(items)
+                },
+            },
+            format='multipart',
+        )
+        assert bad_source_res.status_code == 400
+
+        # Valid multipart with unique camera-captured photo per item succeeds
         files = {
             f"photo_{it['id']}": make_test_image(color=(idx * 60 + 15, 80, 140), filename=f'apk_{idx}.png')
             for idx, it in enumerate(items)
@@ -110,6 +129,7 @@ class TestMobileApkApis:
                 'user_id': str(users['operator'].id),
                 'frequency': '50_HOURS',
                 'hour_meter_reading': '245.5',
+                'capture_source': 'CAMERA',
                 'general_remarks': 'Submitted from HERO Mobile APK',
                 'responses': json.dumps(responses),
                 **files,

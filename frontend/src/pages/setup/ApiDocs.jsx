@@ -529,10 +529,10 @@ const ENDPOINTS_CATALOG = [
         ],
         multipartInstructions: [
           'Send the request as multipart/form-data (do NOT manually set boundary in headers; let HTTP client generate it).',
-          'Include scalar form fields: machine_id, user_id, frequency, hour_meter_reading, and optional general_remarks / client_request_id.',
+          'Include scalar form fields: machine_id, user_id, frequency, hour_meter_reading, capture_source ("CAMERA"), and optional general_remarks / client_request_id.',
           'Include a JSON-serialized array string in the "responses" field containing each checklist_item_id, status ("COMPLETED" or "NOT_COMPLETED"), and remarks (mandatory when status is "NOT_COMPLETED").',
-          'Attach ONE separate image file (JPEG, PNG, or WEBP, max 10 MB) per checklist activity using field name "photo_<checklist_item_id>" (e.g. photo_1, photo_2) or specify a custom "photo_field" inside each response object.',
-          'Server-side rules reject submissions if any checklist item is missing a photo, if the same photo bytes (SHA-256) are reused across multiple items, or if a duplicate submission already exists for the cycle.',
+          'Attach ONE separate camera-captured image file (JPEG, PNG, or WEBP, max 10 MB) per checklist activity using field name "photo_<checklist_item_id>" (e.g. photo_1, photo_2) or specify a custom "photo_field" inside each response object.',
+          'Server-side rules reject submissions if any checklist item is missing a photo, if gallery/file uploads are indicated (capture_source="GALLERY" / "FILE_UPLOAD"), if the same photo bytes (SHA-256) are reused across multiple items, or if a duplicate submission already exists for the cycle.',
         ],
         requestBodySchema: {
           machine_id: 'integer | string (required) — HERO Machine ID or chassis number',

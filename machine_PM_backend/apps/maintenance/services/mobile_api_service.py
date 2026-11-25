@@ -214,7 +214,13 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
 
 
 def submit_mobile_maintenance_data(request, payload: dict, files_map) -> dict:
+    from apps.maintenance.services.photo_service import validate_capture_source
+
     target_user = resolve_target_user(request, payload.get('user_id'))
+
+    # Reject explicit non-camera sources while preserving APK compatibility when omitted
+    if payload.get('capture_source'):
+        validate_capture_source(payload.get('capture_source'), require_explicit=False)
 
     # Normalize flexible photo_field names from mobile APK into photo_<checklist_item_id>
     normalized_files = {}

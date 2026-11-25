@@ -21,6 +21,7 @@ class TestMaintenanceWorkflows:
                     'machine_id': machine_id,
                     'checklist_item_id': item['id'],
                     'frequency': frequency,
+                    'capture_source': 'CAMERA',
                 },
                 format='multipart',
             )
@@ -116,6 +117,7 @@ class TestMaintenanceWorkflows:
             'machine_id': str(m1.id),
             'frequency': '100_HOURS',
             'hour_meter_reading': '250.0',
+            'capture_source': 'CAMERA',
             'responses': json.dumps(payload_responses),
             **files,
         }

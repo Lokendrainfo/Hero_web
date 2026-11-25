@@ -99,7 +99,7 @@ class MaintenancePhotoAttachmentSerializer(serializers.ModelSerializer):
             'checklist_item_id', 'checklist_item_code', 'checklist_description',
             'uploaded_by_id', 'uploaded_by_name', 'frequency_code',
             'original_filename', 'content_type', 'file_size', 'sha256_hash',
-            'is_bound', 'captured_at', 'latitude', 'longitude', 'view_url', 'created_at',
+            'capture_source', 'is_bound', 'captured_at', 'latitude', 'longitude', 'view_url', 'created_at',
         ]
 
     def get_uploaded_by_name(self, obj):

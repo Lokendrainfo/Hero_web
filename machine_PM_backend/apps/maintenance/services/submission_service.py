@@ -322,6 +322,8 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
                 captured_at=r_data.get('captured_at'),
                 latitude=r_data.get('latitude'),
                 longitude=r_data.get('longitude'),
+                capture_source=r_data.get('capture_source') or payload.get('capture_source'),
+                require_explicit_camera=bool(payload.get('_require_explicit_camera', False)),
                 request=request,
             )
 

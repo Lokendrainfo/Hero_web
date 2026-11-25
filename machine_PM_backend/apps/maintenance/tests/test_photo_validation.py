@@ -16,7 +16,7 @@ class TestMandatoryPhotoValidation:
         txt_file = SimpleUploadedFile('notes.txt', b'hello world', content_type='text/plain')
         res = client.post(
             '/api/v1/pm/photos/upload/',
-            {'file': txt_file, 'machine_id': m1.id, 'checklist_item_id': item_id, 'frequency': 'DAILY'},
+            {'file': txt_file, 'machine_id': m1.id, 'checklist_item_id': item_id, 'frequency': 'DAILY', 'capture_source': 'CAMERA'},
             format='multipart',
         )
         assert res.status_code == 400
@@ -25,10 +25,24 @@ class TestMandatoryPhotoValidation:
         fake_jpg = SimpleUploadedFile('fake.jpg', b'not-really-an-image', content_type='image/jpeg')
         res2 = client.post(
             '/api/v1/pm/photos/upload/',
-            {'file': fake_jpg, 'machine_id': m1.id, 'checklist_item_id': item_id, 'frequency': 'DAILY'},
+            {'file': fake_jpg, 'machine_id': m1.id, 'checklist_item_id': item_id, 'frequency': 'DAILY', 'capture_source': 'CAMERA'},
             format='multipart',
         )
         assert res2.status_code == 400
+
+    def test_reject_gallery_or_file_upload_source(self, seeded_masters, users, machines, make_auth_client):
+        m1, _ = machines
+        client = make_auth_client(users['operator'])
+        checklist = client.get('/api/v1/pm/checklist/?frequency=DAILY').json()['data']['items']
+        item_id = checklist[0]['id']
+
+        for bad_source in ('', 'GALLERY', 'FILE_UPLOAD', 'FILE_PICKER'):
+            img = make_test_image(color=(42, 84, 126), filename='gallery.png')
+            payload = {'file': img, 'machine_id': m1.id, 'checklist_item_id': item_id, 'frequency': 'DAILY'}
+            if bad_source:
+                payload['capture_source'] = bad_source
+            res = client.post('/api/v1/pm/photos/upload/', payload, format='multipart')
+            assert res.status_code == 400
 
     def test_reject_reused_photo_across_activities(self, seeded_masters, users, machines, make_auth_client):
         m1, _ = machines
@@ -43,7 +57,7 @@ class TestMandatoryPhotoValidation:
 
         r1 = client.post(
             '/api/v1/pm/photos/upload/',
-            {'file': img1, 'machine_id': m1.id, 'checklist_item_id': checklist[0]['id'], 'frequency': '50_HOURS'},
+            {'file': img1, 'machine_id': m1.id, 'checklist_item_id': checklist[0]['id'], 'frequency': '50_HOURS', 'capture_source': 'CAMERA'},
             format='multipart',
         )
         assert r1.status_code == 201
@@ -51,7 +65,7 @@ class TestMandatoryPhotoValidation:
         # Uploading identical photo bytes for second item must be rejected
         r2 = client.post(
             '/api/v1/pm/photos/upload/',
-            {'file': img2, 'machine_id': m1.id, 'checklist_item_id': checklist[1]['id'], 'frequency': '50_HOURS'},
+            {'file': img2, 'machine_id': m1.id, 'checklist_item_id': checklist[1]['id'], 'frequency': '50_HOURS', 'capture_source': 'CAMERA'},
             format='multipart',
         )
         assert r2.status_code == 400
@@ -67,7 +81,7 @@ class TestMandatoryPhotoValidation:
             img = make_test_image(color=(idx * 50, 100, 150), filename=f'item_{idx}.png')
             up = client.post(
                 '/api/v1/pm/photos/upload/',
-                {'file': img, 'machine_id': m1.id, 'checklist_item_id': item['id'], 'frequency': '50_HOURS'},
+                {'file': img, 'machine_id': m1.id, 'checklist_item_id': item['id'], 'frequency': '50_HOURS', 'capture_source': 'CAMERA'},
                 format='multipart',
             )
             assert up.status_code == 201
@@ -111,7 +125,7 @@ class TestMandatoryPhotoValidation:
             img = make_test_image(color=(idx * 40, 200, 100), filename=f'nc_{idx}.png')
             up = client.post(
                 '/api/v1/pm/photos/upload/',
-                {'file': img, 'machine_id': m1.id, 'checklist_item_id': item['id'], 'frequency': '50_HOURS'},
+                {'file': img, 'machine_id': m1.id, 'checklist_item_id': item['id'], 'frequency': '50_HOURS', 'capture_source': 'CAMERA'},
                 format='multipart',
             )
             responses.append(
@@ -139,7 +153,7 @@ class TestMandatoryPhotoValidation:
         img = make_test_image(color=(12, 34, 56), filename='secure.png')
         up = op_alpha.post(
             '/api/v1/pm/photos/upload/',
-            {'file': img, 'machine_id': m1.id, 'checklist_item_id': checklist[0]['id'], 'frequency': '50_HOURS'},
+            {'file': img, 'machine_id': m1.id, 'checklist_item_id': checklist[0]['id'], 'frequency': '50_HOURS', 'capture_source': 'CAMERA'},
             format='multipart',
         )
         photo_id = up.json()['data']['id']

@@ -19,6 +19,33 @@ ALLOWED_MIME_TYPES = {
     'image/webp',
 }
 
+ALLOWED_CAMERA_SOURCES = {'CAMERA', 'WEB_CAMERA', 'MOBILE_CAMERA'}
+
+
+def validate_capture_source(raw_source: str | None, require_explicit: bool = False) -> str:
+    norm = str(raw_source or '').strip().upper()
+    if not norm:
+        if require_explicit:
+            raise ValidationError(
+                {
+                    "capture_source": (
+                        "Direct device camera capture is required (capture_source='CAMERA'). "
+                        "General file uploads are disabled."
+                    )
+                }
+            )
+        return 'CAMERA'
+    if norm not in ALLOWED_CAMERA_SOURCES:
+        raise ValidationError(
+            {
+                "capture_source": (
+                    f"Unsupported capture_source '{raw_source}'. "
+                    "Gallery selection and local file uploads are disabled; photographs must be captured directly via camera."
+                )
+            }
+        )
+    return norm
+
 
 def compute_sha256_and_validate_image(file_obj) -> tuple[str, str, int]:
     if not file_obj:
@@ -82,8 +109,11 @@ def validate_and_store_photo(
     captured_at=None,
     latitude=None,
     longitude=None,
+    capture_source: str | None = 'CAMERA',
+    require_explicit_camera: bool = False,
     request=None,
 ) -> MaintenancePhotoAttachment:
+    validated_source = validate_capture_source(capture_source, require_explicit=require_explicit_camera)
     sha256_hash, detected_mime, actual_size = compute_sha256_and_validate_image(file_obj)
 
     # Rule 5: One photograph cannot be reused as evidence for multiple checklist activities
@@ -149,6 +179,7 @@ def validate_and_store_photo(
         content_type=detected_mime[:100],
         file_size=actual_size,
         sha256_hash=sha256_hash,
+        capture_source=validated_source,
         is_bound=False,
         captured_at=parsed_captured_at,
         latitude=latitude,
@@ -167,6 +198,7 @@ def validate_and_store_photo(
             "item_code": checklist_item.item_code,
             "sha256_hash": sha256_hash,
             "file_size": actual_size,
+            "capture_source": validated_source,
         },
         request=request,
     )
