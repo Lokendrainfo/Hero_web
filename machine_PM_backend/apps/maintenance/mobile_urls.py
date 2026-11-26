@@ -5,6 +5,7 @@ from apps.maintenance.mobile_views import (
     MobileMaintenanceDataPostView,
     MobileMaintenanceListView,
     MobilePhotoRetrieveView,
+    MobileVideoRetrieveView,
 )
 
 urlpatterns = [
@@ -16,5 +17,7 @@ urlpatterns = [
     path('list/', MobileMaintenanceListView.as_view(), name='mobile-pm-list'),
     path('photos/<int:photo_id>', MobilePhotoRetrieveView.as_view(), name='mobile-pm-photo-noslash'),
     path('photos/<int:photo_id>/', MobilePhotoRetrieveView.as_view(), name='mobile-pm-photo'),
+    path('videos/<int:video_id>', MobileVideoRetrieveView.as_view(), name='mobile-pm-video-noslash'),
+    path('videos/<int:video_id>/', MobileVideoRetrieveView.as_view(), name='mobile-pm-video'),
 ]
 

@@ -1,3 +1,5 @@
+from django.db.models import Q
+from django.utils import timezone
 from rest_framework.exceptions import NotFound, PermissionDenied
 
 from apps.hero_integration.permissions import (
@@ -8,39 +10,213 @@ from apps.hero_integration.permissions import (
     is_pm_admin,
     user_can_access_frequency,
 )
+from apps.hero_integration.services import get_authorized_machine_or_403
 from apps.maintenance.models import (
+    ChecklistCustomFieldConfig,
     ChecklistFrequencyMapping,
+    ChecklistFrequencySchedule,
+    ChecklistLocationRequirement,
+    ChecklistPhotoRequirement,
+    ChecklistVideoRequirement,
     MaintenanceCategoryMaster,
     MaintenanceChecklistMaster,
     MaintenanceFrequencyMaster,
+    MaintenanceSubmission,
     RoleFrequencyMapping,
 )
+from .schedule_service import evaluate_scheduled_cycle, serialize_schedule
+
+
+def get_dynamic_configs_for_items(item_ids: list[int], frequency_id: int | None = None) -> tuple[dict, dict, dict]:
+    """
+    Returns active Admin-configured custom fields, named photo requirements, and named video requirements
+    grouped by `checklist_item_id`, matching either the specific `frequency_id` or global (`frequency__isnull=True`).
+    """
+    if not item_ids:
+        return {}, {}, {}
+
+    freq_q = Q(frequency__isnull=True)
+    if frequency_id is not None:
+        freq_q = freq_q | Q(frequency_id=frequency_id)
+
+    cf_by_item = {}
+    for cf in (
+        ChecklistCustomFieldConfig.objects.select_related('frequency')
+        .prefetch_related('option_rows')
+        .filter(checklist_item_id__in=item_ids, is_active=True)
+        .filter(freq_q)
+        .order_by('display_order', 'id')
+    ):
+        opt_values = list(cf.options or [])
+        if not opt_values:
+            opt_values = [
+                opt.option_label
+                for opt in cf.option_rows.all()
+                if opt.is_active
+            ]
+        cf_by_item.setdefault(cf.checklist_item_id, []).append(
+            {
+                "id": cf.id,
+                "field_name": cf.field_name,
+                "field_label": cf.field_label,
+                "field_description": cf.field_description,
+                "field_type": cf.field_type,
+                "options": opt_values,
+                "is_mandatory": cf.is_mandatory,
+                "is_active": cf.is_active,
+                "condition_mode": cf.condition_mode,
+                "condition_logic": cf.condition_logic,
+                "condition_rules": cf.condition_rules or [],
+                "display_order": cf.display_order,
+                "frequency_id": cf.frequency_id,
+                "frequency_code": cf.frequency.code if cf.frequency else None,
+            }
+        )
+
+    photo_by_item = {}
+    for pr in (
+        ChecklistPhotoRequirement.objects.select_related('frequency')
+        .filter(checklist_item_id__in=item_ids, is_active=True, is_required=True)
+        .filter(freq_q)
+        .order_by('display_order', 'id')
+    ):
+        photo_by_item.setdefault(pr.checklist_item_id, []).append(
+            {
+                "id": pr.id,
+                "question_id": pr.question_id,
+                "photo_name": pr.photo_name,
+                "photo_description": pr.photo_description,
+                "is_required": pr.is_required,
+                "is_mandatory": pr.is_mandatory,
+                "is_active": pr.is_active,
+                "condition_mode": pr.condition_mode,
+                "condition_logic": pr.condition_logic,
+                "condition_rules": pr.condition_rules or [],
+                "display_order": pr.display_order,
+                "frequency_id": pr.frequency_id,
+                "frequency_code": pr.frequency.code if pr.frequency else None,
+            }
+        )
+
+    video_by_item = {}
+    for vr in (
+        ChecklistVideoRequirement.objects.select_related('frequency')
+        .filter(checklist_item_id__in=item_ids, is_active=True, is_required=True)
+        .filter(freq_q)
+        .order_by('display_order', 'id')
+    ):
+        video_by_item.setdefault(vr.checklist_item_id, []).append(
+            {
+                "id": vr.id,
+                "question_id": vr.question_id,
+                "video_name": vr.video_name,
+                "video_description": vr.video_description,
+                "is_required": vr.is_required,
+                "is_mandatory": vr.is_mandatory,
+                "is_active": vr.is_active,
+                "min_videos": vr.min_videos,
+                "max_videos": vr.max_videos,
+                "max_duration_seconds": vr.max_duration_seconds,
+                "condition_mode": vr.condition_mode,
+                "condition_logic": vr.condition_logic,
+                "condition_rules": vr.condition_rules or [],
+                "display_order": vr.display_order,
+                "frequency_id": vr.frequency_id,
+                "frequency_code": vr.frequency.code if vr.frequency else None,
+            }
+        )
+
+    return cf_by_item, photo_by_item, video_by_item
+
+
+def get_location_requirements_for_items(item_ids: list[int], frequency_id: int | None = None) -> dict:
+    if not item_ids:
+        return {}
+    freq_q = Q(frequency__isnull=True)
+    if frequency_id is not None:
+        freq_q = freq_q | Q(frequency_id=frequency_id)
+
+    loc_by_item = {}
+    for lr in (
+        ChecklistLocationRequirement.objects.select_related('frequency')
+        .filter(checklist_item_id__in=item_ids, is_active=True, is_required=True)
+        .filter(freq_q)
+        .order_by('display_order', 'id')
+    ):
+        loc_by_item.setdefault(lr.checklist_item_id, []).append(
+            {
+                "id": lr.id,
+                "question_id": lr.question_id,
+                "location_name": lr.location_name,
+                "location_description": lr.location_description,
+                "capture_latitude": lr.capture_latitude,
+                "capture_longitude": lr.capture_longitude,
+                "accuracy_threshold_meters": lr.accuracy_threshold_meters,
+                "capture_timestamp": lr.capture_timestamp,
+                "capture_rule": lr.capture_rule,
+                "is_required": lr.is_required,
+                "is_mandatory": lr.is_mandatory,
+                "is_active": lr.is_active,
+                "condition_mode": lr.condition_mode,
+                "condition_logic": lr.condition_logic,
+                "condition_rules": lr.condition_rules or [],
+                "display_order": lr.display_order,
+                "frequency_id": lr.frequency_id,
+                "frequency_code": lr.frequency.code if lr.frequency else None,
+            }
+        )
+    return loc_by_item
+
+
+def _active_configured_frequency_ids() -> set[int]:
+    return set(
+        ChecklistFrequencyMapping.objects.filter(
+            is_active=True,
+            checklist_item__is_active=True,
+            checklist_item__is_archived=False,
+            checklist_item__category__is_active=True,
+            checklist_item__category__is_checkable=True,
+        ).values_list('frequency_id', flat=True)
+    )
 
 
 def get_role_context(user) -> dict:
     allowed_codes = get_user_allowed_frequencies(user, for_submit=False)
     submit_codes = get_user_allowed_frequencies(user, for_submit=True)
+    configured_freq_ids = _active_configured_frequency_ids()
     freq_objs = list(
-        MaintenanceFrequencyMaster.objects.filter(code__in=allowed_codes, is_active=True)
-        .order_by('sort_order', 'id')
+        MaintenanceFrequencyMaster.objects.filter(
+            code__in=allowed_codes,
+            id__in=configured_freq_ids,
+            is_active=True,
+        ).order_by('sort_order', 'id')
     )
+    active_code_set = {f.code for f in freq_objs}
     return {
         "role": get_primary_pm_role(user),
         "roles": get_user_role_codes(user),
         "is_admin": is_pm_admin(user),
         "can_review": can_review_submission(user),
         "allowed_frequencies": [f.code for f in freq_objs],
-        "submittable_frequencies": submit_codes,
+        "submittable_frequencies": [c for c in submit_codes if c in active_code_set],
         "allowed_frequency_labels": [{"code": f.code, "name": f.name} for f in freq_objs],
     }
 
 
-def get_frequencies_for_user(user) -> dict:
+def get_frequencies_for_user(user, machine_id=None) -> dict:
     role_ctx = get_role_context(user)
     allowed_set = set(role_ctx["allowed_frequencies"])
     submit_set = set(role_ctx["submittable_frequencies"])
+    configured_freq_ids = _active_configured_frequency_ids()
 
-    all_freqs = MaintenanceFrequencyMaster.objects.filter(is_active=True).order_by('sort_order', 'id')
+    machine_obj = None
+    if machine_id and str(machine_id).strip().lower() not in ('all', 'none', 'null', ''):
+        machine_obj = get_authorized_machine_or_403(user, machine_id)
+
+    all_freqs = MaintenanceFrequencyMaster.objects.filter(
+        is_active=True,
+        id__in=configured_freq_ids,
+    ).order_by('sort_order', 'id')
     role_maps = RoleFrequencyMapping.objects.filter(is_active=True).select_related('frequency')
     roles_by_freq = {}
     for rm in role_maps:
@@ -48,13 +224,48 @@ def get_frequencies_for_user(user) -> dict:
             {"role_code": rm.role_code, "role_name": rm.role_name}
         )
 
+    scheds_by_freq = {}
+    for s in ChecklistFrequencySchedule.objects.filter(
+        is_active=True,
+        checklist_item__is_active=True,
+        checklist_item__is_archived=False,
+        checklist_item__category__is_active=True,
+        checklist_item__category__is_checkable=True,
+    ).order_by('id'):
+        scheds_by_freq.setdefault(s.frequency_id, []).append(s)
+
+    latest_by_freq_id = {}
+    if machine_obj is not None:
+        for sub in (
+            MaintenanceSubmission.objects.filter(machine_id=machine_obj.id)
+            .exclude(approval_status=MaintenanceSubmission.APPROVAL_REJECTED)
+            .order_by('-submitted_at', '-id')
+        ):
+            if sub.frequency_id not in latest_by_freq_id:
+                latest_by_freq_id[sub.frequency_id] = sub
+
+    today = timezone.localdate()
     frequencies = []
     for freq in all_freqs:
         item_count = ChecklistFrequencyMapping.objects.filter(
             frequency=freq,
             is_active=True,
             checklist_item__is_active=True,
+            checklist_item__is_archived=False,
+            checklist_item__category__is_active=True,
+            checklist_item__category__is_checkable=True,
         ).count()
+        if item_count == 0:
+            continue
+        f_scheds = scheds_by_freq.get(freq.id, [])
+        latest_sub = latest_by_freq_id.get(freq.id)
+        sched_eval = evaluate_scheduled_cycle(
+            freq=freq,
+            schedules=f_scheds,
+            latest_completed_sub=latest_sub if (latest_sub and latest_sub.status == MaintenanceSubmission.STATUS_COMPLETED) else None,
+            today=today,
+            latest_any_sub=latest_sub,
+        )
         frequencies.append(
             {
                 "id": freq.id,
@@ -69,6 +280,12 @@ def get_frequencies_for_user(user) -> dict:
                 "assigned_roles": roles_by_freq.get(freq.id, []),
                 "can_view": freq.code in allowed_set,
                 "can_submit": freq.code in submit_set,
+                "schedule_summaries": (
+                    sched_eval["schedule_summaries"]
+                    if sched_eval
+                    else [s.schedule_summary for s in f_scheds if s.schedule_summary]
+                ),
+                "schedule_status": sched_eval,
             }
         )
 
@@ -79,7 +296,7 @@ def get_frequencies_for_user(user) -> dict:
     }
 
 
-def get_checklist_for_frequency(user, frequency_code: str) -> dict:
+def get_checklist_for_frequency(user, frequency_code: str, machine_id=None) -> dict:
     norm_code = str(frequency_code or '').strip().upper()
     freq = MaintenanceFrequencyMaster.objects.filter(code=norm_code, is_active=True).first()
     if not freq:
@@ -90,26 +307,46 @@ def get_checklist_for_frequency(user, frequency_code: str) -> dict:
             f"Your role ({get_primary_pm_role(user)}) is not authorized to access the {freq.name} checklist."
         )
 
-    mappings = (
-        ChecklistFrequencyMapping.objects.select_related('checklist_item', 'checklist_item__category')
+    machine_obj = None
+    if machine_id and str(machine_id).strip().lower() not in ('all', 'none', 'null', ''):
+        machine_obj = get_authorized_machine_or_403(user, machine_id)
+
+    mappings = list(
+        ChecklistFrequencyMapping.objects.select_related('checklist_item', 'checklist_item__category', 'schedule')
         .filter(
             frequency=freq,
             is_active=True,
             checklist_item__is_active=True,
+            checklist_item__is_archived=False,
             checklist_item__category__is_active=True,
         )
         .order_by('checklist_item__category__sort_order', 'sort_order', 'checklist_item__sort_order', 'id')
     )
+    item_ids = [m.checklist_item_id for m in mappings]
+    cf_by_item, photo_by_item, video_by_item = get_dynamic_configs_for_items(
+        item_ids,
+        frequency_id=freq.id,
+    )
+    loc_by_item = get_location_requirements_for_items(
+        item_ids,
+        frequency_id=freq.id,
+    )
 
     items = []
-    grouped = {"MACHINE": [], "ENGINE": []}
+    grouped = {}
+    category_meta = {}
+    active_scheds = []
     for m in mappings:
         ci = m.checklist_item
+        sched_obj = getattr(m, 'schedule', None)
+        if sched_obj and sched_obj.is_active:
+            active_scheds.append(sched_obj)
         entry = {
             "id": ci.id,
             "checklist_item_id": ci.id,
             "mapping_id": m.id,
             "item_code": ci.item_code,
+            "category_id": ci.category_id,
             "category_code": ci.category.code,
             "category_name": ci.category.name,
             "description": ci.description,
@@ -119,10 +356,54 @@ def get_checklist_for_frequency(user, frequency_code: str) -> dict:
             "is_mandatory": m.is_mandatory,
             "requires_photo": ci.requires_photo,
             "requires_remarks_if_not_completed": ci.requires_remarks_if_not_completed,
+            "config_version": getattr(ci, 'config_version', 1),
             "sort_order": m.sort_order or ci.sort_order,
+            "schedule": serialize_schedule(sched_obj) if (sched_obj and sched_obj.is_active) else None,
+            "custom_fields": cf_by_item.get(ci.id, []),
+            "photo_requirements": photo_by_item.get(ci.id, []),
+            "video_requirements": video_by_item.get(ci.id, []),
+            "location_requirements": loc_by_item.get(ci.id, []),
         }
         items.append(entry)
-        grouped.setdefault(ci.category.code, []).append(entry)
+        cat_code = ci.category.code
+        if cat_code not in category_meta:
+            category_meta[cat_code] = {
+                "category_id": ci.category_id,
+                "category_code": cat_code,
+                "category_name": ci.category.name,
+            }
+        grouped.setdefault(cat_code, []).append(entry)
+
+    latest_sub = None
+    latest_complete_sub = None
+    if machine_obj is not None:
+        latest_sub = (
+            MaintenanceSubmission.objects.filter(machine_id=machine_obj.id, frequency=freq)
+            .exclude(approval_status=MaintenanceSubmission.APPROVAL_REJECTED)
+            .order_by('-submitted_at', '-id')
+            .first()
+        )
+        if latest_sub and latest_sub.status == MaintenanceSubmission.STATUS_COMPLETED:
+            latest_complete_sub = latest_sub
+        else:
+            latest_complete_sub = (
+                MaintenanceSubmission.objects.filter(
+                    machine_id=machine_obj.id,
+                    frequency=freq,
+                    status=MaintenanceSubmission.STATUS_COMPLETED,
+                )
+                .exclude(approval_status=MaintenanceSubmission.APPROVAL_REJECTED)
+                .order_by('-submitted_at', '-id')
+                .first()
+            )
+
+    schedule_status = evaluate_scheduled_cycle(
+        freq=freq,
+        schedules=active_scheds,
+        latest_completed_sub=latest_complete_sub,
+        today=timezone.localdate(),
+        latest_any_sub=latest_sub,
+    )
 
     safety_guidelines = get_safety_guidelines()
 
@@ -143,6 +424,16 @@ def get_checklist_for_frequency(user, frequency_code: str) -> dict:
         .order_by('sort_order', 'id')
     ]
 
+    category_groups = [
+        {
+            **category_meta[cat_code],
+            "items": cat_items,
+        }
+        for cat_code, cat_items in grouped.items()
+        if cat_items
+    ]
+    non_empty_categories = {cat_code: cat_items for cat_code, cat_items in grouped.items() if cat_items}
+
     return {
         "frequency": {
             "id": freq.id,
@@ -153,12 +444,11 @@ def get_checklist_for_frequency(user, frequency_code: str) -> dict:
             "description": freq.description,
         },
         "can_submit": user_can_access_frequency(user, freq.code, for_submit=True),
+        "schedule_status": schedule_status,
         "total_items": len(items),
         "items": items,
-        "categories": {
-            "MACHINE": grouped.get("MACHINE", []),
-            "ENGINE": grouped.get("ENGINE", []),
-        },
+        "categories": non_empty_categories,
+        "category_groups": category_groups,
         "as_required_reference_items": as_required_items,
         "safety_guidelines": safety_guidelines,
     }

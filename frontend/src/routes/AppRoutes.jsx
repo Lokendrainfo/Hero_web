@@ -51,7 +51,6 @@ const PmMyChecklistPage = lazyComponent(() => import('../pages/machine_pm/PmMyCh
 const PmFormPage = lazyComponent(() => import('../pages/machine_pm/PmFormPage'), 'PmFormPage');
 const PmHistoryPage = lazyComponent(() => import('../pages/machine_pm/PmHistoryPage'), 'PmHistoryPage');
 const PmMachineHistoryPage = lazyComponent(() => import('../pages/machine_pm/PmMachineHistoryPage'), 'PmMachineHistoryPage');
-const PmPhotoGalleryPage = lazyComponent(() => import('../pages/machine_pm/PmPhotoGalleryPage'), 'PmPhotoGalleryPage');
 const PmSafetyGuidelinesPage = lazyComponent(() => import('../pages/machine_pm/PmSafetyGuidelinesPage'), 'PmSafetyGuidelinesPage');
 const PmAdminConfigPage = lazyComponent(() => import('../pages/machine_pm/PmAdminConfigPage'), 'PmAdminConfigPage');
 const Breakdowns = lazyComponent(() => import('../pages/breakdown/Breakdowns'), 'Breakdowns');
@@ -152,7 +151,7 @@ export const AppRoutes = () => {
             <Route path="/operations/machine-maintenance/perform/:machineId/:frequency" element={<PmFormPage />} />
             <Route path="/operations/machine-maintenance/history" element={<PmHistoryPage />} />
             <Route path="/operations/machine-maintenance/machine/:machineId" element={<PmMachineHistoryPage />} />
-            <Route path="/operations/machine-maintenance/photos" element={<PmPhotoGalleryPage />} />
+            <Route path="/operations/machine-maintenance/photos" element={<Navigate to="/operations/machine-maintenance/history" replace />} />
             <Route path="/operations/machine-maintenance/safety-guidelines" element={<PmSafetyGuidelinesPage />} />
             <Route path="/operations/machine-maintenance/admin-config" element={<PmAdminConfigPage />} />
             <Route path="/breakdown" element={<Breakdowns />} />

@@ -91,14 +91,21 @@ export const PmMachineHistoryPage = () => {
       ) : null}
 
       <div className="filter-row">
-        {['ALL', 'DAILY', '50_HOURS', '100_HOURS', '250_HOURS', '500_HOURS', '1000_HOURS'].map((f) => (
+        <button
+          type="button"
+          className={`filter-chip${freqFilter === 'ALL' ? ' active' : ''}`}
+          onClick={() => { setFreqFilter('ALL'); setPage(1); }}
+        >
+          All Frequencies
+        </button>
+        {(roleInfo?.allowed_frequency_labels || []).map((f) => (
           <button
-            key={f}
+            key={f.code}
             type="button"
-            className={`filter-chip${freqFilter === f ? ' active' : ''}`}
-            onClick={() => { setFreqFilter(f); setPage(1); }}
+            className={`filter-chip${freqFilter === f.code ? ' active' : ''}`}
+            onClick={() => { setFreqFilter(f.code); setPage(1); }}
           >
-            {f === 'ALL' ? 'All Frequencies' : PM_FREQUENCY_LABELS[f]}
+            {f.name || PM_FREQUENCY_LABELS[f.code] || f.code}
           </button>
         ))}
       </div>

@@ -155,6 +155,13 @@ PM_ALLOWED_PHOTO_EXTENSIONS = [
     for ext in os.environ.get('PM_ALLOWED_PHOTO_EXTENSIONS', 'jpg,jpeg,png,webp').split(',')
     if ext.strip()
 ]
+PM_MAX_VIDEO_SIZE_MB = int(os.environ.get('PM_MAX_VIDEO_SIZE_MB', 25))
+PM_MAX_VIDEO_SIZE_BYTES = PM_MAX_VIDEO_SIZE_MB * 1024 * 1024
+PM_ALLOWED_VIDEO_EXTENSIONS = [
+    ext.strip().lower().lstrip('.')
+    for ext in os.environ.get('PM_ALLOWED_VIDEO_EXTENSIONS', 'mp4,webm,mov,mkv').split(',')
+    if ext.strip()
+]
 PM_SOP_EXCEL_PATH = os.environ.get(
     'PM_SOP_EXCEL_PATH',
     r'C:\Users\Lokendra\Downloads\Standard Operating Procedure- A600V2.xlsx',

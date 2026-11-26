@@ -109,15 +109,25 @@ Standard Response Envelope:
 
 ### 1. Machine Maintenance Check API
 - `GET /api/v1/machine-maintenance/check`
-- Query params: `machine_id` (required), `user_id` (required with `X-API-Key`), `frequency` (required), `hour_meter_reading` (optional)
-- Validates machine, user, role, frequency, hour meter, cycle due status, duplicate submission, and returns `eligible: true|false`.
+- Query params: `machine_id` (required), `user_id` (required with `X-API-Key`, alias `operator_id`), `frequency` (required: `DAILY | WEEKLY | EVERY_15_DAYS | MONTHLY | QUARTERLY | YEARLY`), `activity_id` (optional), `hour_meter_reading` (optional)
+- Validates machine, user, role, vendor, frequency schedule, hour meter, cycle due/overdue status, and duplicate submission, and returns the complete dynamic form from Admin Configuration (`maintenance`, `activities`, `questions`, `photo_requirements`, `video_requirements`, and `gps_configuration`).
 
 ### 2. Machine Maintenance Data Post API
 - `POST /api/v1/machine-maintenance/data` (`multipart/form-data`)
-- Fields: `machine_id`, `user_id`, `frequency`, `hour_meter_reading`, `general_remarks`, `responses` (JSON array string), and `photo_<checklist_item_id>` image files (one unique image per checklist item).
-- Validates mandatory photographs server-side, saves submission/responses/photos atomically, and returns `201` with `submission_reference_id`.
+- Fields: `machine_id`, `user_id` (or `operator_id`), `frequency`, `hour_meter_reading`, `scheduled_date` (optional), `general_remarks` (optional), `device_id` (optional), `application_version` (optional), `gps` (optional JSON), `responses` (JSON array string with `checklist_item_id`, `status`, `remarks`, `custom_fields`, `video_durations`, `locations`), plus `photo_<cid>_req_<pid>` / `photo_<cid>` image files and `video_<cid>_req_<vid>_0` video files.
+- Validates mandatory & conditional questions, photos, videos (duration/counts/format/size), and GPS rules server-side; stores binaries in `machine_pm_db` BYTEA with immutable configuration snapshots; returns `201` with `submission_reference_id` (or `400/401/403/404/409/413/415/422`).
 
 ### 3. Machine Maintenance List API
 - `GET /api/v1/machine-maintenance/list`
-- Query params: `machine_id`, `frequency`, `user_role`, `category`, `include_safety_guidelines`.
-- Returns checklist master records, Machine/Engine categories, frequency-wise checklists, assigned role info, SOP remarks, special instructions, and safety guidelines.
+- Query params: `machine_id`, `vendor_id`, `operator_id` (alias `user_id`), `frequency`, `maintenance_status` (`PENDING | COMPLETED | OVERDUE | DUE`), `from_date`, `to_date`, `page`, `page_size`, `user_role`, `category`, `include_safety_guidelines`.
+- Returns paginated maintenance activities and submission records (`content` + `page`) along with checklist master items, categories, role assignments, and safety guidelines.
+
+### 4. Machine Maintenance Photo Retrieval API
+- `GET /api/v1/machine-maintenance/photos/{photo_id}`
+- Query params: `submission_id` (optional ownership check), `metadata=true` (optional JSON metadata instead of binary stream).
+- Streams authorized photo binary from PostgreSQL BYTEA (`pm_photo_attachment`) with proper `Content-Type` and access control (`401/403/404`).
+
+### 5. Machine Maintenance Video Retrieval API
+- `GET /api/v1/machine-maintenance/videos/{video_id}`
+- Query params: `submission_id` (optional ownership check), `metadata=true` (optional JSON metadata instead of binary stream).
+- Streams authorized video binary from PostgreSQL BYTEA (`pm_video_attachment`) with HTTP `Range` (`206 Partial Content`) support and access control (`401/403/404`).

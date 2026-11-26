@@ -1,16 +1,19 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { LucideEye, LucideRefreshCw, LucideSearch } from 'lucide-react';
 import { pmService } from '../../services/pmService';
 import { useToast } from '../../context/ToastContext';
 import { SearchableSelect } from '../../components/common/Select';
 import { DateField } from '../../components/common/DateField';
 import { Pagination } from '../../components/common/Pagination';
-import { PmLayoutHeader, PM_FREQUENCY_LABELS, pmStatusBadge } from './PmLayoutHeader';
+import { PmLayoutHeader, pmStatusBadge } from './PmLayoutHeader';
 import { PmSubmissionDetailModal } from './PmSubmissionDetailModal';
 
 export const PmHistoryPage = () => {
   const { showToast } = useToast();
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
   const [roleInfo, setRoleInfo] = useState(null);
+  const [freqOptions, setFreqOptions] = useState([]);
   const [submissions, setSubmissions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -27,7 +30,13 @@ export const PmHistoryPage = () => {
   const [selectedDetail, setSelectedDetail] = useState(null);
 
   useEffect(() => {
-    pmService.getFrequencies().then((res) => setRoleInfo(res?.data?.role_info || null)).catch(() => {});
+    pmService.getFrequencies()
+      .then((res) => {
+        const d = res?.data || {};
+        setRoleInfo(d.role_info || null);
+        setFreqOptions(d.role_info?.allowed_frequency_labels || d.allowed_frequencies || []);
+      })
+      .catch(() => {});
   }, []);
 
   const loadHistory = useCallback(async () => {
@@ -45,11 +54,11 @@ export const PmHistoryPage = () => {
       setSubmissions(res?.data || []);
       if (res?.meta) setMeta(res.meta);
     } catch (err) {
-      showToast(err?.message || 'Failed to load maintenance history.', 'error');
+      showToastRef.current(err?.message || 'Failed to load maintenance history.', 'error');
     } finally {
       setLoading(false);
     }
-  }, [page, onlyMine, frequency, statusFilter, approvalFilter, dateFrom, dateTo, search, showToast]);
+  }, [page, onlyMine, frequency, statusFilter, approvalFilter, dateFrom, dateTo, search]);
 
   useEffect(() => {
     loadHistory();
@@ -101,8 +110,8 @@ export const PmHistoryPage = () => {
 
           <SearchableSelect value={frequency} onChange={(e) => { setFrequency(e.target.value); setPage(1); }}>
             <option value="ALL">All Frequencies</option>
-            {Object.entries(PM_FREQUENCY_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
+            {freqOptions.map((f) => (
+              <option key={f.code} value={f.code}>{f.name}</option>
             ))}
           </SearchableSelect>
 
@@ -164,7 +173,7 @@ export const PmHistoryPage = () => {
                     <div style={{ fontSize: '0.73rem', color: 'var(--text-muted)' }}>{s.submitted_by_role}</div>
                   </td>
                   <td style={{ fontFamily: 'var(--font-mono)' }}>
-                    {s.completed_items_count}/{s.total_items} · {s.photo_count} photos
+                    {s.completed_items_count}/{s.total_items} · {s.photo_count} photos{s.video_count ? ` · ${s.video_count} videos` : ''}{s.location_count ? ` · ${s.location_count} GPS` : ''}
                   </td>
                   <td><span className={pmStatusBadge(s.status)}>{s.status}</span></td>
                   <td><span className={pmStatusBadge(s.approval_status)}>{s.approval_status}</span></td>

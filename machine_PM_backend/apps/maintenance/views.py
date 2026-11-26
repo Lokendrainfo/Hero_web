@@ -27,17 +27,24 @@ from apps.hero_integration.services import (
     serialize_machine_info,
 )
 from apps.maintenance.models import (
+    ChecklistCustomFieldConfig,
     ChecklistFrequencyMapping,
+    ChecklistPhotoRequirement,
+    ChecklistVideoRequirement,
     MaintenanceAuditLog,
     MaintenanceCategoryMaster,
     MaintenanceChecklistMaster,
     MaintenanceFrequencyMaster,
     MaintenancePhotoAttachment,
     MaintenanceSubmission,
+    MaintenanceVideoAttachment,
     RoleFrequencyMapping,
 )
 from apps.maintenance.serializers import (
+    ChecklistCustomFieldConfigSerializer,
     ChecklistFrequencyMappingSerializer,
+    ChecklistPhotoRequirementSerializer,
+    ChecklistVideoRequirementSerializer,
     MaintenanceApprovalReviewSerializer,
     MaintenanceAuditLogSerializer,
     MaintenanceCategoryMasterSerializer,
@@ -65,9 +72,17 @@ from apps.maintenance.services.photo_service import (
     get_authorized_photo_or_403,
     validate_and_store_photo,
 )
+from apps.maintenance.services.video_service import (
+    build_video_binary_response,
+    get_authorized_video_or_403,
+)
 from apps.maintenance.services.submission_service import (
     create_maintenance_submission,
     extract_submission_payload,
+)
+from apps.maintenance.services.unified_config_service import (
+    save_unified_activity_configuration,
+    serialize_activity_configuration,
 )
 
 
@@ -93,7 +108,7 @@ class DashboardView(APIView):
 
 class FrequencyListView(APIView):
     def get(self, request):
-        data = get_frequencies_for_user(request.user)
+        data = get_frequencies_for_user(request.user, machine_id=request.query_params.get('machine_id'))
         return success_response(data=data, message="Maintenance frequencies retrieved successfully")
 
 
@@ -101,8 +116,8 @@ class ChecklistRetrieveView(APIView):
     def get(self, request):
         freq_code = request.query_params.get('frequency')
         if not freq_code:
-            raise ValidationError({"frequency": "Query parameter 'frequency' is required (e.g., DAILY, 50_HOURS)."})
-        data = get_checklist_for_frequency(request.user, freq_code)
+            raise ValidationError({"frequency": "Query parameter 'frequency' is required (e.g., DAILY, WEEKLY, EVERY_15_DAYS, MONTHLY)."})
+        data = get_checklist_for_frequency(request.user, freq_code, machine_id=request.query_params.get('machine_id'))
         return success_response(data=data, message="Maintenance checklist retrieved successfully")
 
 
@@ -280,6 +295,12 @@ class PhotoProtectedView(APIView):
         return build_photo_binary_response(photo)
 
 
+class VideoProtectedView(APIView):
+    def get(self, request, video_id):
+        video = get_authorized_video_or_403(request.user, video_id)
+        return build_video_binary_response(video, request=request)
+
+
 def _filter_submissions_queryset(request):
     allowed_machine_ids = list(
         get_authorized_machines_queryset(
@@ -289,11 +310,16 @@ def _filter_submissions_queryset(request):
     )
 
     photo_no_blob_qs = MaintenancePhotoAttachment.objects.defer('photo_data')
+    video_no_blob_qs = MaintenanceVideoAttachment.objects.defer('video_data')
     qs = (
         MaintenanceSubmission.objects.select_related('frequency')
         .prefetch_related(
-            Prefetch('responses__photo_attachment', queryset=photo_no_blob_qs),
+            Prefetch('responses__photo_attachments', queryset=photo_no_blob_qs),
+            Prefetch('responses__video_attachments', queryset=video_no_blob_qs),
+            'responses__location_attachments',
             Prefetch('photos', queryset=photo_no_blob_qs),
+            Prefetch('videos', queryset=video_no_blob_qs),
+            'locations',
             'reviews',
         )
         .filter(machine_id__in=allowed_machine_ids)
@@ -359,13 +385,18 @@ class SubmissionListCreateView(APIView):
 class SubmissionDetailView(APIView):
     def get(self, request, submission_id):
         photo_no_blob_qs = MaintenancePhotoAttachment.objects.defer('photo_data')
+        video_no_blob_qs = MaintenanceVideoAttachment.objects.defer('video_data')
         submission = (
             MaintenanceSubmission.objects.select_related('frequency')
             .prefetch_related(
-                Prefetch('responses__photo_attachment', queryset=photo_no_blob_qs),
+                Prefetch('responses__photo_attachments', queryset=photo_no_blob_qs),
+                Prefetch('responses__video_attachments', queryset=video_no_blob_qs),
+                'responses__location_attachments',
                 'responses__checklist_item__category',
                 'reviews',
                 Prefetch('photos', queryset=photo_no_blob_qs),
+                Prefetch('videos', queryset=video_no_blob_qs),
+                'locations',
             )
             .filter(id=submission_id)
             .first()
@@ -409,7 +440,11 @@ class MachineHistoryView(APIView):
         machine = get_authorized_machine_or_403(request.user, machine_id)
         qs = (
             MaintenanceSubmission.objects.select_related('frequency')
-            .prefetch_related(Prefetch('photos', queryset=MaintenancePhotoAttachment.objects.defer('photo_data')))
+            .prefetch_related(
+                Prefetch('photos', queryset=MaintenancePhotoAttachment.objects.defer('photo_data')),
+                'videos',
+                'locations',
+            )
             .filter(machine_id=machine.id)
             .order_by('-submitted_at', '-id')
         )
@@ -439,7 +474,11 @@ class UserHistoryView(APIView):
         allowed_machine_ids = list(get_authorized_machines_queryset(request.user).values_list('id', flat=True))
         qs = (
             MaintenanceSubmission.objects.select_related('frequency')
-            .prefetch_related(Prefetch('photos', queryset=MaintenancePhotoAttachment.objects.defer('photo_data')))
+            .prefetch_related(
+                Prefetch('photos', queryset=MaintenancePhotoAttachment.objects.defer('photo_data')),
+                'videos',
+                'locations',
+            )
             .filter(submitted_by_id=target_uid_int, machine_id__in=allowed_machine_ids)
             .order_by('-submitted_at', '-id')
         )
@@ -521,29 +560,31 @@ class _BaseAdminConfigViewSet(viewsets.ModelViewSet):
             entity_id=obj.id,
             action='CONFIG_CREATED',
             actor=self.request.user,
-            details={"data": serializer.data},
+            details={"previous_value": None, "updated_value": serializer.data},
             request=self.request,
         )
 
     def perform_update(self, serializer):
+        previous_value = self.get_serializer(serializer.instance).data
         obj = serializer.save()
         record_audit_log(
             entity_type=self.audit_entity_type,
             entity_id=obj.id,
             action='CONFIG_UPDATED',
             actor=self.request.user,
-            details={"data": serializer.data},
+            details={"previous_value": previous_value, "updated_value": serializer.data},
             request=self.request,
         )
 
     def perform_destroy(self, instance):
         obj_id = instance.id
+        previous_value = self.get_serializer(instance).data
         record_audit_log(
             entity_type=self.audit_entity_type,
             entity_id=obj_id,
             action='CONFIG_DELETED',
             actor=self.request.user,
-            details={"repr": str(instance)},
+            details={"previous_value": previous_value, "updated_value": None, "repr": str(instance)},
             request=self.request,
         )
         instance.delete()
@@ -562,7 +603,12 @@ class AdminFrequencyViewSet(_BaseAdminConfigViewSet):
 
 
 class AdminChecklistItemViewSet(_BaseAdminConfigViewSet):
-    queryset = MaintenanceChecklistMaster.objects.select_related('category').all().order_by('category__sort_order', 'sort_order', 'id')
+    queryset = (
+        MaintenanceChecklistMaster.objects.select_related('category')
+        .filter(is_archived=False)
+        .all()
+        .order_by('category__sort_order', 'sort_order', 'id')
+    )
     serializer_class = MaintenanceChecklistMasterSerializer
     audit_entity_type = 'CHECKLIST_MASTER'
     filterset_fields = ['category', 'is_active', 'is_as_required']
@@ -575,7 +621,7 @@ class AdminChecklistItemViewSet(_BaseAdminConfigViewSet):
             entity_id=obj.id,
             action='CONFIG_CREATED',
             actor=self.request.user,
-            details={"item_code": obj.item_code, "description": obj.description},
+            details={"previous_value": None, "updated_value": serializer.data},
             request=self.request,
         )
 
@@ -592,4 +638,100 @@ class AdminRoleFrequencyMappingViewSet(_BaseAdminConfigViewSet):
     serializer_class = RoleFrequencyMappingSerializer
     audit_entity_type = 'ROLE_MAPPING'
     filterset_fields = ['role_code', 'frequency', 'is_active']
+
+
+class AdminCustomFieldViewSet(_BaseAdminConfigViewSet):
+    queryset = ChecklistCustomFieldConfig.objects.select_related(
+        'category', 'checklist_item', 'checklist_item__category', 'frequency'
+    ).all().order_by('display_order', 'id')
+    serializer_class = ChecklistCustomFieldConfigSerializer
+    audit_entity_type = 'CUSTOM_FIELD_CONFIG'
+    filterset_fields = ['category', 'checklist_item', 'frequency', 'field_type', 'is_mandatory', 'is_active']
+    search_fields = ['field_name', 'field_label', 'field_description', 'checklist_item__description']
+
+
+class AdminPhotoRequirementViewSet(_BaseAdminConfigViewSet):
+    queryset = ChecklistPhotoRequirement.objects.select_related(
+        'category', 'checklist_item', 'checklist_item__category', 'frequency'
+    ).all().order_by('display_order', 'id')
+    serializer_class = ChecklistPhotoRequirementSerializer
+    audit_entity_type = 'PHOTO_REQUIREMENT_CONFIG'
+    filterset_fields = ['category', 'checklist_item', 'frequency', 'is_required', 'is_mandatory', 'is_active']
+    search_fields = ['photo_name', 'photo_description', 'checklist_item__description']
+
+
+class AdminVideoRequirementViewSet(_BaseAdminConfigViewSet):
+    queryset = ChecklistVideoRequirement.objects.select_related(
+        'category', 'checklist_item', 'checklist_item__category', 'frequency'
+    ).all().order_by('display_order', 'id')
+    serializer_class = ChecklistVideoRequirementSerializer
+    audit_entity_type = 'VIDEO_REQUIREMENT_CONFIG'
+    filterset_fields = ['category', 'checklist_item', 'frequency', 'is_required', 'is_mandatory', 'is_active']
+    search_fields = ['video_name', 'video_description', 'checklist_item__description']
+
+
+class AdminActivityConfigurationListCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsPMAdmin]
+
+    def get(self, request):
+        qs = (
+            MaintenanceChecklistMaster.objects.select_related('category')
+            .prefetch_related('frequency_mappings__frequency')
+            .filter(category__is_checkable=True, is_archived=False)
+            .order_by('-updated_at', '-id')
+        )
+        data = [serialize_activity_configuration(item) for item in qs]
+        return success_response(data=data, message="Activity configurations retrieved successfully")
+
+    def post(self, request):
+        data = save_unified_activity_configuration(user=request.user, payload=request.data, request=request)
+        return success_response(
+            data=data,
+            message="Maintenance configuration saved successfully",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+
+class AdminActivityConfigurationDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsPMAdmin]
+
+    def _get_item(self, item_id):
+        item = (
+            MaintenanceChecklistMaster.objects.select_related('category')
+            .prefetch_related('frequency_mappings__frequency')
+            .filter(id=item_id)
+            .first()
+        )
+        if not item:
+            raise NotFound(f"Checklist activity #{item_id} not found.")
+        return item
+
+    def get(self, request, item_id):
+        item = self._get_item(item_id)
+        return success_response(data=serialize_activity_configuration(item), message="Configuration retrieved successfully")
+
+    def put(self, request, item_id):
+        item = self._get_item(item_id)
+        data = save_unified_activity_configuration(user=request.user, payload=request.data, instance=item, request=request)
+        return success_response(data=data, message="Maintenance configuration updated successfully")
+
+    def patch(self, request, item_id):
+        item = self._get_item(item_id)
+        data = save_unified_activity_configuration(user=request.user, payload=request.data, instance=item, request=request)
+        return success_response(data=data, message="Maintenance configuration updated successfully")
+
+    def delete(self, request, item_id):
+        item = self._get_item(item_id)
+        prev = serialize_activity_configuration(item)
+        item.is_active = False
+        item.save(update_fields=['is_active', 'updated_at'])
+        record_audit_log(
+            entity_type='ACTIVITY_CONFIGURATION',
+            entity_id=item.id,
+            action='CONFIG_DEACTIVATED',
+            actor=request.user,
+            details={"previous_value": prev, "updated_value": serialize_activity_configuration(item)},
+            request=request,
+        )
+        return success_response(data={"id": item.id, "is_active": False}, message="Maintenance configuration deactivated")
 

@@ -452,26 +452,33 @@ const ENDPOINTS_CATALOG = [
         method: 'GET',
         title: 'Machine Maintenance Check API',
         path: '/api/v1/machine-maintenance/check',
-        description: 'Pre-flight eligibility check for Mobile APK. Validates machine ID, user ID and assigned role, maintenance frequency, retrieves current HERO hour-meter reading, checks maintenance due/overdue status, verifies duplicate submissions, and returns user eligibility.',
+        description: 'Pre-flight eligibility check and dynamic maintenance form fetch for Mobile APK. Validates machine ID, user/operator ID and role, maintenance frequency, hour-meter reading, cycle due/overdue status, and duplicate submission status, and returns the complete Admin-configured maintenance activity details, dynamic questions, answer options, conditional photo/video trigger rules, and GPS configuration from machine_pm_db.',
         authHeaders: [
           { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
         ],
         params: [
-          { name: 'machine_id', in: 'query', type: 'integer | string', required: true, default: '8', desc: 'HERO Machine ID, chassis number (e.g. 600202608403), or machine code (MAC-8403)' },
-          { name: 'user_id', in: 'query', type: 'integer', required: true, default: '2', desc: 'HERO User ID performing the maintenance check (required when using X-API-Key)' },
-          { name: 'frequency', in: 'query', type: 'string', required: true, default: 'DAILY', desc: 'Maintenance frequency code: DAILY, 50_HOURS, 100_HOURS, 250_HOURS, 500_HOURS, 1000_HOURS' },
+          { name: 'machine_id', in: 'query', type: 'integer | string', required: true, default: '8', desc: 'HERO Machine ID, chassis number, or machine code' },
+          { name: 'user_id', in: 'query', type: 'integer', required: true, default: '2', desc: 'HERO User/Operator ID (required when using X-API-Key; alias: operator_id)' },
+          { name: 'frequency', in: 'query', type: 'string', required: true, default: 'DAILY', desc: 'Maintenance frequency code configured by Admin: DAILY, WEEKLY, EVERY_15_DAYS, MONTHLY, QUARTERLY, YEARLY' },
+          { name: 'activity_id', in: 'query', type: 'integer | string', required: false, default: '', desc: 'Optional Maintenance Activity ID or item_code to narrow form to one activity' },
           { name: 'hour_meter_reading', in: 'query', type: 'number', required: false, default: '', desc: 'Optional current hour-meter reading override for duplicate/cycle check' },
         ],
+        validationRules: [
+          'Machine ID must exist in HERO Machine Master (hero_hdd_db).',
+          'User ID must exist, be active, and have role/vendor authorization for the machine and frequency.',
+          'All questions, answer options, conditional photo/video trigger rules, and GPS rules are read dynamically from saved Admin Configuration in machine_pm_db.',
+          'When no GPS requirement is configured by Admin, gps_configuration.required and gps_capture_mandatory are false.',
+        ],
         statusCodes: [
-          { code: '200 OK', meaning: 'Machine, user, and frequency validated; eligibility & due status returned.' },
+          { code: '200 OK', meaning: 'Machine, user, and frequency validated; eligibility, schedule status, and complete dynamic form returned.' },
           { code: '400 Bad Request', meaning: 'Missing/invalid machine_id, user_id, frequency, or negative hour_meter_reading.' },
           { code: '401 Unauthorized', meaning: 'Missing or invalid X-API-Key / Bearer token.' },
           { code: '403 Forbidden', meaning: 'Non-admin JWT caller attempting to check another user_id.' },
-          { code: '404 Not Found', meaning: 'Machine, User, or Frequency not found in HERO master tables.' },
+          { code: '404 Not Found', meaning: 'Machine, User, Frequency, or requested Activity not found.' },
         ],
         sampleResponse: {
           success: true,
-          message: 'Machine maintenance eligibility check completed',
+          message: 'Machine maintenance form and eligibility check completed',
           data: {
             eligible: true,
             eligibility_reasons: [],
@@ -485,25 +492,144 @@ const ENDPOINTS_CATALOG = [
             },
             machine: {
               id: 8,
+              machine_id: 8,
               machine_number: '600202608403',
+              code: 'MAC-8403',
               name: 'A600 HDD (8403)',
               machine_model: 'APOLLO A600 V2',
               machine_type: 'HDD',
+              vendor_id: 1,
               vendor_name: 'HERO Direct',
               assigned_operator: 'Ravi Kumar',
+              site_name: 'Operational Site',
+              location_name: 'Jaipur, RJ',
               engine_hours: 185,
+              current_hour_meter_reading: 185.0,
             },
             user: {
               id: 2,
-              username: 'admin',
-              name: 'Admin',
-              primary_role: 'ADMIN',
-              allowed_frequencies: ['DAILY', '50_HOURS', '100_HOURS', '250_HOURS', '500_HOURS', '1000_HOURS'],
+              username: 'op_alpha',
+              name: 'Ravi Kumar',
+              primary_role: 'OPERATOR',
+              roles: ['OPERATOR'],
+              allowed_frequencies: ['DAILY', 'WEEKLY'],
             },
-            frequency: { id: 1, code: 'DAILY', name: 'Daily', interval_hours: null, interval_days: 1 },
+            frequency: { id: 2, code: 'WEEKLY', name: 'Weekly', interval_hours: null, interval_days: 7 },
             hour_meter: { current_machine_hours: 185, checked_hour_meter: 185.0, last_pm_hour_meter: null },
             maintenance_due_status: 'DUE',
-            maintenance_due_message: 'Daily Check Due',
+            maintenance_due_message: 'Weekly Check Due',
+            maintenance: {
+              activity_id: 16,
+              checklist_item_id: 16,
+              item_code: 'PM-ACT-001',
+              activity_name: 'Hydraulic Oil Check',
+              description: 'Check hydraulic oil level and inspect leakage.',
+              category: 'Machine',
+              category_code: 'MACHINE',
+              frequency: 'WEEKLY',
+              frequency_name: 'Weekly',
+              applicable_schedule: {
+                frequency_code: 'WEEKLY',
+                schedule_type: 'WEEKLY_DAYS',
+                selected_weekdays: ['MONDAY', 'THURSDAY'],
+                schedule_summary: 'Monday, Thursday',
+                is_active: true,
+              },
+              scheduled_date: '2026-11-26',
+              maintenance_due_date: '2026-11-26',
+              next_due_date: '2026-11-30',
+              is_mandatory: true,
+              total_activities: 1,
+            },
+            activities: [],
+            questions: [
+              {
+                id: 101,
+                question_id: 101,
+                checklist_item_id: 16,
+                field_name: 'is_hydraulic_oil_level_ok',
+                name: 'Is Hydraulic Oil Level OK?',
+                question_name: 'Is Hydraulic Oil Level OK?',
+                description: 'Check sight glass level',
+                answer_type: 'YES_NO',
+                options: [],
+                answer_options: [],
+                is_mandatory: true,
+                required: true,
+                display_order: 1,
+                is_active: true,
+                condition_mode: 'ALWAYS',
+                condition_logic: 'AND',
+                condition_rules: [],
+              },
+            ],
+            photo_requirements: [
+              {
+                id: 201,
+                photo_config_id: 201,
+                checklist_item_id: 16,
+                question_id: 101,
+                name: 'Hydraulic Level Photo',
+                photo_name: 'Hydraulic Level Photo',
+                description: 'Sight glass photo when level is OK',
+                trigger_question_id: 101,
+                trigger_answer: 'Yes',
+                trigger: { question_id: 101, operator: 'EQUALS', answer: 'Yes' },
+                is_mandatory: true,
+                required: true,
+                display_order: 1,
+                condition_mode: 'CONDITIONAL',
+                condition_logic: 'AND',
+                condition_rules: [{ source_question_id: 101, operator: 'EQUALS', expected_value: 'Yes' }],
+              },
+            ],
+            video_requirements: [
+              {
+                id: 301,
+                video_config_id: 301,
+                checklist_item_id: 16,
+                question_id: 101,
+                name: 'Hydraulic Leakage Video',
+                video_name: 'Hydraulic Leakage Video',
+                description: 'Record leak clip when oil level is No',
+                trigger_question_id: 101,
+                trigger_answer: 'No',
+                trigger: { question_id: 101, operator: 'EQUALS', answer: 'No' },
+                is_mandatory: true,
+                required: true,
+                max_duration_seconds: 30,
+                min_videos: 1,
+                max_videos: 1,
+                display_order: 1,
+                condition_mode: 'CONDITIONAL',
+                condition_logic: 'AND',
+                condition_rules: [{ source_question_id: 101, operator: 'EQUALS', expected_value: 'No' }],
+              },
+            ],
+            gps_configuration: {
+              required: true,
+              gps_required: true,
+              latitude_required: true,
+              longitude_required: true,
+              accuracy_required: true,
+              accuracy_threshold_meters: 50.0,
+              gps_capture_mandatory: true,
+              location_validation_rules: [
+                {
+                  location_requirement_id: 401,
+                  question_id: 101,
+                  location_name: 'Machine Yard GPS',
+                  capture_rule: 'HIGH_ACCURACY',
+                  capture_latitude: true,
+                  capture_longitude: true,
+                  accuracy_threshold_meters: 50.0,
+                  capture_timestamp: true,
+                  is_mandatory: true,
+                  condition_mode: 'ALWAYS',
+                },
+              ],
+              location_requirements: [],
+            },
             existing_submission: null,
             duplicate_submission: null,
           },
@@ -522,79 +648,137 @@ const ENDPOINTS_CATALOG = [
         isMultipart: true,
         title: 'Machine Maintenance Data Post API',
         path: '/api/v1/machine-maintenance/data',
-        description: 'Submit completed preventive maintenance checklist from Mobile APK with mandatory individual camera-captured photographs for every checklist activity. Validates all required items, resizes/compresses camera images, enforces unique SHA-256 hash per item, stores image binaries directly inside machine_pm_db PostgreSQL BYTEA atomically, and returns a unique submission reference ID.',
+        description: 'Submit the complete dynamic preventive maintenance form from Mobile APK in a single atomic transaction. Independently validates machine, activity, operator authorization, schedule occurrence, duplicate policy, dynamic question answers, conditional photo/video evidence, video duration/counts/formats, and GPS requirements, storing binaries in machine_pm_db PostgreSQL BYTEA alongside immutable historical configuration snapshots.',
         authHeaders: [
           { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
-          { name: 'Content-Type', value: 'multipart/form-data', required: true, desc: 'Multipart form payload carrying JSON responses string and per-item camera image files (base64 JSON strings are rejected)' },
+          { name: 'Content-Type', value: 'multipart/form-data', required: true, desc: 'Multipart form payload carrying JSON responses string and camera-captured photo/video binary files' },
         ],
         multipartInstructions: [
-          'Send the request as multipart/form-data (do NOT manually set boundary in headers; let HTTP client generate it).',
-          'Include scalar form fields: machine_id, user_id, frequency, hour_meter_reading, capture_source ("CAMERA"), and optional general_remarks / client_request_id.',
-          'Include a JSON-serialized array string in the "responses" field containing each checklist_item_id, status ("COMPLETED" or "NOT_COMPLETED"), and remarks (mandatory when status is "NOT_COMPLETED").',
-          'Attach ONE separate camera-captured image file (JPEG, PNG, or WEBP, max 10 MB) per checklist activity using field name "photo_<checklist_item_id>" (e.g. photo_1, photo_2) or specify a custom "photo_field" inside each response object.',
-          'Server-side transaction resizes/compresses images, computes SHA-256 hash, validates uniqueness, and saves image binaries directly in PostgreSQL BYTEA (pm_photo_attachment.photo_data) within machine_pm_db. Gallery uploads and base64 JSON strings are rejected.',
+          'Send the request as multipart/form-data (let the HTTP client set the multipart boundary).',
+          'Include scalar fields: machine_id, user_id (or operator_id), frequency, hour_meter_reading, capture_source ("CAMERA"), and optional scheduled_date, general_remarks, device_id, application_version, gps (JSON), client_request_id.',
+          'Include a JSON-serialized array string in "responses" with checklist_item_id, status ("COMPLETED" or "NOT_COMPLETED"), remarks, custom_fields (answers keyed by question_id), video_durations, and locations (GPS captures keyed by location_requirement_id).',
+          'Attach camera-captured photos (JPEG/PNG/WEBP, max 10 MB) as "photo_<checklist_item_id>_req_<photo_config_id>" (or "photo_<checklist_item_id>" for single-photo activities).',
+          'Attach camera-recorded videos (MP4/WEBM/MOV/MKV, max 25 MB, within configured max_duration_seconds) as "video_<checklist_item_id>_req_<video_config_id>_0".',
+          'Base64 image/video strings inside JSON and non-camera capture_source values (e.g. GALLERY) are rejected.',
+        ],
+        validationRules: [
+          'All mandatory visible questions must be answered; unknown or inactive question IDs return 422.',
+          'Dropdown/Radio/Multi-Select/Yes-No/Number/Date/Time answers must match configured type and options.',
+          'Conditional photos and videos are evaluated server-side from selected answers; untriggered/hidden requirements are not required, while triggered mandatory ones block submission.',
+          'GPS coordinates are validated only when configured; mandatory lat/lon must be present and within configured accuracy_threshold_meters.',
+          'Video size > allowed limit returns 413; unsupported photo/video MIME or extension returns 415; duplicate scheduled occurrence returns 409.',
         ],
         requestBodySchema: {
           machine_id: 'integer | string (required) — HERO Machine ID or chassis number',
-          user_id: 'integer (required for X-API-Key) — HERO User ID submitting the checklist',
-          frequency: 'string (required) — DAILY | 50_HOURS | 100_HOURS | 250_HOURS | 500_HOURS | 1000_HOURS',
-          hour_meter_reading: 'number (required) — Current machine hour-meter reading (>= 0)',
-          general_remarks: 'string (optional) — Overall inspection summary',
-          client_request_id: 'string (optional) — UUID for duplicate/retry protection',
+          user_id: 'integer (required for X-API-Key; alias: operator_id) — HERO Operator/User ID',
+          frequency: 'string (required) — DAILY | WEEKLY | EVERY_15_DAYS | MONTHLY | QUARTERLY | YEARLY',
+          hour_meter_reading: 'number (required, >= 0) — Current hour-meter reading',
+          scheduled_date: 'string (optional, YYYY-MM-DD) — Scheduled maintenance date',
+          general_remarks: 'string (optional; aliases: remarks, operator_remarks)',
+          device_id: 'string (optional) — Mobile device identifier',
+          application_version: 'string (optional) — Mobile APK version',
+          capture_source: 'string (optional, default CAMERA) — Must be CAMERA | MOBILE_CAMERA | WEB_CAMERA',
+          gps: {
+            latitude: 'number (optional/conditional)',
+            longitude: 'number (optional/conditional)',
+            accuracy_meters: 'number (optional)',
+            captured_at: 'ISO-8601 datetime (optional)',
+          },
           responses: [
             {
               checklist_item_id: 16,
               status: 'COMPLETED',
-              remarks: 'Greased all points',
-              photo_field: 'photo_16',
+              remarks: 'Checked OK',
+              custom_fields: { '101': 'Yes' },
+              video_durations: { '301': [12.5] },
+              locations: {
+                '401': { latitude: 28.613939, longitude: 77.209021, accuracy_meters: 12.0, captured_at: '2026-11-26T10:15:00Z' },
+              },
             },
           ],
-          'photo_<checklist_item_id>': 'file (required per item) — Image binary (JPEG/PNG/WEBP, max 10 MB)',
+          'photo_<checklist_item_id>_req_<photo_config_id>': 'file (conditional/required) — Image binary (JPEG/PNG/WEBP)',
+          'video_<checklist_item_id>_req_<video_config_id>_0': 'file (conditional/required) — Video binary (MP4/WEBM/MOV/MKV)',
         },
         params: [
           { name: 'machine_id', in: 'body', type: 'integer | string', required: true, default: '8', desc: 'HERO Machine ID or chassis number' },
-          { name: 'user_id', in: 'body', type: 'integer', required: true, default: '2', desc: 'HERO User ID performing the maintenance' },
-          { name: 'frequency', in: 'body', type: 'string', required: true, default: '50_HOURS', desc: 'Maintenance frequency code (e.g. DAILY, 50_HOURS, 100_HOURS)' },
+          { name: 'user_id', in: 'body', type: 'integer', required: true, default: '2', desc: 'HERO User/Operator ID performing the maintenance' },
+          { name: 'frequency', in: 'body', type: 'string', required: true, default: 'WEEKLY', desc: 'Maintenance frequency code' },
           { name: 'hour_meter_reading', in: 'body', type: 'number', required: true, default: '185.5', desc: 'Current hour-meter reading captured on site' },
           { name: 'general_remarks', in: 'body', type: 'string', required: false, default: 'Routine check completed via mobile APK', desc: 'Overall maintenance remarks' },
-          { name: 'responses', in: 'body', type: 'json-string', required: true, default: '[{"checklist_item_id": 16, "status": "COMPLETED", "remarks": "Checked OK"}, {"checklist_item_id": 17, "status": "COMPLETED", "remarks": "Greased"}, {"checklist_item_id": 18, "status": "COMPLETED", "remarks": "Verified"}]', desc: 'JSON array string of checklist responses' },
+          { name: 'responses', in: 'body', type: 'json-string', required: true, default: '[{"checklist_item_id": 16, "status": "COMPLETED", "remarks": "Checked OK", "custom_fields": {"101": "Yes"}}]', desc: 'JSON array string of activity responses, dynamic question answers, video durations, and GPS locations' },
         ],
         statusCodes: [
-          { code: '201 Created', meaning: 'Submission, responses, and all individual photos saved; submission_reference_id returned.' },
-          { code: '400 Bad Request', meaning: 'Missing/invalid photo, reused photo hash, missing checklist items, or missing remarks for NOT_COMPLETED.' },
+          { code: '201 Created', meaning: 'Complete submission, question answers, photos, videos, GPS, and snapshots saved atomically.' },
+          { code: '400 Bad Request', meaning: 'Missing mandatory answer/photo/video/GPS, invalid coordinate/accuracy/duration, or non-camera capture_source.' },
           { code: '401 Unauthorized', meaning: 'Missing or invalid X-API-Key / Bearer token.' },
-          { code: '403 Forbidden', meaning: 'User role not authorized for requested frequency or machine vendor.' },
-          { code: '409 Conflict', meaning: 'Duplicate submission already recorded for this machine, frequency, and day/reading.' },
+          { code: '403 Forbidden', meaning: 'User role or vendor not authorized for the machine or frequency.' },
+          { code: '404 Not Found', meaning: 'Machine or frequency not found.' },
+          { code: '409 Conflict', meaning: 'Duplicate submission already recorded for this machine, frequency, and scheduled occurrence.' },
+          { code: '413 Payload Too Large', meaning: 'Uploaded photo or video exceeds configured maximum size.' },
+          { code: '415 Unsupported Media Type', meaning: 'Unsupported photo or video file format / MIME type.' },
+          { code: '422 Unprocessable Entity', meaning: 'Unknown/inactive activity ID, question ID, photo/video requirement ID, or GPS configuration ID.' },
+          { code: '500 Internal Server Error', meaning: 'Unexpected server error (logged securely; no internal traces exposed).' },
         ],
         sampleResponse: {
           success: true,
-          message: 'Maintenance submission PM-20261125-0001 saved successfully',
+          message: 'Maintenance submission PM-20261126-0001 saved successfully',
           data: {
             submission_id: 12,
-            submission_reference_id: 'PM-20261125-0001',
-            submission_number: 'PM-20261125-0001',
+            submission_reference_id: 'PM-20261126-0001',
+            submission_number: 'PM-20261126-0001',
             status: 'COMPLETED',
             approval_status: 'PENDING_REVIEW',
             machine_id: 8,
             machine_number: '600202608403',
             user_id: 2,
-            submitted_by_name: 'Admin',
-            submitted_by_role: 'ADMIN',
-            frequency: '50_HOURS',
+            submitted_by_name: 'Ravi Kumar',
+            submitted_by_role: 'OPERATOR',
+            frequency: 'WEEKLY',
             hour_meter_reading: 185.5,
-            total_items: 3,
-            completed_items_count: 3,
+            total_items: 1,
+            completed_items_count: 1,
             not_completed_items_count: 0,
-            photo_count: 3,
-            submitted_at: '2026-11-25T11:20:00+05:30',
+            photo_count: 1,
+            video_count: 0,
+            location_count: 1,
+            photos: [
+              {
+                photo_id: 45,
+                checklist_response_id: 88,
+                checklist_item_id: 16,
+                photo_requirement_id: 201,
+                requirement_name: 'Hydraulic Level Photo',
+                item_code: 'PM-ACT-001',
+                photo_filename: 'hyd_ok.jpg',
+                mime_type: 'image/jpeg',
+                file_size: 48210,
+                image_hash: 'e3b0c44298fc1c149afbf4c8996fb924...',
+                photo_url: '/api/v1/machine-maintenance/photos/45',
+              },
+            ],
+            videos: [],
+            locations: [
+              {
+                location_id: 19,
+                checklist_response_id: 88,
+                checklist_item_id: 16,
+                location_requirement_id: 401,
+                requirement_name: 'Machine Yard GPS',
+                latitude: 28.613939,
+                longitude: 77.209021,
+                accuracy_meters: 12.0,
+                captured_at: '2026-11-26T10:15:00+05:30',
+              },
+            ],
+            submitted_at: '2026-11-26T11:20:00+05:30',
           },
           meta: {},
         },
         errorResponse: {
           success: false,
-          message: "Photo evidence is mandatory for checklist activity 'Roller Guides – Greasing'. Cannot mark as Completed without its own photograph.",
+          message: "Mandatory photo 'Hydraulic Level Photo' is missing for checklist activity 'Hydraulic Oil Check'.",
           errors: {
-            photos: "Photo evidence is mandatory for checklist activity 'Roller Guides – Greasing'. Cannot mark as Completed without its own photograph.",
+            photos: "Mandatory photo 'Hydraulic Level Photo' is missing for checklist activity 'Hydraulic Oil Check'.",
           },
           status_code: 400,
         },
@@ -604,63 +788,105 @@ const ENDPOINTS_CATALOG = [
         method: 'GET',
         title: 'Machine Maintenance List API',
         path: '/api/v1/machine-maintenance/list',
-        description: 'Retrieves maintenance checklist master records grouped by Machine and Engine categories and maintenance frequencies, along with assigned role mappings, SOP remarks, special instructions, and safety guidelines. Supports filtering by machine_id, frequency, and user_role.',
+        description: 'Returns paginated machine maintenance activity schedules and submission records (content + page metadata) along with configured checklist master items, dynamic questions/evidence rules, categories, role assignments, and safety guidelines. Supports filtering by machine_id, vendor_id, operator_id, frequency, maintenance_status, from_date, to_date, page, and page_size.',
         authHeaders: [
           { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
         ],
         params: [
-          { name: 'machine_id', in: 'query', type: 'integer | string', required: false, default: '8', desc: 'Optional HERO machine ID or chassis number to include machine context' },
-          { name: 'frequency', in: 'query', type: 'string', required: false, default: '', desc: 'Filter by frequency code (DAILY, 50_HOURS, 100_HOURS, 250_HOURS, 500_HOURS, 1000_HOURS)' },
-          { name: 'user_role', in: 'query', type: 'string', required: false, default: '', desc: 'Filter by assigned role (OPERATOR, FIELD_ENGINEER, AREA_MANAGER, ADMIN)' },
-          { name: 'category', in: 'query', type: 'string', required: false, default: '', desc: 'Filter by category (MACHINE or ENGINE)' },
-          { name: 'include_safety_guidelines', in: 'query', type: 'boolean', required: false, default: 'true', desc: 'Include General Safety Guidelines sections (true/false)' },
+          { name: 'machine_id', in: 'query', type: 'integer | string', required: false, default: '', desc: 'Filter by HERO machine ID, chassis number, or code' },
+          { name: 'vendor_id', in: 'query', type: 'integer | string', required: false, default: '', desc: 'Filter by HERO vendor ID or code' },
+          { name: 'operator_id', in: 'query', type: 'integer', required: false, default: '', desc: 'Filter by operator/user ID (alias: user_id)' },
+          { name: 'frequency', in: 'query', type: 'string', required: false, default: '', desc: 'Filter by frequency code (DAILY, WEEKLY, EVERY_15_DAYS, MONTHLY, QUARTERLY, YEARLY)' },
+          { name: 'maintenance_status', in: 'query', type: 'string', required: false, default: '', desc: 'Filter by status: PENDING, COMPLETED, OVERDUE, DUE' },
+          { name: 'from_date', in: 'query', type: 'string (YYYY-MM-DD)', required: false, default: '', desc: 'Filter from submission/schedule date' },
+          { name: 'to_date', in: 'query', type: 'string (YYYY-MM-DD)', required: false, default: '', desc: 'Filter up to submission/schedule date' },
+          { name: 'page', in: 'query', type: 'integer', required: false, default: '1', desc: 'Page number (1-based)' },
+          { name: 'page_size', in: 'query', type: 'integer', required: false, default: '20', desc: 'Records per page (1-200)' },
+          { name: 'user_role', in: 'query', type: 'string', required: false, default: '', desc: 'Optional role filter (OPERATOR, FIELD_ENGINEER, AREA_MANAGER, ADMIN)' },
+        ],
+        validationRules: [
+          'Maintenance status (PENDING, COMPLETED, OVERDUE, DUE) is calculated dynamically from saved schedules and actual MaintenanceSubmission records in machine_pm_db.',
+          'from_date and to_date must be valid YYYY-MM-DD dates with from_date <= to_date.',
+          'All records respect machine vendor isolation for the authenticated caller.',
         ],
         statusCodes: [
-          { code: '200 OK', meaning: 'Checklist master, categories, role assignments, and frequency-wise items returned.' },
+          { code: '200 OK', meaning: 'Paginated maintenance list and checklist configuration returned.' },
+          { code: '400 Bad Request', meaning: 'Invalid date range, page, or page_size parameter.' },
           { code: '401 Unauthorized', meaning: 'Missing or invalid X-API-Key / Bearer token.' },
-          { code: '403 Forbidden', meaning: 'Requested machine_id belongs to an unauthorized vendor.' },
+          { code: '403 Forbidden', meaning: 'Requested machine_id or vendor_id is unauthorized for caller.' },
           { code: '404 Not Found', meaning: 'Requested machine_id not found.' },
         ],
         sampleResponse: {
           success: true,
-          message: 'Machine maintenance checklist master retrieved successfully',
+          message: 'Machine maintenance list retrieved successfully',
           data: {
-            filters_applied: { machine_id: '8', frequency: 'ALL', user_role: 'OPERATOR', category: 'ALL' },
-            categories: [
-              { id: 1, code: 'MACHINE', name: 'Machine', is_checkable: true },
-              { id: 2, code: 'ENGINE', name: 'Engine', is_checkable: true },
-              { id: 3, code: 'GENERAL_SAFETY_GUIDELINES', name: 'General Safety Guidelines', is_checkable: false },
-            ],
-            role_assignments: [
-              { role_code: 'OPERATOR', role_name: 'Operator', frequencies: ['DAILY', '50_HOURS'] },
-            ],
-            total_checklist_items: 12,
-            checklist_items: [
+            filters_applied: {
+              machine_id: '8',
+              vendor_id: null,
+              operator_id: null,
+              frequency: 'WEEKLY',
+              maintenance_status: 'ALL',
+              from_date: null,
+              to_date: null,
+              user_role: 'ALL',
+              category: 'ALL',
+            },
+            content: [
               {
-                id: 4,
-                checklist_item_id: 4,
-                item_code: 'SOP-MCH-004',
-                category_code: 'MACHINE',
-                category_name: 'Machine',
-                description: 'Fuel tank – Fill',
-                frequencies: ['DAILY'],
-                assigned_roles: [{ role_code: 'OPERATOR', role_name: 'Operator' }],
-                remarks: '',
-                special_instructions: 'Check level of fuel in the tank before starting work.',
-                service_interval: 'Daily',
-                requires_photo: true,
+                machine_id: 8,
+                machine_number: '600202608403',
+                machine_name: 'A600 HDD (8403)',
+                machine_model: 'APOLLO A600 V2',
+                vendor: 'HERO Direct',
+                vendor_id: 1,
+                assigned_operator: 'Ravi Kumar',
+                activity_id: 16,
+                checklist_item_id: 16,
+                item_code: 'PM-ACT-001',
+                activity_name: 'Hydraulic Oil Check',
+                description: 'Check hydraulic oil level and inspect leakage.',
+                frequency: 'WEEKLY',
+                frequency_name: 'Weekly',
+                scheduled_date: '2026-11-26',
+                due_date: '2026-11-26',
+                last_maintenance_date: '2026-11-26',
+                next_due_date: '2026-11-30',
+                submission_id: 12,
+                submission_number: 'PM-20261126-0001',
+                submission_date: '2026-11-26',
+                submitted_at: '2026-11-26T11:20:00+05:30',
+                operator: 'Ravi Kumar',
+                operator_id: 2,
+                hour_meter_reading: 185.5,
+                completion_status: 'COMPLETED',
+                approval_status: 'PENDING_REVIEW',
+                remarks: 'Checked OK',
+                maintenance_status: 'COMPLETED',
               },
             ],
+            page: {
+              size: 20,
+              number: 1,
+              totalElements: 1,
+              totalPages: 1,
+            },
+            total_checklist_items: 1,
+            checklist_items: [],
             frequency_wise_checklists: [],
             safety_guidelines: [],
           },
-          meta: {},
+          meta: {
+            count: 1,
+            total_pages: 1,
+            current_page: 1,
+            page_size: 20,
+          },
         },
         errorResponse: {
           success: false,
-          message: 'Invalid or inactive API key.',
-          errors: { detail: 'Invalid or inactive API key.' },
-          status_code: 401,
+          message: 'from_date cannot be after to_date.',
+          errors: { from_date: 'from_date cannot be after to_date.' },
+          status_code: 400,
         },
       },
       {
@@ -669,31 +895,121 @@ const ENDPOINTS_CATALOG = [
         isBinaryResponse: true,
         title: 'Machine Maintenance Photo Retrieval API',
         path: '/api/v1/machine-maintenance/photos/{photo_id}',
-        description: 'Retrieves an authenticated maintenance checklist camera photograph directly from PostgreSQL BYTEA storage (machine_pm_db.pm_photo_attachment.photo_data) with verified machine/vendor authorization and original Content-Type header.',
+        description: 'Securely streams an authenticated maintenance photograph directly from PostgreSQL BYTEA storage (machine_pm_db.pm_photo_attachment.photo_data), or returns full authorized photo metadata JSON when ?metadata=true is passed. Optionally verifies ?submission_id= ownership. Never exposes filesystem paths or public permanent URLs.',
         authHeaders: [
           { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
         ],
         params: [
           { name: 'photo_id', in: 'path', type: 'integer', required: true, default: '1', desc: 'ID of the maintenance photo attachment stored in machine_pm_db' },
+          { name: 'submission_id', in: 'query', type: 'integer', required: false, default: '', desc: 'Optional submission ID to verify that the photo belongs to the requested maintenance submission' },
+          { name: 'metadata', in: 'query', type: 'boolean', required: false, default: '', desc: 'Set true to return JSON metadata instead of streaming binary image bytes' },
+        ],
+        validationRules: [
+          'Caller must be authenticated and authorized for the photo machine/vendor (or uploader).',
+          'When submission_id is supplied, photo must belong to that submission (otherwise returns 404).',
+          'Returns Content-Type matching stored image (image/jpeg, image/png, image/webp) with X-Content-Type-Options: nosniff.',
         ],
         statusCodes: [
-          { code: '200 OK', meaning: 'Raw image binary streamed from machine_pm_db with Content-Type (image/jpeg, image/png, or image/webp).' },
+          { code: '200 OK', meaning: 'Binary image streamed (default) or JSON metadata returned (?metadata=true).' },
+          { code: '400 Bad Request', meaning: 'Non-integer submission_id query parameter.' },
           { code: '401 Unauthorized', meaning: 'Missing or invalid X-API-Key / Bearer token.' },
           { code: '403 Forbidden', meaning: 'Caller is not authorized to view photographs for this machine/vendor.' },
-          { code: '404 Not Found', meaning: 'Photo attachment ID not found in machine_pm_db.' },
+          { code: '404 Not Found', meaning: 'Photo ID not found or does not belong to the requested submission_id.' },
         ],
         sampleResponse: {
-          note: 'Returns binary image bytes (e.g. image/jpeg) directly from PostgreSQL BYTEA.',
-          headers: {
-            'Content-Type': 'image/jpeg',
-            'Content-Disposition': 'inline; filename="camera_SOP-MCH-004.jpg"',
-            'Cache-Control': 'private, max-age=3600',
+          note: 'Default returns binary image bytes (image/jpeg, image/png, or image/webp). With ?metadata=true returns JSON:',
+          success: true,
+          message: 'Maintenance photo metadata retrieved successfully',
+          data: {
+            photo_id: 45,
+            submission_id: 12,
+            submission_number: 'PM-20261126-0001',
+            machine_id: 8,
+            maintenance_activity_id: 16,
+            item_code: 'PM-ACT-001',
+            question_id: 101,
+            photo_configuration_id: 201,
+            photo_name: 'Hydraulic Level Photo',
+            photo_description: 'Sight glass photo when level is OK',
+            capture_timestamp: '2026-11-26T10:15:00+05:30',
+            latitude: 28.613939,
+            longitude: 77.209021,
+            gps_accuracy: 12.0,
+            operator_id: 2,
+            content_type: 'image/jpeg',
+            file_size: 48210,
+            sha256_hash: 'e3b0c44298fc1c149afbf4c8996fb924...',
+            image_url: '/api/v1/machine-maintenance/photos/45',
           },
+          meta: {},
         },
         errorResponse: {
           success: false,
           message: 'You are not authorized to view this photograph.',
           errors: { detail: 'You are not authorized to view this photograph.' },
+          status_code: 403,
+        },
+      },
+      {
+        id: 'machine_maintenance_video_get',
+        method: 'GET',
+        isBinaryResponse: true,
+        title: 'Machine Maintenance Video Retrieval API',
+        path: '/api/v1/machine-maintenance/videos/{video_id}',
+        description: 'Dedicated authenticated endpoint to securely stream maintenance video evidence from machine_pm_db PostgreSQL BYTEA with HTTP Byte-Range (206 Partial Content) support, or return video metadata JSON when ?metadata=true. Large video binaries are never embedded in JSON.',
+        authHeaders: [
+          { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
+          { name: 'Range', value: 'bytes=0-1048575', required: false, desc: 'Optional HTTP Range header for progressive video streaming' },
+        ],
+        params: [
+          { name: 'video_id', in: 'path', type: 'integer', required: true, default: '1', desc: 'ID of the maintenance video attachment stored in machine_pm_db' },
+          { name: 'submission_id', in: 'query', type: 'integer', required: false, default: '', desc: 'Optional submission ID to verify that the video belongs to the requested submission' },
+          { name: 'metadata', in: 'query', type: 'boolean', required: false, default: '', desc: 'Set true to return JSON metadata instead of streaming video bytes' },
+        ],
+        validationRules: [
+          'Caller must be authenticated and authorized for the video machine/vendor (or uploader).',
+          'Supports HTTP Range requests returning 206 Partial Content with Accept-Ranges: bytes.',
+          'When submission_id is supplied, verifies video belongs to that submission.',
+        ],
+        statusCodes: [
+          { code: '200 OK', meaning: 'Full video stream returned (or JSON metadata when ?metadata=true).' },
+          { code: '206 Partial Content', meaning: 'Byte-range video chunk returned for seekable playback.' },
+          { code: '401 Unauthorized', meaning: 'Missing or invalid X-API-Key / Bearer token.' },
+          { code: '403 Forbidden', meaning: 'Caller is not authorized to view videos for this machine/vendor.' },
+          { code: '404 Not Found', meaning: 'Video ID not found or does not belong to requested submission_id.' },
+        ],
+        sampleResponse: {
+          note: 'Default streams video/mp4 or video/webm bytes with Accept-Ranges: bytes. With ?metadata=true returns JSON:',
+          success: true,
+          message: 'Maintenance video metadata retrieved successfully',
+          data: {
+            video_id: 9,
+            submission_id: 12,
+            submission_number: 'PM-20261126-0001',
+            machine_id: 8,
+            maintenance_activity_id: 16,
+            item_code: 'PM-ACT-001',
+            question_id: 101,
+            video_configuration_id: 301,
+            video_name: 'Hydraulic Leakage Video',
+            video_description: 'Record leak clip when oil level is No',
+            duration_seconds: 12.5,
+            capture_timestamp: '2026-11-26T10:15:30+05:30',
+            latitude: 28.613939,
+            longitude: 77.209021,
+            gps_accuracy: 12.0,
+            operator_id: 2,
+            content_type: 'video/mp4',
+            file_size: 412890,
+            sha256_hash: '9f86d081884c7d659a2feaa0c55ad015...',
+            video_url: '/api/v1/machine-maintenance/videos/9',
+          },
+          meta: {},
+        },
+        errorResponse: {
+          success: false,
+          message: 'You are not authorized to view this video.',
+          errors: { detail: 'You are not authorized to view this video.' },
           status_code: 403,
         },
       },
@@ -915,22 +1231,32 @@ export const ApiDocs = () => {
         headers['Content-Type'] = 'multipart/form-data';
       }
 
+      const wantsMeta = ['1', 'true', 'yes'].includes(String(qParams.metadata || qParams.meta || '').toLowerCase());
+      const expectBinary = Boolean(selectedEndpoint.isBinaryResponse && !wantsMeta);
+
       const response = await axios({
         method: selectedEndpoint.method,
         url: resolvedPath,
         params: qParams,
         data: requestData,
         headers,
-        responseType: selectedEndpoint.isBinaryResponse ? 'blob' : 'json',
+        responseType: expectBinary ? 'blob' : 'json',
       });
 
       const elapsed = Math.round(performance.now() - startTime);
       let respPayload = response.data;
       let imagePreviewUrl = null;
-      if (selectedEndpoint.isBinaryResponse && response.data instanceof Blob) {
-        imagePreviewUrl = URL.createObjectURL(response.data);
+      let videoPreviewUrl = null;
+      if (expectBinary && response.data instanceof Blob) {
+        const mimeType = response.headers?.['content-type'] || response.data.type || '';
+        const blobUrl = URL.createObjectURL(response.data);
+        if (mimeType.startsWith('video/')) {
+          videoPreviewUrl = blobUrl;
+        } else {
+          imagePreviewUrl = blobUrl;
+        }
         respPayload = {
-          content_type: response.headers?.['content-type'] || response.data.type,
+          content_type: mimeType,
           byte_size: response.data.size,
           source: 'machine_pm_db (PostgreSQL BYTEA)',
         };
@@ -941,6 +1267,7 @@ export const ApiDocs = () => {
         latency: elapsed,
         data: respPayload,
         imagePreviewUrl,
+        videoPreviewUrl,
       });
     } catch (err) {
       const elapsed = Math.round(performance.now() - startTime);
@@ -966,7 +1293,8 @@ export const ApiDocs = () => {
         return `curl -X GET "${url}" \\\n  -u "td_service_user:your_service_password" \\\n  -H "Accept: application/json"`;
       }
       if (selectedEndpoint.isMultipart) {
-        return `curl -X POST "${url}" \\\n  -H "X-API-Key: ${key}" \\\n  -F "machine_id=${paramValues.machine_id || '8'}" \\\n  -F "user_id=${paramValues.user_id || '2'}" \\\n  -F "frequency=${paramValues.frequency || '50_HOURS'}" \\\n  -F "hour_meter_reading=${paramValues.hour_meter_reading || '185.5'}" \\\n  -F "general_remarks=${paramValues.general_remarks || 'Routine check'}" \\\n  -F 'responses=${paramValues.responses || '[{"checklist_item_id":16,"status":"COMPLETED","remarks":"OK"}]'}' \\\n  -F "photo_16=@/path/to/photo_16.jpg"`;
+        const defaultResponses = '[{"checklist_item_id":16,"status":"COMPLETED","remarks":"OK","custom_fields":{"101":"Yes"}}]';
+        return `curl -X POST "${url}" \\\n  -H "X-API-Key: ${key}" \\\n  -F "machine_id=${paramValues.machine_id || '8'}" \\\n  -F "user_id=${paramValues.user_id || '2'}" \\\n  -F "frequency=${paramValues.frequency || 'WEEKLY'}" \\\n  -F "hour_meter_reading=${paramValues.hour_meter_reading || '185.5'}" \\\n  -F "capture_source=CAMERA" \\\n  -F "general_remarks=${paramValues.general_remarks || 'Routine check'}" \\\n  -F 'responses=${paramValues.responses || defaultResponses}' \\\n  -F "photo_16_req_201=@/path/to/photo.jpg"`;
       }
       if (selectedEndpoint.method === 'GET') {
         return `curl -X GET "${url}" \\\n  -H "X-API-Key: ${key}" \\\n  -H "Content-Type: application/json"`;
@@ -996,12 +1324,13 @@ console.log(data);`;
         return `const formData = new FormData();
 formData.append("machine_id", "${paramValues.machine_id || '8'}");
 formData.append("user_id", "${paramValues.user_id || '2'}");
-formData.append("frequency", "${paramValues.frequency || '50_HOURS'}");
+formData.append("frequency", "${paramValues.frequency || 'WEEKLY'}");
 formData.append("hour_meter_reading", "${paramValues.hour_meter_reading || '185.5'}");
+formData.append("capture_source", "CAMERA");
 formData.append("responses", JSON.stringify([
-  { checklist_item_id: 16, status: "COMPLETED", remarks: "Checked OK" }
+  { checklist_item_id: 16, status: "COMPLETED", remarks: "Checked OK", custom_fields: { "101": "Yes" } }
 ]));
-formData.append("photo_16", fileInput16.files[0]); // One unique photo per checklist_item_id
+formData.append("photo_16_req_201", photoInput.files[0]); // Or photo_16 for single-photo activity
 
 const response = await fetch("${url}", {
   method: "POST",
@@ -1041,14 +1370,15 @@ headers = {"X-API-Key": "${key}"}
 data = {
     "machine_id": "${paramValues.machine_id || '8'}",
     "user_id": "${paramValues.user_id || '2'}",
-    "frequency": "${paramValues.frequency || '50_HOURS'}",
+    "frequency": "${paramValues.frequency || 'WEEKLY'}",
     "hour_meter_reading": "${paramValues.hour_meter_reading || '185.5'}",
+    "capture_source": "CAMERA",
     "responses": json.dumps([
-        {"checklist_item_id": 16, "status": "COMPLETED", "remarks": "Checked OK"}
+        {"checklist_item_id": 16, "status": "COMPLETED", "remarks": "Checked OK", "custom_fields": {"101": "Yes"}}
     ]),
 }
 files = {
-    "photo_16": ("photo_16.jpg", open("photo_16.jpg", "rb"), "image/jpeg"),
+    "photo_16_req_201": ("photo.jpg", open("photo.jpg", "rb"), "image/jpeg"),
 }
 
 response = requests.post(url, headers=headers, data=data, files=files)
@@ -1347,12 +1677,24 @@ print(response.json())`;
           {/* Multipart Upload Instructions */}
           {selectedEndpoint.multipartInstructions && (
             <div style={{ padding: '12px 14px', borderRadius: '8px', background: '#fffbeb', border: '1px solid #fde68a', marginBottom: '16px', fontSize: '12.5px', color: '#78350f' }}>
-              <strong style={{ display: 'block', marginBottom: '6px' }}>Multipart Photo Upload Instructions (Mandatory Individual Evidence)</strong>
+              <strong style={{ display: 'block', marginBottom: '6px' }}>Multipart Photo & Video Upload Instructions</strong>
               <ol style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 {selectedEndpoint.multipartInstructions.map((step, i) => (
                   <li key={i}>{step}</li>
                 ))}
               </ol>
+            </div>
+          )}
+
+          {/* Validation Rules */}
+          {selectedEndpoint.validationRules && selectedEndpoint.validationRules.length > 0 && (
+            <div style={{ padding: '12px 14px', borderRadius: '8px', background: '#f0f9ff', border: '1px solid #bae6fd', marginBottom: '16px', fontSize: '12.5px', color: '#0c4a6e' }}>
+              <strong style={{ display: 'block', marginBottom: '6px' }}>Validation & Security Rules</strong>
+              <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {selectedEndpoint.validationRules.map((rule, i) => (
+                  <li key={i}>{rule}</li>
+                ))}
+              </ul>
             </div>
           )}
 
@@ -1554,14 +1896,14 @@ print(response.json())`;
             {selectedEndpoint.isMultipart && (
               <div style={{ marginTop: '12px', padding: '12px', border: '1px dashed #cbd5e1', borderRadius: '8px', background: '#f8fafc' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                  <strong style={{ fontSize: '12.5px', color: '#111827' }}>Multipart Photo Attachments (photo_&lt;checklist_item_id&gt;)</strong>
+                  <strong style={{ fontSize: '12.5px', color: '#111827' }}>Multipart Media Attachments (photo_&lt;cid&gt;_req_&lt;pid&gt; / video_&lt;cid&gt;_req_&lt;vid&gt;_0)</strong>
                   <button
                     type="button"
                     className="btn-action-secondary"
                     style={{ padding: '4px 10px', fontSize: '12px' }}
                     onClick={() => setPgMultipartFiles((prev) => [...prev, { fieldName: `photo_${16 + prev.length}`, file: null }])}
                   >
-                    + Add Photo Field
+                    + Add Media Field
                   </button>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1570,8 +1912,8 @@ print(response.json())`;
                       <input
                         type="text"
                         className="pg-input"
-                        style={{ maxWidth: '170px' }}
-                        placeholder="photo_16"
+                        style={{ maxWidth: '210px' }}
+                        placeholder="photo_16_req_201"
                         value={entry.fieldName}
                         onChange={(e) => {
                           const val = e.target.value;
@@ -1580,7 +1922,7 @@ print(response.json())`;
                       />
                       <input
                         type="file"
-                        accept="image/jpeg,image/png,image/webp"
+                        accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,video/x-matroska"
                         onChange={(e) => {
                           const file = e.target.files?.[0] || null;
                           setPgMultipartFiles((prev) => prev.map((it, i) => (i === idx ? { ...it, file } : it)));
@@ -1654,6 +1996,15 @@ print(response.json())`;
                       src={pgResponse.imagePreviewUrl}
                       alt="Retrieved maintenance photo binary"
                       style={{ maxWidth: '100%', maxHeight: '280px', borderRadius: '6px', objectFit: 'contain' }}
+                    />
+                  </div>
+                )}
+                {pgResponse.videoPreviewUrl && (
+                  <div style={{ padding: '12px', background: '#0f172a', borderBottom: '1px solid #1e293b', textAlign: 'center' }}>
+                    <video
+                      src={pgResponse.videoPreviewUrl}
+                      controls
+                      style={{ maxWidth: '100%', maxHeight: '280px', borderRadius: '6px' }}
                     />
                   </div>
                 )}

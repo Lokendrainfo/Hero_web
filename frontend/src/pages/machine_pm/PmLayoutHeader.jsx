@@ -1,7 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
-  LucideCamera,
   LucideClipboardCheck,
   LucideHistory,
   LucideLayoutDashboard,
@@ -15,11 +14,11 @@ import { useAuth } from '../../hooks/useAuth';
 
 export const PM_FREQUENCY_LABELS = {
   DAILY: 'Daily',
-  '50_HOURS': '50 Hours',
-  '100_HOURS': '100 Hours',
-  '250_HOURS': '250 Hours',
-  '500_HOURS': '500 Hours',
-  '1000_HOURS': '1000 Hours',
+  WEEKLY: 'Weekly',
+  EVERY_15_DAYS: 'Every 15 Days',
+  MONTHLY: 'Monthly',
+  QUARTERLY: 'Quarterly',
+  YEARLY: 'Yearly',
 };
 
 export const pmStatusBadge = (status) => {
@@ -29,8 +28,13 @@ export const pmStatusBadge = (status) => {
     return 'badge-pill badge-amber';
   }
   if (s === 'OVERDUE' || s === 'REJECTED' || s === 'NOT_COMPLETED') return 'badge-pill badge-breakdown';
-  if (s === 'PENDING') return 'badge-pill badge-blue';
+  if (s === 'PENDING' || s === 'SCHEDULED') return 'badge-pill badge-blue';
   return 'badge-pill badge-neutral';
+};
+
+export const formatPmStatusLabel = (status) => {
+  const s = (status || '').replace(/_/g, ' ').toLowerCase();
+  return s ? s.replace(/\b\w/g, (ch) => ch.toUpperCase()) : '-';
 };
 
 export const PmLayoutHeader = ({ title, subtitle, roleInfo, actions }) => {
@@ -43,7 +47,6 @@ export const PmLayoutHeader = ({ title, subtitle, roleInfo, actions }) => {
     { label: 'My Checklist', path: '/operations/machine-maintenance/my-checklists', icon: LucideClipboardCheck },
     { label: 'Perform Maintenance', path: '/operations/machine-maintenance/perform', icon: LucideWrench },
     { label: 'History', path: '/operations/machine-maintenance/history', icon: LucideHistory },
-    { label: 'Photo Evidence', path: '/operations/machine-maintenance/photos', icon: LucideCamera },
     { label: 'Safety Guidelines', path: '/operations/machine-maintenance/safety-guidelines', icon: LucideShieldAlert },
   ];
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   LucideDownload,
@@ -15,7 +15,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useToast } from '../../context/ToastContext';
 import { SearchableSelect } from '../../components/common/Select';
 import { DateField } from '../../components/common/DateField';
-import { PmLayoutHeader, PM_FREQUENCY_LABELS, pmStatusBadge } from './PmLayoutHeader';
+import { PmLayoutHeader, PM_FREQUENCY_LABELS, formatPmStatusLabel, pmStatusBadge } from './PmLayoutHeader';
 import { PmSubmissionDetailModal } from './PmSubmissionDetailModal';
 
 const unwrapList = (res) => {
@@ -31,6 +31,8 @@ export const PmDashboardPage = () => {
   const navigate = useNavigate();
   const { isAdmin } = useAuth();
   const { showToast } = useToast();
+  const showToastRef = useRef(showToast);
+  showToastRef.current = showToast;
 
   const [loading, setLoading] = useState(true);
   const [dashboard, setDashboard] = useState({
@@ -40,10 +42,12 @@ export const PmDashboardPage = () => {
       maintenance_due: 0,
       maintenance_completed: 0,
       pending_maintenance: 0,
+      upcoming_maintenance: 0,
       overdue_maintenance: 0,
       total_submissions: 0,
     },
     frequency_completion: [],
+    upcoming_schedules: [],
     machines: [],
   });
 
@@ -91,11 +95,11 @@ export const PmDashboardPage = () => {
         setDashboard(res.data);
       }
     } catch (err) {
-      showToast(err?.message || 'Failed to load maintenance dashboard.', 'error');
+      showToastRef.current(err?.message || 'Failed to load maintenance dashboard.', 'error');
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, machineFilter, vendorFilter, userFilter, frequencyFilter, statusFilter, search, showToast]);
+  }, [dateFrom, dateTo, machineFilter, vendorFilter, userFilter, frequencyFilter, statusFilter, search]);
 
   useEffect(() => {
     loadDashboard();
@@ -142,8 +146,12 @@ export const PmDashboardPage = () => {
     setSearch('');
   };
 
-  const { kpis, role_info: roleInfo, frequency_completion: freqCompletion, machines } = dashboard;
+  const { kpis, role_info: roleInfo, frequency_completion: freqCompletion, upcoming_schedules: upcomingSchedules, machines } = dashboard;
   const allowedFreqs = roleInfo?.allowed_frequencies || [];
+  const freqLabelObjects =
+    Array.isArray(roleInfo?.allowed_frequency_labels) && roleInfo.allowed_frequency_labels.length > 0
+      ? roleInfo.allowed_frequency_labels
+      : allowedFreqs.map((code) => ({ code, name: PM_FREQUENCY_LABELS[code] || code }));
 
   return (
     <div className="screen-container" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -186,6 +194,11 @@ export const PmDashboardPage = () => {
           <div className="kpi-sub">Scheduled in cycle</div>
         </div>
         <div className="kpi-cell kpi-cell-static">
+          <div className="kpi-label">Upcoming Maintenance</div>
+          <div className="kpi-value" style={{ color: '#2563eb' }}>{kpis.upcoming_maintenance || 0}</div>
+          <div className="kpi-sub">Configured future due dates</div>
+        </div>
+        <div className="kpi-cell kpi-cell-static">
           <div className="kpi-label">Overdue Maintenance</div>
           <div className="kpi-value" style={{ color: 'var(--danger)' }}>{kpis.overdue_maintenance}</div>
           <div className="kpi-sub">Immediate action required</div>
@@ -198,10 +211,10 @@ export const PmDashboardPage = () => {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
             <h3 style={{ fontSize: '0.9rem', fontWeight: 700, margin: 0 }}>Frequency-wise Completion</h3>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              Allowed Frequencies: {allowedFreqs.map((f) => PM_FREQUENCY_LABELS[f] || f).join(', ') || 'None'}
+              Active Configured Frequencies: {freqLabelObjects.map((f) => f.name).join(', ') || 'None'}
             </span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
             {freqCompletion.map((fc) => (
               <div
                 key={fc.frequency_code}
@@ -213,18 +226,57 @@ export const PmDashboardPage = () => {
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                  <strong style={{ fontSize: '0.82rem' }}>{fc.frequency_name}</strong>
+                  <strong style={{ fontSize: '0.84rem' }}>{fc.frequency_name}</strong>
                   <span style={{ fontSize: '0.78rem', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
-                    {fc.completion_rate}%
+                    Completion: {fc.completion_rate}%
                   </span>
                 </div>
                 <div className="progress-track">
                   <div className="progress-fill" style={{ width: `${Math.min(100, fc.completion_rate)}%` }} />
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '8px' }}>
-                  <span>Done: {fc.completed}</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '8px', flexWrap: 'wrap', gap: '4px' }}>
+                  <span>Completed: {fc.completed}</span>
                   <span>Due: {fc.due}</span>
+                  <span>Sched: {fc.pending || 0}</span>
                   <span style={{ color: fc.overdue > 0 ? 'var(--danger)' : undefined }}>Overdue: {fc.overdue}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Upcoming Scheduled Maintenance */}
+      {upcomingSchedules && upcomingSchedules.length > 0 ? (
+        <div className="app-card" style={{ padding: '14px 16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
+            <h3 style={{ fontSize: '0.9rem', fontWeight: 700, margin: 0 }}>Upcoming Scheduled Maintenance</h3>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              Calculated dynamically from active frequency schedules
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '10px' }}>
+            {upcomingSchedules.slice(0, 8).map((up, uIdx) => (
+              <div
+                key={`${up.machine_id}-${up.frequency_code}-${uIdx}`}
+                style={{
+                  padding: '10px',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius)',
+                  background: '#fff',
+                  fontSize: '0.76rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '3px',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
+                  <strong style={{ fontFamily: 'var(--font-mono)' }}>{up.machine_number}</strong>
+                  <span className="badge-pill badge-blue">{up.frequency_name}</span>
+                </div>
+                <div style={{ color: 'var(--text-secondary)' }}>{up.schedule_summary}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: '#1d4ed8' }}>
+                  Next Scheduled: {up.next_due_date}
                 </div>
               </div>
             ))}
@@ -240,16 +292,16 @@ export const PmDashboardPage = () => {
             className={`filter-chip${frequencyFilter === 'ALL' ? ' active' : ''}`}
             onClick={() => setFrequencyFilter('ALL')}
           >
-            All Allowed Frequencies
+            All Configured Frequencies
           </button>
-          {allowedFreqs.map((fCode) => (
+          {freqLabelObjects.map((f) => (
             <button
-              key={fCode}
+              key={f.code}
               type="button"
-              className={`filter-chip${frequencyFilter === fCode ? ' active' : ''}`}
-              onClick={() => setFrequencyFilter(fCode)}
+              className={`filter-chip${frequencyFilter === f.code ? ' active' : ''}`}
+              onClick={() => setFrequencyFilter(f.code)}
             >
-              {PM_FREQUENCY_LABELS[fCode] || fCode}
+              {f.name}
             </button>
           ))}
         </div>
@@ -275,10 +327,19 @@ export const PmDashboardPage = () => {
 
           <SearchableSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option value="ALL">All Statuses</option>
-            <option value="DUE">Maintenance Due</option>
+            <option value="DUE">Due</option>
             <option value="OVERDUE">Overdue</option>
-            <option value="COMPLETED">Completed</option>
             <option value="PENDING">Pending</option>
+            <option value="SCHEDULED">Scheduled</option>
+            <option value="COMPLETED">Completed</option>
+            <option value="NOT_SCHEDULED">Not Scheduled</option>
+          </SearchableSelect>
+
+          <SearchableSelect value={frequencyFilter} onChange={(e) => setFrequencyFilter(e.target.value)}>
+            <option value="ALL">All Frequencies</option>
+            {freqLabelObjects.map((f) => (
+              <option key={f.code} value={f.code}>{f.name}</option>
+            ))}
           </SearchableSelect>
 
           <SearchableSelect value={machineFilter} onChange={(e) => setMachineFilter(e.target.value)}>
@@ -350,7 +411,7 @@ export const PmDashboardPage = () => {
             </thead>
             <tbody>
               {machines.map((m) => {
-                const defaultFreq = frequencyFilter !== 'ALL' ? frequencyFilter : (allowedFreqs[0] || 'DAILY');
+                const defaultFreq = frequencyFilter !== 'ALL' ? frequencyFilter : (allowedFreqs[0] || '');
                 return (
                   <tr key={m.id}>
                     <td>
@@ -388,15 +449,23 @@ export const PmDashboardPage = () => {
                       )}
                     </td>
                     <td>
-                      <div style={{ fontSize: '0.8rem' }}>{m.next_due_label}</div>
-                      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{m.location_name}</div>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>{m.next_due_label}</div>
+                      {m.next_scheduled_date ? (
+                        <div style={{ fontSize: '0.73rem', color: '#1d4ed8', fontFamily: 'var(--font-mono)' }}>
+                          Next Scheduled: {m.next_scheduled_date}
+                        </div>
+                      ) : null}
+                      {m.schedule_summary ? (
+                        <div style={{ fontSize: '0.71rem', color: 'var(--text-secondary)' }}>{m.schedule_summary}</div>
+                      ) : null}
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{m.location_name}</div>
                     </td>
                     <td>
-                      <span className={pmStatusBadge(m.status)}>{m.status}</span>
+                      <span className={pmStatusBadge(m.status)}>{formatPmStatusLabel(m.status)}</span>
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: '6px' }}>
-                        {allowedFreqs.length > 0 ? (
+                        {defaultFreq ? (
                           <button
                             type="button"
                             className="btn-primary"

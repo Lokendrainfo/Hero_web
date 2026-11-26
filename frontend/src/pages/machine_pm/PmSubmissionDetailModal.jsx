@@ -9,6 +9,7 @@ import {
 import { pmService } from '../../services/pmService';
 import { useToast } from '../../context/ToastContext';
 import { PmAuthorizedPhoto } from './PmAuthorizedPhoto';
+import { PmAuthorizedVideo } from './PmAuthorizedVideo';
 import { PmPhotoLightboxModal } from './PmPhotoLightboxModal';
 import { pmStatusBadge } from './PmLayoutHeader';
 
@@ -22,8 +23,18 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
   if (!isOpen || !submission) return null;
 
   const responses = submission.responses || [];
-  const machineItems = responses.filter((r) => (r.category_code || '').toUpperCase() === 'MACHINE' || (r.category_name || '').toLowerCase() === 'machine');
-  const engineItems = responses.filter((r) => (r.category_code || '').toUpperCase() === 'ENGINE' || (r.category_name || '').toLowerCase() === 'engine');
+  const categoryGroups = [];
+  const groupByKey = new Map();
+  responses.forEach((resp) => {
+    const code = (resp.category_code || resp.category_name || 'GENERAL').toUpperCase();
+    const name = resp.category_name || resp.category_code || 'Maintenance';
+    if (!groupByKey.has(code)) {
+      const grp = { code, name, items: [] };
+      groupByKey.set(code, grp);
+      categoryGroups.push(grp);
+    }
+    groupByKey.get(code).items.push(resp);
+  });
 
   const handleReviewSubmit = async (action) => {
     if ((action === 'REJECTED' || action === 'CHANGES_REQUESTED') && !reviewRemarks.trim()) {
@@ -44,92 +55,251 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
     }
   };
 
-  const renderResponseRow = (item, idx) => (
-    <div
-      key={item.id || idx}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: '12px',
-        padding: '10px 12px',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-        background: item.status === 'NOT_COMPLETED' ? '#fef2f2' : 'var(--bg-surface)',
-      }}
-    >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <span className="badge-pill badge-neutral" style={{ fontFamily: 'var(--font-mono)' }}>
-            {item.item_code}
-          </span>
-          <strong style={{ fontSize: '0.84rem', color: 'var(--text-primary)' }}>{item.description_snapshot}</strong>
-          <span className={pmStatusBadge(item.status)}>{item.status.replace('_', ' ')}</span>
-        </div>
-        {item.remarks ? (
-          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            Remarks: {item.remarks}
-          </div>
-        ) : null}
-        {item.captured_at ? (
-          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
-            Captured: {new Date(item.captured_at).toLocaleString()} · Hash: {item.photo_hash ? `${item.photo_hash.slice(0, 12)}...` : 'Verified'}
-          </div>
-        ) : null}
-      </div>
+  const renderResponseRow = (item, idx) => {
+    const photos = Array.isArray(item.photos) && item.photos.length > 0
+      ? item.photos
+      : (item.photo_url ? [{ id: item.photo_id || idx, requirement_name: '', requirement_description: '', view_url: item.photo_url, sha256_hash: item.photo_hash, captured_at: item.captured_at }] : []);
+    const videos = Array.isArray(item.videos) ? item.videos : [];
+    const locations = Array.isArray(item.locations) ? item.locations : [];
+    const questionAnswers = Array.isArray(item.questions_snapshot) && item.questions_snapshot.length > 0
+      ? item.questions_snapshot.map((q) => ({
+          id: q.question_id,
+          label: q.question_name,
+          description: q.question_description,
+          type: q.answer_type,
+          is_mandatory: q.is_mandatory,
+          value: q.answer,
+        }))
+      : (Array.isArray(item.custom_field_values) ? item.custom_field_values : []).map((cf) => ({
+          id: cf.field_id,
+          label: cf.field_label || cf.field_name,
+          description: cf.field_description || '',
+          type: cf.field_type,
+          is_mandatory: cf.is_mandatory,
+          value: cf.value,
+        }));
+    const questionLabelById = Object.fromEntries(
+      questionAnswers.filter((qa) => qa.id).map((qa) => [String(qa.id), qa.label])
+    );
 
-      {item.photo_url ? (
-        <button
-          type="button"
-          onClick={() =>
-            setLightboxPhoto({
-              view_url: item.photo_url,
-              checklist_description: item.description_snapshot,
-              frequency_code: submission.frequency_code,
-              machine_number: submission.machine_number,
-              uploaded_by_name: submission.submitted_by_name,
-              captured_at: item.captured_at,
-              sha256_hash: item.photo_hash,
-            })
-          }
-          style={{
-            position: 'relative',
-            width: '64px',
-            height: '64px',
-            borderRadius: '6px',
-            overflow: 'hidden',
-            border: '1px solid var(--border-strong)',
-            flexShrink: 0,
-            cursor: 'pointer',
-            padding: 0,
-          }}
-          title="Click to inspect full photo evidence"
-        >
-          <PmAuthorizedPhoto
-            viewUrl={item.photo_url}
-            alt={item.description_snapshot}
-            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-          />
-          <span
-            style={{
-              position: 'absolute',
-              bottom: '2px',
-              right: '2px',
-              background: 'rgba(17,24,39,0.75)',
-              color: '#fff',
-              borderRadius: '4px',
-              padding: '2px',
-              display: 'inline-flex',
-            }}
-          >
-            <LucideEye size={11} />
-          </span>
-        </button>
-      ) : (
-        <span className="badge-pill badge-breakdown">No Photo</span>
-      )}
-    </div>
-  );
+    return (
+      <div
+        key={item.id || idx}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px',
+          padding: '12px',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)',
+          background: item.status === 'NOT_COMPLETED' ? '#fef2f2' : 'var(--bg-surface)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span className="badge-pill badge-neutral" style={{ fontFamily: 'var(--font-mono)' }}>
+                {item.item_code}
+              </span>
+              <strong style={{ fontSize: '0.84rem', color: 'var(--text-primary)' }}>{item.description_snapshot}</strong>
+              <span className={pmStatusBadge(item.status)}>{item.status.replace('_', ' ')}</span>
+            </div>
+            {item.remarks ? (
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                Remarks: {item.remarks}
+              </div>
+            ) : null}
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px', fontFamily: 'var(--font-mono)' }}>
+              {item.captured_at ? `Captured: ${new Date(item.captured_at).toLocaleString()} · ` : ''}
+              Questions: {questionAnswers.length} · Photos: {photos.length} · Videos: {videos.length} · GPS: {locations.length}
+            </div>
+          </div>
+        </div>
+
+        {questionAnswers.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '8px', padding: '10px', background: 'var(--bg-subtle)', borderRadius: '6px', border: '1px solid var(--border)' }}>
+            {questionAnswers.map((qa, cIdx) => {
+              const displayVal = Array.isArray(qa.value) ? qa.value.join(', ') : (qa.value !== null && qa.value !== undefined && String(qa.value) !== '' ? String(qa.value) : 'Not answered');
+              return (
+                <div key={qa.id || cIdx} style={{ fontSize: '0.76rem' }}>
+                  <div style={{ color: 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                    <span>{qa.label}</span>
+                    {qa.is_mandatory !== undefined && (
+                      <span className={`badge-pill ${qa.is_mandatory ? 'badge-red' : 'badge-neutral'}`} style={{ fontSize: '0.65rem', padding: '1px 5px' }}>
+                        {qa.is_mandatory ? 'Mandatory' : 'Optional'}
+                      </span>
+                    )}
+                  </div>
+                  {qa.description ? <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{qa.description}</div> : null}
+                  <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginTop: '2px' }}>{displayVal}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {photos.length > 0 ? (
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            {photos.map((p, pIdx) => (
+              <div key={p.id || pIdx} style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxWidth: '175px' }}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLightboxPhoto({
+                      view_url: p.view_url,
+                      checklist_description: p.requirement_name ? `${item.description_snapshot} — ${p.requirement_name}` : item.description_snapshot,
+                      frequency_code: submission.frequency_code,
+                      machine_number: submission.machine_number,
+                      uploaded_by_name: submission.submitted_by_name,
+                      captured_at: p.captured_at || item.captured_at,
+                      sha256_hash: p.sha256_hash || item.photo_hash,
+                    })
+                  }
+                  style={{
+                    position: 'relative',
+                    width: '96px',
+                    height: '72px',
+                    borderRadius: '6px',
+                    overflow: 'hidden',
+                    border: '1px solid var(--border-strong)',
+                    flexShrink: 0,
+                    cursor: 'pointer',
+                    padding: 0,
+                  }}
+                  title={p.requirement_name || 'Click to inspect full photo evidence'}
+                >
+                  <PmAuthorizedPhoto
+                    viewUrl={p.view_url}
+                    alt={p.requirement_name || item.description_snapshot}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                  <span
+                    style={{
+                      position: 'absolute',
+                      bottom: '2px',
+                      right: '2px',
+                      background: 'rgba(17,24,39,0.75)',
+                      color: '#fff',
+                      borderRadius: '4px',
+                      padding: '2px',
+                      display: 'inline-flex',
+                    }}
+                  >
+                    <LucideEye size={11} />
+                  </span>
+                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                  {p.requirement_name ? (
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-primary)', fontWeight: 700, wordBreak: 'break-word' }}>
+                      {p.requirement_name}
+                    </span>
+                  ) : null}
+                  {p.is_mandatory_snapshot !== undefined && (
+                    <span className={`badge-pill ${p.is_mandatory_snapshot ? 'badge-red' : 'badge-neutral'}`} style={{ fontSize: '0.64rem', padding: '1px 5px' }}>
+                      {p.is_mandatory_snapshot ? 'Mandatory' : 'Optional'}
+                    </span>
+                  )}
+                </div>
+                {p.question_id && questionLabelById[String(p.question_id)] ? (
+                  <span style={{ fontSize: '0.68rem', color: '#1d4ed8', fontWeight: 600 }}>
+                    Q: {questionLabelById[String(p.question_id)]}
+                  </span>
+                ) : null}
+                {p.requirement_description ? (
+                  <span style={{ fontSize: '0.69rem', color: 'var(--text-secondary)', wordBreak: 'break-word' }}>
+                    {p.requirement_description}
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span className="badge-pill badge-neutral" style={{ alignSelf: 'flex-start' }}>No Photo Required / Attached</span>
+        )}
+
+        {videos.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '10px' }}>
+            {videos.map((v, vIdx) => (
+              <div
+                key={v.id || vIdx}
+                style={{
+                  border: '1px solid var(--border)',
+                  borderRadius: '6px',
+                  padding: '8px',
+                  background: '#0f172a',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '6px',
+                }}
+              >
+                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#f8fafc', display: 'flex', justifyContent: 'space-between', gap: '6px', alignItems: 'center' }}>
+                  <span>
+                    {v.requirement_name || `Video #${vIdx + 1}`}
+                    {v.is_mandatory_snapshot !== undefined ? ` (${v.is_mandatory_snapshot ? 'Mandatory' : 'Optional'})` : ''}
+                  </span>
+                  <span style={{ color: '#94a3b8', fontFamily: 'var(--font-mono)' }}>{v.duration_seconds || 0}s</span>
+                </div>
+                {v.question_id && questionLabelById[String(v.question_id)] ? (
+                  <div style={{ fontSize: '0.69rem', color: '#93c5fd', fontWeight: 600 }}>
+                    Question: {questionLabelById[String(v.question_id)]}
+                  </div>
+                ) : null}
+                {v.requirement_description ? (
+                  <div style={{ fontSize: '0.7rem', color: '#cbd5e1' }}>{v.requirement_description}</div>
+                ) : null}
+                <PmAuthorizedVideo
+                  viewUrl={v.view_url}
+                  style={{ width: '100%', maxHeight: '180px', borderRadius: '4px', display: 'block' }}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {locations.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '8px' }}>
+            {locations.map((loc, lIdx) => (
+              <div
+                key={loc.id || lIdx}
+                style={{
+                  border: '1px solid #bbf7d0',
+                  borderRadius: '6px',
+                  padding: '8px 10px',
+                  background: '#f0fdf4',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                  <strong style={{ fontSize: '0.76rem', color: '#166534' }}>
+                    {loc.requirement_name || `GPS Location #${lIdx + 1}`}
+                  </strong>
+                  <span className={`badge-pill ${loc.is_mandatory_snapshot ? 'badge-red' : 'badge-neutral'}`} style={{ fontSize: '0.65rem', padding: '1px 5px' }}>
+                    {loc.is_mandatory_snapshot ? 'Mandatory' : 'Optional'}
+                  </span>
+                </div>
+                {loc.question_id && questionLabelById[String(loc.question_id)] ? (
+                  <div style={{ fontSize: '0.7rem', color: '#15803d', fontWeight: 600 }}>
+                    Question: {questionLabelById[String(loc.question_id)]}
+                  </div>
+                ) : null}
+                {loc.requirement_description ? (
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{loc.requirement_description}</div>
+                ) : null}
+                <div style={{ fontSize: '0.73rem', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '2px' }}>
+                  {loc.latitude !== null && loc.latitude !== undefined && <span>Lat: {loc.latitude}</span>}
+                  {loc.longitude !== null && loc.longitude !== undefined && <span>Lng: {loc.longitude}</span>}
+                  {loc.accuracy_meters !== null && loc.accuracy_meters !== undefined && <span>Accuracy: ±{loc.accuracy_meters}m</span>}
+                  {loc.captured_at && <span>Time: {new Date(loc.captured_at).toLocaleString()}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -203,23 +373,16 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
               </div>
             ) : null}
 
-            <div>
-              <h4 style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '8px' }}>
-                Machine Checklist ({machineItems.length})
-              </h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {machineItems.length ? machineItems.map(renderResponseRow) : <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>No machine activities in this frequency.</div>}
+            {categoryGroups.map((group) => (
+              <div key={group.code}>
+                <h4 style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '8px' }}>
+                  {group.name.replace(/\s*Checklist$/i, '')} Checklist ({group.items.length})
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {group.items.map(renderResponseRow)}
+                </div>
               </div>
-            </div>
-
-            <div>
-              <h4 style={{ fontSize: '0.85rem', fontWeight: 700, marginBottom: '8px' }}>
-                Engine Checklist ({engineItems.length})
-              </h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {engineItems.length ? engineItems.map(renderResponseRow) : <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>No engine activities in this frequency.</div>}
-              </div>
-            </div>
+            ))}
 
             {submission.reviews && submission.reviews.length > 0 ? (
               <div>
