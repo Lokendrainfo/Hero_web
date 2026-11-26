@@ -242,4 +242,27 @@ class IlyncClient:
             self.timeout = previous_timeout
         return {"success": True, "data": merged}
 
+    # Read-Only Attendance Endpoints (exact iLance / NetInfra APIs)
+    def list_attendances(self, params=None):
+        return self.get("api/attendance", params=params)
+
+    def get_attendance_detail(self, attendance_id):
+        return self.get(f"api/attendance/{attendance_id}")
+
+    def get_attendance_photo_url(self, attendance_id, photo_key):
+        return self.get(
+            "api/attendance/photo-url",
+            params={"attendanceId": attendance_id, "photoKey": photo_key},
+        )
+
+    def get_attendance_pending_approval(self):
+        return self.get("api/attendance/pending-approval")
+
+    def get_attendance_eligible_users(self):
+        return self.get("api/attendance/eligible-users")
+
+    def get_attendance_today(self, for_user_id=None):
+        params = {"forUserId": for_user_id} if for_user_id else None
+        return self.get("api/attendance/today", params=params)
+
 

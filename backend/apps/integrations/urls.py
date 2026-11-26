@@ -24,6 +24,15 @@ from .views import (
     IlyncTrenchingDashboardSummaryView,
     IlyncStockExportExcelView
 )
+from .attendance_views import (
+    IlyncAttendanceDetailView,
+    IlyncAttendanceEligibleUsersView,
+    IlyncAttendanceListView,
+    IlyncAttendancePendingApprovalView,
+    IlyncAttendancePhotoProxyView,
+    IlyncAttendancePhotoUrlView,
+    IlyncAttendanceTodayView,
+)
 from apps.machines.views import MachineChassisHddShotSummaryView, MachineHddMetricsDayWiseView
 
 urlpatterns = [
@@ -61,5 +70,13 @@ urlpatterns = [
     path('chassis-hdd-shots/<str:chassis_number>/', MachineChassisHddShotSummaryView.as_view(), name='ilync_chassis_hdd_shots_detail'),
     path('hdd-metrics/', MachineHddMetricsDayWiseView.as_view(), name='ilync_hdd_metrics'),
     path('hdd-metrics/<str:chassis_number>/', MachineHddMetricsDayWiseView.as_view(), name='ilync_hdd_metrics_detail'),
-]
 
+    # Read-Only iLance / NetInfra Attendance Integration
+    path('attendance/', IlyncAttendanceListView.as_view(), name='ilync_attendance_list'),
+    path('attendance/pending-approval/', IlyncAttendancePendingApprovalView.as_view(), name='ilync_attendance_pending_approval'),
+    path('attendance/eligible-users/', IlyncAttendanceEligibleUsersView.as_view(), name='ilync_attendance_eligible_users'),
+    path('attendance/today/', IlyncAttendanceTodayView.as_view(), name='ilync_attendance_today'),
+    path('attendance/photo-url/', IlyncAttendancePhotoUrlView.as_view(), name='ilync_attendance_photo_url'),
+    path('attendance/photo/', IlyncAttendancePhotoProxyView.as_view(), name='ilync_attendance_photo_proxy'),
+    path('attendance/<str:attendance_id>/', IlyncAttendanceDetailView.as_view(), name='ilync_attendance_detail'),
+]

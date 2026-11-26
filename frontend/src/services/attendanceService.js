@@ -34,3 +34,30 @@ export const attendanceService = {
   rejectAttendance: (id, data) => api.post(`/attendance/${id}/reject/`, data),
   exportReport: (params) => api.get('/attendance/export-report/', { params, responseType: 'blob' }),
 };
+
+/**
+ * Strictly read-only iLance / NetInfra Attendance integration service.
+ * Consumes exact upstream iLance JSON via HERO backend proxy without HERO-side modifications.
+ */
+export const ilyncAttendanceService = {
+  getList: (params = {}) => api.get('/integrations/attendance/', { params }),
+  getDetail: (id) => api.get(`/integrations/attendance/${encodeURIComponent(id)}/`),
+  getPendingApproval: () => api.get('/integrations/attendance/pending-approval/'),
+  getEligibleUsers: () => api.get('/integrations/attendance/eligible-users/'),
+  getToday: (forUserId) =>
+    api.get('/integrations/attendance/today/', {
+      params: forUserId ? { forUserId } : undefined,
+    }),
+  getPhotoUrl: (attendanceId, photoKey) =>
+    api.get('/integrations/attendance/photo-url/', {
+      params: { attendanceId, photoKey },
+    }),
+  fetchProtectedPhotoBlobUrl: async (attendanceId, photoKey) => {
+    if (!attendanceId || !photoKey) return '';
+    const blob = await api.get('/integrations/attendance/photo/', {
+      params: { attendanceId, photoKey },
+      responseType: 'blob',
+    });
+    return URL.createObjectURL(blob);
+  },
+};
