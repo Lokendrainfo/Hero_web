@@ -1,6 +1,7 @@
 # HERO Machine Preventive Maintenance API Documentation
 
-Base URL: `http://127.0.0.1:8001` (or gateway path `/api/v1/pm/` & `/api/v1/machine-maintenance/`)
+- **Gateway / Frontend Base Path (Production Nginx & Vite Dev)**: `/pm-api/v1/` (Nginx proxies `/pm-api/` to PM backend port `8014` rewriting `/pm-api/` -> `/api/`; main HERO backend stays on `/api/` port `8018`)
+- **Direct PM Backend Service URL (Local Dev)**: `http://127.0.0.1:8001/api/v1/`
 
 ## 1. Architecture & Dual-Database Design
 
@@ -88,9 +89,11 @@ Rules enforced server-side:
 
 ---
 
-## 5. Mobile APK Maintenance APIs (`/api/v1/machine-maintenance/`)
+## 5. Mobile APK Maintenance APIs (`/pm-api/v1/machine-maintenance/`)
 
-### 1) `GET /api/v1/machine-maintenance/check`
+> Note: Production Nginx routes `/pm-api/` to the PM backend (`8014`) rewriting `/pm-api/` -> `/api/`. Clients calling through the gateway use `/pm-api/v1/machine-maintenance/*` (directly maps to PM backend `/api/v1/machine-maintenance/*`).
+
+### 1) `GET /pm-api/v1/machine-maintenance/check`
 Validates machine, authenticated operator & assignment, frequency/schedule window (including `buffer_days`), and duplicate completion status, returning the complete dynamic form.
 
 - **Query Parameters**:
@@ -107,7 +110,7 @@ Validates machine, authenticated operator & assignment, frequency/schedule windo
   - `maintenance` & `activities[]`: `activity_id`, `item_code`, `activity_name`, `activity_status`, `is_active`, `category_id`, `category`, `category_code`, `frequency_type`, `applicable_schedule`, `original_scheduled_date`, `scheduled_date`, `buffer_days`, `completion_deadline_date`, `allow_duplicate_in_same_slot`, nested `sections[] -> questions[]`, `questions[]` (including `answer_type: "EVIDENCE_ONLY"`, `is_evidence_only`), `photo_requirements[]`, `video_requirements[]`, `gps_configuration` (with `location_validation_rules[]`), and `location_requirements[]`.
   - `has_duplicate`, `duplicate_submission`, `existing_submission`.
 
-### 2) `POST /api/v1/machine-maintenance/data`
+### 2) `POST /pm-api/v1/machine-maintenance/data`
 Submits completed maintenance answers, `EVIDENCE_ONLY` evidence captures, live camera photos/videos, and GPS/geofence coordinates in a single atomic PostgreSQL transaction.
 
 - **Request**: `multipart/form-data` (or JSON when pre-uploaded IDs are attached).
@@ -121,15 +124,15 @@ Submits completed maintenance answers, `EVIDENCE_ONLY` evidence captures, live c
   - `409 Conflict`: Duplicate submission in the same scheduled occurrence when `allow_duplicate_in_same_slot` is `false` (or repeated `client_request_id`).
   - `400 Bad Request`: Missing mandatory answer (non-`EVIDENCE_ONLY`), missing mandatory/triggered photo or video, video duration exceeded, missing GPS, poor GPS accuracy, coordinates outside configured `CIRCLE`/`POLYGON` geofence, or non-camera `capture_source` / base64 upload attempt.
   - `413 Payload Too Large` / `415 Unsupported Media Type` / `422 Unprocessable Entity`: Size, format, or unknown/inactive config ID errors.
-- **Response (`201 Created`)**: Returns `submission_id`, `submission_reference_id`, `submission_number`, `status`, `approval_status`, `machine_id`, `machine_number`, `vendor_id`, `vendor_name`, `assigned_operator`, `assigned_operator_id`, `user_id`, `submitted_by_name`, `submitted_by_role`, `frequency`, `scheduled_date`, `completion_deadline_date`, `buffer_days`, `allow_duplicate_in_same_slot`, `hour_meter_reading`, `gps`, `photos[]` (with `/api/v1/machine-maintenance/photos/{photo_id}`), `videos[]` (with `/api/v1/machine-maintenance/videos/{video_id}`), `locations[]`, and `submitted_at`.
+- **Response (`201 Created`)**: Returns `submission_id`, `submission_reference_id`, `submission_number`, `status`, `approval_status`, `machine_id`, `machine_number`, `vendor_id`, `vendor_name`, `assigned_operator`, `assigned_operator_id`, `user_id`, `submitted_by_name`, `submitted_by_role`, `frequency`, `scheduled_date`, `completion_deadline_date`, `buffer_days`, `allow_duplicate_in_same_slot`, `hour_meter_reading`, `gps`, `photos[]` (retrieve via `/pm-api/v1/machine-maintenance/photos/{photo_id}`), `videos[]` (retrieve via `/pm-api/v1/machine-maintenance/videos/{video_id}`), `locations[]`, and `submitted_at`.
 
-### 3) `GET /api/v1/machine-maintenance/list`
+### 3) `GET /pm-api/v1/machine-maintenance/list`
 Returns authorized operator context, assigned machines, categories, role assignments, full checklist/section/question/evidence/geofence/schedule configurations (`checklist_items` & `frequency_wise_checklists`), paginated historical submissions (`content[]`), and `page` metadata.
 
 - **Query Filters**: `user_id`, `machine_id`, `frequency`, `category_code`, `status`, `approval_status`, `from_date`, `to_date`, `search`, `page`, `page_size` (1–200).
 
-### 4) `GET /api/v1/machine-maintenance/photos/{photo_id}`
+### 4) `GET /pm-api/v1/machine-maintenance/photos/{photo_id}`
 Streams the authorized camera-captured photo binary from `machine_pm_db` (`BYTEA`), or returns JSON photo metadata (including `question_id`, `photo_configuration_id`, `latitude`, `longitude`, `gps_accuracy`, `operator_id`, `sha256_hash`, `image_url`) when `?metadata=true`. Supports optional `?submission_id=` cross-check.
 
-### 5) `GET /api/v1/machine-maintenance/videos/{video_id}`
+### 5) `GET /pm-api/v1/machine-maintenance/videos/{video_id}`
 Streams the authorized camera-captured video binary (`MP4`/`WEBM`/`MOV`/`MKV`) from `machine_pm_db` (`BYTEA`) with HTTP `206 Partial Content` Range support, or returns JSON video metadata (including `question_id`, `video_configuration_id`, `duration_seconds`, `latitude`, `longitude`, `gps_accuracy`, `operator_id`, `sha256_hash`, `video_url`) when `?metadata=true`. Supports optional `?submission_id=` cross-check.

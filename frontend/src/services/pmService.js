@@ -1,4 +1,4 @@
-import pmApi from './pmApi';
+import pmApi, { PM_API_BASE_URL } from './pmApi';
 
 export const pmService = {
   // Dashboard & Fleet Status
@@ -30,8 +30,16 @@ export const pmService = {
   uploadPhoto: (formData) => pmApi.post('/pm/photos/upload/', formData),
   getPhotos: (params) => pmApi.get('/pm/photos/', { params }),
 
-  // Maintenance Submission & History
+  // Machine Maintenance Mobile & APK Endpoints (/pm-api/v1/machine-maintenance/*)
+  checkMaintenanceEligibility: (params) => pmApi.get('/machine-maintenance/check', { params }),
   postMaintenanceData: (formData) => pmApi.post('/machine-maintenance/data', formData),
+  getMaintenanceList: (params) => pmApi.get('/machine-maintenance/list', { params }),
+  getMaintenancePhoto: (photoId, params) => pmApi.get(`/machine-maintenance/photos/${photoId}`, { params }),
+  getMaintenancePhotoBlob: (photoId, params) =>
+    pmApi.get(`/machine-maintenance/photos/${photoId}`, { params, responseType: 'blob' }),
+  getMaintenanceVideo: (videoId, params) => pmApi.get(`/machine-maintenance/videos/${videoId}`, { params }),
+  getMaintenanceVideoUrl: (videoId) =>
+    `${PM_API_BASE_URL.replace(/\/+$/, '')}/machine-maintenance/videos/${videoId}`,
   submitChecklist: (payload) => pmApi.post('/pm/submissions/', payload),
   getSubmissions: (params) => pmApi.get('/pm/submissions/', { params }),
   getSubmissionDetail: (id) => pmApi.get(`/pm/submissions/${id}/`),

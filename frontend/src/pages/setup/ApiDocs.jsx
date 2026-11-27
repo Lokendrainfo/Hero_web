@@ -20,7 +20,29 @@ import axios from 'axios';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { apiKeyService } from '../../services/apiKeyService';
+import { PM_API_BASE_URL } from '../../services/pmApi';
 import './ApiDocs.css';
+
+const PM_GATEWAY_PREFIX = (PM_API_BASE_URL || '/pm-api/v1').replace(/\/+$/, '');
+
+const resolveEndpointPath = (rawPath, paramValues = {}) => {
+  let resolved = rawPath;
+  Object.keys(paramValues).forEach((key) => {
+    if (resolved.includes(`{${key}}`)) {
+      resolved = resolved.replace(`{${key}}`, encodeURIComponent(paramValues[key] || ''));
+    }
+  });
+  // Normalize repeated slashes without touching protocol prefix
+  resolved = resolved.replace(/([^:]\/)\/+/g, '$1');
+  if (resolved.startsWith('/pm-api/v1')) {
+    const suffix = resolved.slice('/pm-api/v1'.length);
+    const normalizedSuffix = suffix.startsWith('/machine-maintenance/')
+      ? suffix.replace(/\/+$/, '')
+      : suffix;
+    return `${PM_GATEWAY_PREFIX}${normalizedSuffix}`;
+  }
+  return resolved;
+};
 
 const ENDPOINTS_CATALOG = [
   {
@@ -451,7 +473,7 @@ const ENDPOINTS_CATALOG = [
         id: 'machine_maintenance_check',
         method: 'GET',
         title: 'Machine Maintenance Check API',
-        path: '/api/v1/machine-maintenance/check',
+        path: '/pm-api/v1/machine-maintenance/check',
         description: 'Pre-flight eligibility check and dynamic maintenance form fetch for Mobile APK. Validates machine ID, authenticated operator identity & assignment, frequency/schedule window (including configurable Buffer Days and single-weekday Weekly rules), duplicate occurrence locks, and returns the complete Admin-configured maintenance activity details, category, nested sections & multiple questions (including EVIDENCE_ONLY / Evidence Only), conditional photo/video rules, and per-GPS geofence configuration from machine_pm_db.',
         authHeaders: [
           { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>; JWT derives user_id server-side)' },
@@ -732,7 +754,7 @@ const ENDPOINTS_CATALOG = [
         method: 'POST',
         isMultipart: true,
         title: 'Machine Maintenance Data Post API',
-        path: '/api/v1/machine-maintenance/data',
+        path: '/pm-api/v1/machine-maintenance/data',
         description: 'Submit the complete dynamic preventive maintenance form from Mobile APK in a single atomic transaction. Derives authenticated operator identity from Bearer JWT (never trusting spoofed mobile IDs), validates active operator-machine assignment, frequency window & Buffer Days, allow_duplicate_in_same_slot enforcement, dynamic question answers (skipping answers for EVIDENCE_ONLY items), conditional photo/video evidence, video duration/counts/formats, and per-GPS geofence boundaries (Circle/Polygon), storing binaries in machine_pm_db PostgreSQL BYTEA alongside immutable historical configuration snapshots.',
         authHeaders: [
           { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
@@ -848,7 +870,7 @@ const ENDPOINTS_CATALOG = [
                 mime_type: 'image/jpeg',
                 file_size: 48210,
                 image_hash: 'e3b0c44298fc1c149afbf4c8996fb924...',
-                photo_url: '/api/v1/machine-maintenance/photos/45',
+                photo_url: '/pm-api/v1/machine-maintenance/photos/45',
               },
             ],
             videos: [],
@@ -882,7 +904,7 @@ const ENDPOINTS_CATALOG = [
         id: 'machine_maintenance_list',
         method: 'GET',
         title: 'Machine Maintenance List API',
-        path: '/api/v1/machine-maintenance/list',
+        path: '/pm-api/v1/machine-maintenance/list',
         description: 'Returns authenticated operator context, authorized HERO machines with live assigned operator identity, paginated maintenance schedules & submission records (content + page metadata), plus complete checklist master configurations (categories, sections, questions including EVIDENCE_ONLY, photo/video/GPS geofence requirements, Buffer Days & duplicate settings, role assignments, and safety guidelines).',
         authHeaders: [
           { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
@@ -1014,7 +1036,7 @@ const ENDPOINTS_CATALOG = [
         method: 'GET',
         isBinaryResponse: true,
         title: 'Machine Maintenance Photo Retrieval API',
-        path: '/api/v1/machine-maintenance/photos/{photo_id}',
+        path: '/pm-api/v1/machine-maintenance/photos/{photo_id}',
         description: 'Securely streams an authenticated maintenance photograph directly from PostgreSQL BYTEA storage (machine_pm_db.pm_photo_attachment.photo_data), or returns full authorized photo metadata JSON when ?metadata=true is passed. Optionally verifies ?submission_id= ownership. Never exposes filesystem paths or public permanent URLs.',
         authHeaders: [
           { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
@@ -1059,7 +1081,7 @@ const ENDPOINTS_CATALOG = [
             content_type: 'image/jpeg',
             file_size: 48210,
             sha256_hash: 'e3b0c44298fc1c149afbf4c8996fb924...',
-            image_url: '/api/v1/machine-maintenance/photos/45',
+            image_url: '/pm-api/v1/machine-maintenance/photos/45',
           },
           meta: {},
         },
@@ -1075,7 +1097,7 @@ const ENDPOINTS_CATALOG = [
         method: 'GET',
         isBinaryResponse: true,
         title: 'Machine Maintenance Video Retrieval API',
-        path: '/api/v1/machine-maintenance/videos/{video_id}',
+        path: '/pm-api/v1/machine-maintenance/videos/{video_id}',
         description: 'Dedicated authenticated endpoint to securely stream maintenance video evidence from machine_pm_db PostgreSQL BYTEA with HTTP Byte-Range (206 Partial Content) support, or return video metadata JSON when ?metadata=true. Large video binaries are never embedded in JSON.',
         authHeaders: [
           { name: 'X-API-Key', value: '<your_hero_api_key>', required: true, desc: 'Partner/APK API key (or Authorization: Bearer <jwt_token>)' },
@@ -1122,7 +1144,7 @@ const ENDPOINTS_CATALOG = [
             content_type: 'video/mp4',
             file_size: 412890,
             sha256_hash: '9f86d081884c7d659a2feaa0c55ad015...',
-            video_url: '/api/v1/machine-maintenance/videos/9',
+            video_url: '/pm-api/v1/machine-maintenance/videos/9',
           },
           meta: {},
         },
@@ -1163,6 +1185,7 @@ export const ApiDocs = () => {
   const [codeTab, setCodeTab] = useState('curl');
   const [paramValues, setParamValues] = useState({});
   const [pgMultipartFiles, setPgMultipartFiles] = useState([{ fieldName: 'photo_16', file: null }]);
+  const [pgAuthMode, setPgAuthMode] = useState('auto');
   const [pgLoading, setPgLoading] = useState(false);
   const [pgResponse, setPgResponse] = useState(null);
   const [toastMsg, setToastMsg] = useState(null);
@@ -1282,18 +1305,14 @@ export const ApiDocs = () => {
 
   // Construct dynamic full URL for selected endpoint
   const currentEndpointUrl = useMemo(() => {
-    let p = selectedEndpoint.path;
-    Object.keys(paramValues).forEach((key) => {
-      if (p.includes(`{${key}}`)) {
-        p = p.replace(`{${key}}`, encodeURIComponent(paramValues[key] || ''));
-      }
-    });
+    const p = resolveEndpointPath(selectedEndpoint.path, paramValues);
     const queryParams = selectedEndpoint.params
       ?.filter((item) => item.in === 'query' && paramValues[item.name])
       .map((item) => `${encodeURIComponent(item.name)}=${encodeURIComponent(paramValues[item.name])}`)
       .join('&');
 
     const fullPath = queryParams ? `${p}?${queryParams}` : p;
+    if (/^https?:\/\//i.test(fullPath)) return fullPath;
     return `${baseUrl}${fullPath}`;
   }, [selectedEndpoint, paramValues, baseUrl]);
 
@@ -1302,15 +1321,11 @@ export const ApiDocs = () => {
     setPgLoading(true);
     setPgResponse(null);
     const startTime = performance.now();
-    const token = apiKeyData?.key || 'hero_live_partner_key';
+    const activeApiKey = apiKeyData?.is_active && apiKeyData?.key ? apiKeyData.key : '';
+    const bearerToken = localStorage.getItem('access_token') || '';
 
     try {
-      let resolvedPath = selectedEndpoint.path;
-      Object.keys(paramValues).forEach((key) => {
-        if (resolvedPath.includes(`{${key}}`)) {
-          resolvedPath = resolvedPath.replace(`{${key}}`, paramValues[key] || '');
-        }
-      });
+      const resolvedPath = resolveEndpointPath(selectedEndpoint.path, paramValues);
 
       const qParams = {};
       selectedEndpoint.params
@@ -1327,14 +1342,28 @@ export const ApiDocs = () => {
         });
 
       const isTD = selectedEndpoint.id === 'td_monitoring' || selectedEndpoint.id === 'bharatnet_td_monitoring';
-      const headers = isTD
-        ? {
-            'Authorization': 'Basic ' + btoa('bharatnet_service:BharatNet@2026!Secure'),
-            'Accept': 'application/json',
-          }
-        : {
-            'X-API-Key': token,
-          };
+      let headers = {};
+      if (isTD) {
+        headers = {
+          'Authorization': 'Basic ' + btoa('bharatnet_service:BharatNet@2026!Secure'),
+          'Accept': 'application/json',
+        };
+      } else if (pgAuthMode === 'jwt' && bearerToken) {
+        headers = { Authorization: `Bearer ${bearerToken}` };
+      } else if (pgAuthMode === 'api_key') {
+        headers = { 'X-API-Key': activeApiKey || apiKeyData?.key || 'hero_live_partner_key' };
+      } else if (pgAuthMode === 'none') {
+        headers = {};
+      } else {
+        // 'auto': preserve JWT Bearer when active API key is unavailable; prefer active API key otherwise
+        if (activeApiKey) {
+          headers = { 'X-API-Key': activeApiKey };
+        } else if (bearerToken) {
+          headers = { Authorization: `Bearer ${bearerToken}` };
+        } else {
+          headers = { 'X-API-Key': 'hero_live_partner_key' };
+        }
+      }
 
       let requestData = Object.keys(bodyParams).length > 0 ? bodyParams : undefined;
       if (selectedEndpoint.isMultipart) {
@@ -1348,7 +1377,6 @@ export const ApiDocs = () => {
           }
         });
         requestData = fd;
-        headers['Content-Type'] = 'multipart/form-data';
       }
 
       const wantsMeta = ['1', 'true', 'yes'].includes(String(qParams.metadata || qParams.meta || '').toLowerCase());
@@ -1391,11 +1419,20 @@ export const ApiDocs = () => {
       });
     } catch (err) {
       const elapsed = Math.round(performance.now() - startTime);
+      let errPayload = err.response?.data || { error: err.message };
+      if (errPayload instanceof Blob) {
+        try {
+          const text = await errPayload.text();
+          errPayload = JSON.parse(text);
+        } catch (_) {
+          errPayload = { error: err.message, status: err.response?.status };
+        }
+      }
       setPgResponse({
         status: err.response?.status || 500,
         statusText: err.response?.statusText || 'Error',
         latency: elapsed,
-        data: err.response?.data || { error: err.message },
+        data: errPayload,
       });
     } finally {
       setPgLoading(false);
@@ -1985,8 +2022,25 @@ print(response.json())`;
           {/* Live Playground ("Try It") */}
           <div className="playground-box">
             <div className="section-subtitle-row" style={{ marginTop: 0 }}>
-              <h3 className="section-h3">Live Playground</h3>
-              <p className="section-hint">Test request directly against your HERO environment</p>
+              <div>
+                <h3 className="section-h3">Live Playground</h3>
+                <p className="section-hint">Test request directly against your HERO environment</p>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <label htmlFor="pg-auth-mode" className="pg-label" style={{ margin: 0 }}>Auth:</label>
+                <select
+                  id="pg-auth-mode"
+                  className="pg-input"
+                  style={{ width: 'auto', minWidth: '175px', padding: '5px 8px', fontSize: '12px' }}
+                  value={pgAuthMode}
+                  onChange={(e) => setPgAuthMode(e.target.value)}
+                >
+                  <option value="auto">Auto (API Key / Bearer)</option>
+                  <option value="jwt">Bearer JWT (Session)</option>
+                  <option value="api_key">Partner X-API-Key</option>
+                  <option value="none">No Auth (Test 401)</option>
+                </select>
+              </div>
             </div>
 
             {selectedEndpoint.params && selectedEndpoint.params.length > 0 && (

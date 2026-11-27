@@ -59,12 +59,22 @@ pmApi.interceptors.response.use(
 );
 
 /**
- * Resolves a protected photo view URL (e.g. "/api/v1/pm/photos/12/view/") into an authenticated Blob Object URL.
+ * Resolves a protected photo/video view URL (e.g. "/pm-api/v1/machine-maintenance/photos/45"
+ * or "/api/v1/pm/photos/12/view/") into an authenticated Blob Object URL.
  */
 export const fetchProtectedPhotoBlobUrl = async (viewUrl) => {
   if (!viewUrl) return '';
   if (viewUrl.startsWith('blob:') || viewUrl.startsWith('data:')) return viewUrl;
-  const relPath = viewUrl.replace(/^\/?api\/v1/, '');
+  let normalized = viewUrl.trim();
+  if (/^https?:\/\//i.test(normalized)) {
+    try {
+      const parsed = new URL(normalized);
+      normalized = `${parsed.pathname}${parsed.search}`;
+    } catch (_) {
+      // Keep original string if URL parsing fails
+    }
+  }
+  const relPath = normalized.replace(/^\/?(?:pm-api|api)\/v1(?=\/|$)/, '');
   const blob = await pmApi.get(relPath, { responseType: 'blob' });
   return URL.createObjectURL(blob);
 };
