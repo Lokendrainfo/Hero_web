@@ -727,7 +727,9 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
                 or (isinstance(raw_val, str) and raw_val.strip() == '')
                 or (isinstance(raw_val, list) and len(raw_val) == 0)
             )
-            if cf.field_type == ChecklistCustomFieldConfig.TYPE_CHECKBOX and not opt_list:
+            if cf.field_type == ChecklistCustomFieldConfig.TYPE_EVIDENCE_ONLY:
+                clean_val = None
+            elif cf.field_type == ChecklistCustomFieldConfig.TYPE_CHECKBOX and not opt_list:
                 if cf.is_mandatory and not bool(raw_val):
                     raise ValidationError(
                         {"custom_fields": f"Mandatory question '{cf.field_label}' must be checked for '{ci.description}'."}
@@ -805,6 +807,7 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
             sec_desc = sec_obj.section_description if sec_obj else ""
             sec_order = sec_obj.display_order if sec_obj else None
 
+            is_ev_only = cf.field_type == ChecklistCustomFieldConfig.TYPE_EVIDENCE_ONLY
             saved_custom_fields.append(
                 {
                     "field_id": cf.id,
@@ -814,7 +817,8 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
                     "field_label": cf.field_label,
                     "field_description": cf.field_description,
                     "field_type": cf.field_type,
-                    "is_mandatory": cf.is_mandatory,
+                    "is_evidence_only": is_ev_only,
+                    "is_mandatory": False if is_ev_only else cf.is_mandatory,
                     "value": clean_val,
                 }
             )
@@ -829,8 +833,9 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
                     "question_name": cf.field_label,
                     "question_description": cf.field_description,
                     "answer_type": cf.field_type,
+                    "is_evidence_only": is_ev_only,
                     "options_snapshot": opt_list,
-                    "is_mandatory": cf.is_mandatory,
+                    "is_mandatory": False if is_ev_only else cf.is_mandatory,
                     "answer": clean_val,
                     "cf_obj": cf,
                 }

@@ -832,4 +832,192 @@ class TestMobileApkDynamicIntegration:
         cl_res3 = op_alpha.get(f'/api/v1/pm/checklist/?frequency=WEEKLY&machine_id={m1.id}')
         assert [g['category_code'] for g in cl_res3.json()['data']['category_groups']] == ['MACHINE']
 
+    def test_mobile_api_complete_latest_features_contract(
+        self, seeded_masters, users, machines, make_auth_client
+    ):
+        call_command('cleanup_legacy_pm_config', execute=True)
+        m1, _ = machines
+        admin_client = make_auth_client(users['admin'])
+        op_alpha = make_auth_client(users['operator'])
+        today = timezone.localdate()
+        weekday_name = today.strftime('%A').upper()
+
+        cfg = self._save_cfg(
+            admin_client,
+            {
+                'item_code': 'TEST-CONTRACT-001',
+                'activity_name': 'TEST-CONTRACT Full Feature Activity',
+                'description': 'Covers sections, EVIDENCE_ONLY, buffer_days, geofence, and operator auth',
+                'frequency': 'WEEKLY',
+                'frequency_schedule': {
+                    'schedule_type': 'WEEKLY_DAYS',
+                    'selected_weekdays': [weekday_name],
+                    'buffer_days': 3,
+                    'allow_duplicate_in_same_slot': False,
+                },
+                'questions_enabled': True,
+                'sections': [
+                    {
+                        'section_name': 'Section A — Check & Evidence Only',
+                        'section_description': 'Mixed standard question + Evidence Only item',
+                        'display_order': 1,
+                        'questions': [
+                            {
+                                'temp_key': 'q_std',
+                                'question_name': 'Is Gauge Normal?',
+                                'answer_type': 'YES_NO',
+                                'is_mandatory': True,
+                                'display_order': 1,
+                            },
+                            {
+                                'temp_key': 'q_ev',
+                                'question_name': '',
+                                'answer_type': 'EVIDENCE_ONLY',
+                                'is_mandatory': False,
+                                'display_order': 2,
+                                'is_photo_required': True,
+                                'photos': [
+                                    {
+                                        'photo_name': 'Gauge Proof Photo',
+                                        'photo_description': 'Live photo capture',
+                                        'is_mandatory': True,
+                                        'display_order': 1,
+                                    }
+                                ],
+                                'is_video_required': True,
+                                'videos': [
+                                    {
+                                        'video_name': 'Gauge Walkaround Video',
+                                        'max_duration_seconds': 20,
+                                        'min_videos': 1,
+                                        'max_videos': 1,
+                                        'is_mandatory': True,
+                                        'display_order': 1,
+                                    }
+                                ],
+                                'is_location_required': True,
+                                'locations': [
+                                    {
+                                        'location_name': 'Circle Geofence Check',
+                                        'capture_latitude': True,
+                                        'capture_longitude': True,
+                                        'accuracy_threshold_meters': 40.0,
+                                        'capture_timestamp': True,
+                                        'is_mandatory': True,
+                                        'is_geofence_required': True,
+                                        'geofence_type': 'CIRCLE',
+                                        'geofence_reference_name': 'Jaipur Depot',
+                                        'geofence_latitude': 28.613939,
+                                        'geofence_longitude': 77.209021,
+                                        'geofence_radius_meters': 200.0,
+                                        'condition_mode': 'ALWAYS',
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+
+        # 1) GET /check returns all latest dynamic metadata cleanly
+        chk_res = op_alpha.get(
+            f"/api/v1/machine-maintenance/check?machine_id={m1.id}&frequency=WEEKLY"
+        )
+        assert chk_res.status_code == 200, chk_res.json()
+        chk_data = chk_res.json()['data']
+        assert chk_data['eligible'] is True
+        assert chk_data['machine']['assigned_operator'] == 'Ravi Operator'
+        assert chk_data['frequency']['frequency_type'] == 'WEEKLY'
+        assert chk_data['maintenance']['category_id'] is not None
+        assert chk_data['maintenance']['activity_status'] == 'ACTIVE'
+        assert chk_data['maintenance']['is_active'] is True
+        assert chk_data['maintenance']['frequency_type'] == 'WEEKLY'
+        assert chk_data['maintenance']['buffer_days'] == 3
+        assert chk_data['maintenance']['allow_duplicate_in_same_slot'] is False
+        assert chk_data['maintenance']['original_scheduled_date'] == today.isoformat()
+        assert len(chk_data['activities'][0]['sections']) == 1
+        sec_questions = chk_data['activities'][0]['sections'][0]['questions']
+        assert [q['answer_type'] for q in sec_questions] == ['YES_NO', 'EVIDENCE_ONLY']
+        assert sec_questions[1]['is_evidence_only'] is True
+
+        geofence_rule = chk_data['gps_configuration']['location_validation_rules'][0]
+        assert geofence_rule['is_geofence_required'] is True
+        assert geofence_rule['geofence_type'] == 'CIRCLE'
+        assert geofence_rule['geofence_radius_meters'] == 200.0
+
+        q_std_id = sec_questions[0]['id']
+        photo_cfg_id = chk_data['photo_requirements'][0]['id']
+        video_cfg_id = chk_data['video_requirements'][0]['id']
+        loc_cfg_id = geofence_rule['location_requirement_id']
+
+        # 2) GET /list returns operator-scoped machines and enriched checklist metadata
+        list_res = op_alpha.get('/api/v1/machine-maintenance/list?frequency=WEEKLY')
+        assert list_res.status_code == 200, list_res.json()
+        list_data = list_res.json()['data']
+        contract_item = next(x for x in list_data['checklist_items'] if x['id'] == cfg['id'])
+        assert contract_item['activity_id'] == cfg['id']
+        assert contract_item['activity_status'] == 'ACTIVE'
+        assert contract_item['category_id'] is not None
+        assert len(contract_item['sections']) == 1
+
+        # 3) POST /data omitting answer on EVIDENCE_ONLY succeeds with photo+video+inside-geofence GPS
+        img = make_test_image(color=(10, 120, 200), filename='contract.jpg', fmt='JPEG')
+        vid = make_test_video(tag=b'contract1', filename='contract.mp4', ext='mp4')
+        post_payload = {
+            'machine_id': str(m1.id),
+            'frequency': 'WEEKLY',
+            'scheduled_date': today.isoformat(),
+            'hour_meter_reading': '275.0',
+            'capture_source': 'CAMERA',
+            'gps': json.dumps({
+                'latitude': 28.613939,
+                'longitude': 77.209021,
+                'accuracy_meters': 10.0,
+                'captured_at': timezone.now().isoformat(),
+            }),
+            'responses': json.dumps([
+                {
+                    'checklist_item_id': cfg['id'],
+                    'status': 'COMPLETED',
+                    'remarks': 'Contract test passed',
+                    'custom_fields': {str(q_std_id): 'Yes'},
+                    'video_durations': {str(video_cfg_id): [8.0]},
+                    'locations': {
+                        str(loc_cfg_id): {
+                            'latitude': 28.613939,
+                            'longitude': 77.209021,
+                            'accuracy_meters': 10.0,
+                            'captured_at': timezone.now().isoformat(),
+                        }
+                    },
+                }
+            ]),
+            f'photo_{cfg["id"]}_req_{photo_cfg_id}': img,
+            f'video_{cfg["id"]}_req_{video_cfg_id}_0': vid,
+        }
+        post_res = op_alpha.post('/api/v1/machine-maintenance/data', post_payload, format='multipart')
+        assert post_res.status_code == 201, post_res.json()
+        pdata = post_res.json()['data']
+        assert pdata['assigned_operator'] == 'Ravi Operator'
+        assert pdata['scheduled_date'] == today.isoformat()
+        assert pdata['buffer_days'] == 3
+        assert pdata['allow_duplicate_in_same_slot'] is False
+        assert pdata['gps']['latitude'] == 28.613939
+
+        # 4) Duplicate submission in same slot rejected with 409; photos & videos endpoints work
+        photo_id = pdata['photos'][0]['photo_id']
+        video_id = pdata['videos'][0]['video_id']
+        assert op_alpha.get(f'/api/v1/machine-maintenance/photos/{photo_id}?metadata=true').status_code == 200
+        v_range = op_alpha.get(f'/api/v1/machine-maintenance/videos/{video_id}', HTTP_RANGE='bytes=0-15')
+        assert v_range.status_code == 206
+
+        img2 = make_test_image(color=(20, 130, 210), filename='contract2.jpg', fmt='JPEG')
+        vid2 = make_test_video(tag=b'contract2', filename='contract2.mp4', ext='mp4')
+        post_payload[f'photo_{cfg["id"]}_req_{photo_cfg_id}'] = img2
+        post_payload[f'video_{cfg["id"]}_req_{video_cfg_id}_0'] = vid2
+        dup_res = op_alpha.post('/api/v1/machine-maintenance/data', post_payload, format='multipart')
+        assert dup_res.status_code == 409
+
+
 

@@ -216,6 +216,7 @@ def _serialize_question_dict(q, photos_by_q: dict, videos_by_q: dict, locs_by_q:
         "field_name": q.field_name,
         "question_description": q.field_description,
         "answer_type": q.field_type,
+        "is_evidence_only": q.field_type == ChecklistCustomFieldConfig.TYPE_EVIDENCE_ONLY,
         "options": opts,
         "is_mandatory": q.is_mandatory,
         "display_order": q.display_order,
@@ -445,6 +446,15 @@ def _resolve_and_validate_rules(
         if self_question_id is not None and src_q.id == self_question_id:
             raise ValidationError(
                 {"condition_rules": f"{owner_label}: A question cannot depend on itself."}
+            )
+        if src_q.field_type == ChecklistCustomFieldConfig.TYPE_EVIDENCE_ONLY:
+            raise ValidationError(
+                {
+                    "condition_rules": (
+                        f"{owner_label}: Condition rule #{r_idx} cannot reference an "
+                        "'Evidence Only (No Answer)' configuration because it has no answer."
+                    )
+                }
             )
 
         op = str(r.get("operator") or "EQUALS").strip().upper()
@@ -850,14 +860,18 @@ def save_unified_activity_configuration(
                 raise ValidationError({"questions": f"Section '{sec_name}': invalid questions list."})
 
             for q_idx, q in enumerate(sec_questions, start=1):
-                if not isinstance(q, dict) or not str(q.get("question_name") or "").strip():
-                    raise ValidationError(
-                        {"questions": f"Section '{sec_name}': Question Name is required for Question #{q_idx}."}
-                    )
+                if not isinstance(q, dict):
+                    raise ValidationError({"questions": f"Section '{sec_name}': Invalid question payload at Question #{q_idx}."})
                 a_type = str(q.get("answer_type") or "TEXT").strip().upper()
                 if a_type not in VALID_ANSWER_TYPES:
                     raise ValidationError(
                         {"questions": f"Section '{sec_name}': Invalid answer type '{a_type}' for Question #{q_idx}."}
+                    )
+                is_ev_only = a_type == ChecklistCustomFieldConfig.TYPE_EVIDENCE_ONLY
+                q_name_val = str(q.get("question_name") or "").strip()
+                if not is_ev_only and not q_name_val:
+                    raise ValidationError(
+                        {"questions": f"Section '{sec_name}': Question Name is required for Question #{q_idx}."}
                     )
                 if a_type in OPTION_ANSWER_TYPES:
                     opts = [str(o).strip() for o in (q.get("options") or []) if str(o).strip()]
@@ -865,24 +879,41 @@ def save_unified_activity_configuration(
                         raise ValidationError(
                             {
                                 "questions": (
-                                    f"Section '{sec_name}' -> Question #{q_idx} ({q['question_name']}) "
+                                    f"Section '{sec_name}' -> Question #{q_idx} ({q_name_val}) "
                                     "requires at least one answer option."
                                 )
                             }
                         )
 
-                q_label = f"Section '{sec_name}' -> Question '{q['question_name']}'"
-                if bool(q.get("is_photo_required", False)):
+                has_photo = bool(q.get("is_photo_required", False))
+                has_video = bool(q.get("is_video_required", False))
+                has_gps = bool(q.get("is_location_required", False))
+                if is_ev_only and not (has_photo or has_video or has_gps):
+                    raise ValidationError(
+                        {
+                            "questions": (
+                                f"Section '{sec_name}' -> Item #{q_idx} (Evidence Only): "
+                                "Enable at least one Photo, Video, or GPS requirement."
+                            )
+                        }
+                    )
+
+                q_label = (
+                    f"Section '{sec_name}' -> Evidence Only #{q_idx}"
+                    if (is_ev_only and not q_name_val)
+                    else f"Section '{sec_name}' -> Question '{q_name_val}'"
+                )
+                if has_photo:
                     q_photos = q.get("photos") or []
                     if not isinstance(q_photos, list) or len(q_photos) == 0:
                         raise ValidationError({"photos": f"{q_label}: Photo Required is Yes; add at least one photo."})
                     _validate_photo_entries(q_photos, q_label)
-                if bool(q.get("is_video_required", False)):
+                if has_video:
                     q_videos = q.get("videos") or []
                     if not isinstance(q_videos, list) or len(q_videos) == 0:
                         raise ValidationError({"videos": f"{q_label}: Video Required is Yes; add at least one video."})
                     _validate_video_entries(q_videos, q_label)
-                if bool(q.get("is_location_required", False)):
+                if has_gps:
                     q_locs = q.get("locations") or []
                     if not isinstance(q_locs, list) or len(q_locs) == 0:
                         raise ValidationError({"locations": f"{q_label}: Location Required is Yes; configure GPS settings."})
@@ -1010,14 +1041,17 @@ def save_unified_activity_configuration(
             for q_idx, q in enumerate(sec_questions, start=1):
                 global_q_counter += 1
                 q_id = q.get("id")
-                q_name = str(q["question_name"]).strip()
                 a_type = str(q.get("answer_type") or "TEXT").strip().upper()
+                is_ev_only = a_type == ChecklistCustomFieldConfig.TYPE_EVIDENCE_ONLY
+                q_name = str(q.get("question_name") or "").strip() if not is_ev_only else ""
                 opts = (
                     [str(o).strip() for o in (q.get("options") or []) if str(o).strip()]
                     if a_type in OPTION_ANSWER_TYPES
                     else []
                 )
-                f_name = str(q.get("field_name") or "").strip() or _slug_field_name(q_name, global_q_counter)
+                f_name = str(q.get("field_name") or "").strip() or _slug_field_name(
+                    q_name or f"evidence_only_{global_q_counter}", global_q_counter
+                )
                 if f_name in used_field_names:
                     f_name = f"{f_name[:54]}_{s_idx}_{q_idx}"
                 used_field_names.add(f_name)
@@ -1032,7 +1066,7 @@ def save_unified_activity_configuration(
                     "field_description": str(q.get("question_description") or "").strip(),
                     "field_type": a_type,
                     "options": opts,
-                    "is_mandatory": bool(q.get("is_mandatory", False)),
+                    "is_mandatory": False if is_ev_only else bool(q.get("is_mandatory", False)),
                     "display_order": int(q.get("display_order") or q_idx),
                     "is_active": bool(q.get("is_active", True)),
                 }

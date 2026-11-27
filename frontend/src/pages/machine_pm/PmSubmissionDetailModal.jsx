@@ -158,6 +158,14 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '8px' }}>
                     {sec.questions.map((qa, cIdx) => {
+                      if (qa.type === 'EVIDENCE_ONLY') {
+                        return (
+                          <div key={qa.id || cIdx} style={{ fontSize: '0.76rem' }}>
+                            <span className="badge-pill badge-blue">Evidence Only (No Answer)</span>
+                            {qa.description ? <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px' }}>{qa.description}</div> : null}
+                          </div>
+                        );
+                      }
                       const displayVal = Array.isArray(qa.value) ? qa.value.join(', ') : (qa.value !== null && qa.value !== undefined && String(qa.value) !== '' ? String(qa.value) : 'Not answered');
                       return (
                         <div key={qa.id || cIdx} style={{ fontSize: '0.76rem' }}>
@@ -181,6 +189,14 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '8px', padding: '10px', background: 'var(--bg-subtle)', borderRadius: '6px', border: '1px solid var(--border)' }}>
               {questionAnswers.map((qa, cIdx) => {
+                if (qa.type === 'EVIDENCE_ONLY') {
+                  return (
+                    <div key={qa.id || cIdx} style={{ fontSize: '0.76rem' }}>
+                      <span className="badge-pill badge-blue">Evidence Only (No Answer)</span>
+                      {qa.description ? <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px' }}>{qa.description}</div> : null}
+                    </div>
+                  );
+                }
                 const displayVal = Array.isArray(qa.value) ? qa.value.join(', ') : (qa.value !== null && qa.value !== undefined && String(qa.value) !== '' ? String(qa.value) : 'Not answered');
                 return (
                   <div key={qa.id || cIdx} style={{ fontSize: '0.76rem' }}>

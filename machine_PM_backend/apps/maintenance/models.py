@@ -440,6 +440,7 @@ class ChecklistCustomFieldConfig(models.Model):
     TYPE_DATE = 'DATE'
     TYPE_TIME = 'TIME'
     TYPE_YES_NO = 'YES_NO'
+    TYPE_EVIDENCE_ONLY = 'EVIDENCE_ONLY'
     FIELD_TYPE_CHOICES = (
         (TYPE_YES_NO, 'Yes / No'),
         (TYPE_DROPDOWN, 'Dropdown'),
@@ -448,6 +449,7 @@ class ChecklistCustomFieldConfig(models.Model):
         (TYPE_MULTI_SELECT, 'Multiple Selection'),
         (TYPE_NUMBER, 'Number'),
         (TYPE_TEXT, 'Text'),
+        (TYPE_EVIDENCE_ONLY, 'Evidence Only (No Answer)'),
         (TYPE_TEXTAREA, 'Textarea'),
         (TYPE_DATE, 'Date'),
         (TYPE_TIME, 'Time'),
@@ -481,7 +483,7 @@ class ChecklistCustomFieldConfig(models.Model):
         help_text="Leave null to apply across all frequencies for this checklist item",
     )
     field_name = models.CharField(max_length=80, db_index=True)
-    field_label = models.CharField(max_length=150)
+    field_label = models.CharField(max_length=150, blank=True, default='')
     field_description = models.TextField(blank=True, default='')
     field_type = models.CharField(max_length=20, choices=FIELD_TYPE_CHOICES, default=TYPE_TEXT)
     options = models.JSONField(default=list, blank=True, help_text="Option values for Dropdown / Radio / Multiple Selection")
@@ -862,7 +864,7 @@ class MaintenanceQuestionResponse(models.Model):
     section_name_snapshot = models.CharField(max_length=150, blank=True, default='')
     section_description_snapshot = models.TextField(blank=True, default='')
     section_display_order_snapshot = models.PositiveIntegerField(null=True, blank=True)
-    question_name_snapshot = models.CharField(max_length=150)
+    question_name_snapshot = models.CharField(max_length=150, blank=True, default='')
     question_description_snapshot = models.TextField(blank=True, default='')
     answer_type_snapshot = models.CharField(max_length=20)
     is_mandatory_snapshot = models.BooleanField(default=False)

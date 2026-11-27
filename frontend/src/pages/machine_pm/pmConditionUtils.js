@@ -5,8 +5,10 @@ export const ANSWER_TYPE_OPTIONS = [
   { value: 'MULTI_SELECT', label: 'Multiple Selection' },
   { value: 'NUMBER', label: 'Number' },
   { value: 'TEXT', label: 'Text' },
+  { value: 'EVIDENCE_ONLY', label: 'Evidence Only (No Answer)' },
 ];
 
+export const EVIDENCE_ONLY_ANSWER_TYPE = 'EVIDENCE_ONLY';
 export const OPTION_ANSWER_TYPES = new Set(['DROPDOWN', 'RADIO', 'CHECKBOX', 'MULTI_SELECT']);
 
 export const OPERATOR_LABELS = {

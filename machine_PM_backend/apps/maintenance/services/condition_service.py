@@ -11,6 +11,7 @@ ALLOWED_OPERATORS_BY_TYPE = {
     ChecklistCustomFieldConfig.TYPE_TEXTAREA: ('EQUALS', 'NOT_EQUALS', 'CONTAINS'),
     ChecklistCustomFieldConfig.TYPE_DATE: ('EQUALS', 'NOT_EQUALS', 'GREATER_THAN', 'LESS_THAN'),
     ChecklistCustomFieldConfig.TYPE_TIME: ('EQUALS', 'NOT_EQUALS', 'GREATER_THAN', 'LESS_THAN'),
+    ChecklistCustomFieldConfig.TYPE_EVIDENCE_ONLY: (),
 }
 
 
@@ -149,11 +150,12 @@ def evaluate_activity_visibility(
         question_visibility[q.id] = is_vis
         if is_vis:
             visible_questions.append(q)
-            val = raw_answers_map.get(str(q.id))
-            if val is None and str(q.id) not in raw_answers_map:
-                val = raw_answers_map.get(q.field_name)
-            effective_answers[str(q.id)] = val
-            effective_answers[q.field_name] = val
+            if q.field_type != ChecklistCustomFieldConfig.TYPE_EVIDENCE_ONLY:
+                val = raw_answers_map.get(str(q.id))
+                if val is None and str(q.id) not in raw_answers_map:
+                    val = raw_answers_map.get(q.field_name)
+                effective_answers[str(q.id)] = val
+                effective_answers[q.field_name] = val
 
     def _is_parent_question_visible(req_obj) -> bool:
         qid = getattr(req_obj, 'question_id', None)

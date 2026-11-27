@@ -67,6 +67,7 @@ def get_dynamic_configs_for_items(item_ids: list[int], frequency_id: int | None 
                 "field_label": cf.field_label,
                 "field_description": cf.field_description,
                 "field_type": cf.field_type,
+                "is_evidence_only": cf.field_type == ChecklistCustomFieldConfig.TYPE_EVIDENCE_ONLY,
                 "options": opt_values,
                 "is_mandatory": cf.is_mandatory,
                 "is_active": cf.is_active,

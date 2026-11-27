@@ -494,6 +494,7 @@ export const PmFormPage = () => {
       const { visibleQuestions, allPhotos, visiblePhotos, visibleVideos, visibleLocations } = evaluateActivityVisibility(it, cfAnswers);
 
       visibleQuestions.forEach((cf) => {
+        if (cf.field_type === 'EVIDENCE_ONLY') return;
         if (cf.is_mandatory) {
           requiredQuestionsTotal += 1;
           if (!isEmptyAnswer(cfAnswers[cf.id])) {
@@ -630,6 +631,7 @@ export const PmFormPage = () => {
       const itemErrs = [];
 
       for (const cf of visibleQuestions) {
+        if (cf.field_type === 'EVIDENCE_ONLY') continue;
         const rawVal = cfValues[cf.id];
         if (cf.is_mandatory && isEmptyAnswer(rawVal)) {
           const qMsg = `Mandatory question "${cf.field_label}" is required.`;
@@ -810,6 +812,7 @@ export const PmFormPage = () => {
       const visibleAnswers = {};
       const questionResponses = [];
       visibleQuestions.forEach((q) => {
+        if (q.field_type === 'EVIDENCE_ONLY') return;
         let ansVal;
         if (Object.prototype.hasOwnProperty.call(st.custom_fields || {}, String(q.id))) {
           ansVal = st.custom_fields[String(q.id)];
@@ -1437,6 +1440,11 @@ export const PmFormPage = () => {
       const qVideos = videoRequirements.filter((v) => String(v.question_id || '') === String(cf.id));
       const qLocations = locationRequirements.filter((l) => String(l.question_id || '') === String(cf.id));
       const hasQuestionEvidence = qPhotos.length > 0 || qVideos.length > 0 || qLocations.length > 0;
+      const isEvidenceOnly = cf.field_type === 'EVIDENCE_ONLY';
+
+      if (isEvidenceOnly && !hasQuestionEvidence) {
+        return null;
+      }
 
       return (
         <div
@@ -1451,25 +1459,41 @@ export const PmFormPage = () => {
             gap: '10px',
           }}
         >
-          <div id={`pm-question-${item.id}-${cf.id}`}>
-            <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, marginBottom: '4px', color: 'var(--text-primary)' }}>
-              {cf.field_label} {cf.is_mandatory ? <span style={{ color: 'var(--danger)' }}>*</span> : <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(Optional)</span>}
-            </label>
-            {cf.field_description ? (
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                {cf.field_description}
-              </div>
-            ) : null}
-            {renderCustomFieldInput(item, cf, (state.custom_fields || {})[cf.id])}
-            {validationErrors.questionErrors[`${item.id}:${cf.id}`] && (
-              <div style={{ fontSize: '0.74rem', color: '#dc2626', fontWeight: 600, marginTop: '4px' }}>
-                {validationErrors.questionErrors[`${item.id}:${cf.id}`]}
-              </div>
-            )}
-          </div>
+          {isEvidenceOnly ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+              <span className="badge-pill badge-blue">Evidence Only (No Answer)</span>
+              {cf.field_description ? (
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{cf.field_description}</span>
+              ) : null}
+            </div>
+          ) : (
+            <div id={`pm-question-${item.id}-${cf.id}`}>
+              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, marginBottom: '4px', color: 'var(--text-primary)' }}>
+                {cf.field_label} {cf.is_mandatory ? <span style={{ color: 'var(--danger)' }}>*</span> : <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(Optional)</span>}
+              </label>
+              {cf.field_description ? (
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                  {cf.field_description}
+                </div>
+              ) : null}
+              {renderCustomFieldInput(item, cf, (state.custom_fields || {})[cf.id])}
+              {validationErrors.questionErrors[`${item.id}:${cf.id}`] && (
+                <div style={{ fontSize: '0.74rem', color: '#dc2626', fontWeight: 600, marginTop: '4px' }}>
+                  {validationErrors.questionErrors[`${item.id}:${cf.id}`]}
+                </div>
+              )}
+            </div>
+          )}
 
           {hasQuestionEvidence && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '8px', borderTop: '1px dashed var(--border-strong)' }}>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                ...(isEvidenceOnly ? {} : { paddingTop: '8px', borderTop: '1px dashed var(--border-strong)' }),
+              }}
+            >
               {qPhotos.length > 0 && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '8px' }}>
                   {qPhotos.map((req, pIdx) => renderPhotoCaptureSlot(item, req, pIdx + 1))}

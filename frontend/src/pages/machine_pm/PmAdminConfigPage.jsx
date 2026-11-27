@@ -304,8 +304,16 @@ const EvidenceConditionEditor = ({
   const parentKey = getQuestionKey(parentQuestion);
   const rules = Array.isArray(conditionRules) ? conditionRules : [];
   const cleanOpts = (parentQuestion.options || []).map((o) => String(o).trim()).filter(Boolean);
+  const isParentEvidenceOnly = String(parentQuestion?.answer_type || '').toUpperCase() === 'EVIDENCE_ONLY';
+  const otherAnswerableQuestions = (allQuestions || []).filter(
+    (q) =>
+      q.is_active !== false &&
+      String(q.answer_type || '').toUpperCase() !== 'EVIDENCE_ONLY' &&
+      getQuestionKey(q) !== parentKey
+  );
 
   const isSingleParentEq =
+    !isParentEvidenceOnly &&
     conditionMode === 'CONDITIONAL' &&
     rules.length === 1 &&
     String(rules[0]?.source_question_key ?? rules[0]?.source_question_id ?? '') === parentKey &&
@@ -357,7 +365,7 @@ const EvidenceConditionEditor = ({
       applyParentRule(cleanOpts[0] || '');
       return;
     }
-    // CUSTOM
+    const defaultQ = isParentEvidenceOnly ? otherAnswerableQuestions[0] : parentQuestion;
     const defaultOps = [{ value: 'EQUALS' }];
     onChange({
       condition_mode: 'CONDITIONAL',
@@ -365,14 +373,16 @@ const EvidenceConditionEditor = ({
       condition_rules:
         rules.length > 0
           ? rules
-          : [
-              {
-                source_question_key: parentKey,
-                source_question_id: parentQuestion.id || null,
-                operator: defaultOps[0].value,
-                expected_value: parentQuestion.answer_type === 'YES_NO' ? 'Yes' : cleanOpts[0] || '',
-              },
-            ],
+          : defaultQ
+            ? [
+                {
+                  source_question_key: getQuestionKey(defaultQ),
+                  source_question_id: defaultQ.id || null,
+                  operator: defaultOps[0].value,
+                  expected_value: defaultQ.answer_type === 'YES_NO' ? 'Yes' : defaultQ.options?.[0] || '',
+                },
+              ]
+            : [],
     });
   };
 
@@ -383,24 +393,26 @@ const EvidenceConditionEditor = ({
           Condition Trigger:
         </span>
         <select
-          value={activePreset}
+          value={isParentEvidenceOnly && activePreset !== 'CUSTOM' ? 'ALWAYS' : activePreset}
           onChange={(e) => handlePresetChange(e.target.value)}
           style={{ ...smallInputStyle, width: 'auto', minWidth: '230px' }}
         >
           <option value="ALWAYS">Always Show (No Condition)</option>
-          {parentQuestion.answer_type === 'YES_NO' && (
+          {!isParentEvidenceOnly && parentQuestion.answer_type === 'YES_NO' && (
             <>
               <option value="WHEN_YES">Show When Answer = Yes</option>
               <option value="WHEN_NO">Show When Answer = No</option>
             </>
           )}
-          {OPTION_ANSWER_TYPES.has(parentQuestion.answer_type) && cleanOpts.length > 0 && (
+          {!isParentEvidenceOnly && OPTION_ANSWER_TYPES.has(parentQuestion.answer_type) && cleanOpts.length > 0 && (
             <option value="WHEN_OPTION">Show When Answer = Selected Option</option>
           )}
-          <option value="CUSTOM">Custom Multi-Question Rules (AND / OR)</option>
+          {(!isParentEvidenceOnly || otherAnswerableQuestions.length > 0) && (
+            <option value="CUSTOM">Custom Multi-Question Rules (AND / OR)</option>
+          )}
         </select>
 
-        {activePreset === 'WHEN_OPTION' && cleanOpts.length > 0 && (
+        {!isParentEvidenceOnly && activePreset === 'WHEN_OPTION' && cleanOpts.length > 0 && (
           <select
             value={rules[0]?.expected_value || cleanOpts[0]}
             onChange={(e) => applyParentRule(e.target.value)}
@@ -742,14 +754,44 @@ export const PmAdminConfigPage = () => {
 
   const handleQuestionChange = (secIdx, qIdx, patch) => {
     const targetQ = (form.sections || [])[secIdx]?.questions?.[qIdx];
+    const targetKey = targetQ ? getQuestionKey(targetQ) : null;
     if (patch.is_active === false && targetQ) {
-      const deps = findDependentRulesForKeys(new Set([getQuestionKey(targetQ)]));
+      const deps = findDependentRulesForKeys(new Set([targetKey]));
       if (deps.length > 0) {
         showToast(
           `Alert: ${deps.join(', ')} depend(s) on "${targetQ.question_name || 'this question'}". Please update or remove those conditions before saving.`,
           'error'
         );
       }
+    }
+    if (patch.answer_type === 'EVIDENCE_ONLY' && targetQ && targetQ.answer_type !== 'EVIDENCE_ONLY') {
+      const removedKeys = targetKey ? new Set([targetKey]) : new Set();
+      setForm((prev) => {
+        const nextSections = (prev.sections || []).map((sec, sIdx) =>
+          sIdx === secIdx
+            ? {
+                ...sec,
+                questions: (sec.questions || []).map((row, idx) =>
+                  idx === qIdx
+                    ? {
+                        ...row,
+                        ...patch,
+                        question_name: '',
+                        is_mandatory: false,
+                        options: [],
+                        optionInput: '',
+                      }
+                    : row
+                ),
+              }
+            : sec
+        );
+        return {
+          ...prev,
+          sections: removedKeys.size > 0 ? stripRemovedQuestionRulesFromSections(nextSections, removedKeys) : nextSections,
+        };
+      });
+      return;
     }
     updateQuestionInSection(secIdx, qIdx, patch);
   };
@@ -1113,9 +1155,16 @@ export const PmAdminConfigPage = () => {
         const secQuestions = sec.questions || [];
         for (let i = 0; i < secQuestions.length; i += 1) {
           const q = secQuestions[i];
-          const qTitle = `${secNameTrimmed} -> ${q.question_name.trim() || `Question #${i + 1}`}`;
-          if (!q.question_name.trim()) {
+          const isEvOnly = q.answer_type === 'EVIDENCE_ONLY';
+          const qTitle = isEvOnly
+            ? `${secNameTrimmed} -> Evidence Only #${i + 1}`
+            : `${secNameTrimmed} -> ${q.question_name.trim() || `Question #${i + 1}`}`;
+          if (!isEvOnly && !q.question_name.trim()) {
             showToast(`Section "${secNameTrimmed}": Please enter Question Name for Question ${i + 1}.`, 'error');
+            return;
+          }
+          if (isEvOnly && !q.is_photo_required && !q.is_video_required && !q.is_location_required) {
+            showToast(`${qTitle}: Enable at least one Photo, Video, or GPS requirement.`, 'error');
             return;
           }
           if (OPTION_ANSWER_TYPES.has(q.answer_type)) {
@@ -1261,13 +1310,13 @@ export const PmAdminConfigPage = () => {
     const serializeQuestionForSave = (q, idx) => ({
       id: q.id || null,
       temp_key: getQuestionKey(q),
-      question_name: q.question_name.trim(),
+      question_name: q.answer_type === 'EVIDENCE_ONLY' ? '' : q.question_name.trim(),
       question_description: (q.question_description || '').trim(),
       answer_type: q.answer_type,
       options: OPTION_ANSWER_TYPES.has(q.answer_type)
         ? (q.options || []).map((o) => o.trim()).filter(Boolean)
         : [],
-      is_mandatory: Boolean(q.is_mandatory),
+      is_mandatory: q.answer_type === 'EVIDENCE_ONLY' ? false : Boolean(q.is_mandatory),
       display_order: Number(q.display_order || idx + 1),
       is_active: q.is_active !== false,
       condition_mode: q.condition_mode || 'ALWAYS',
@@ -1774,11 +1823,17 @@ export const PmAdminConfigPage = () => {
                                               {isCollapsed ? <LucideChevronDown size={14} /> : <LucideChevronUp size={14} />}
                                             </button>
                                             <strong style={{ fontSize: '0.9rem' }}>
-                                              Question {qIdx + 1}{qRow.question_name ? `: ${qRow.question_name}` : ''}
+                                              {qRow.answer_type === 'EVIDENCE_ONLY'
+                                                ? `Item ${qIdx + 1}: Evidence Only (No Answer)`
+                                                : `Question ${qIdx + 1}${qRow.question_name ? `: ${qRow.question_name}` : ''}`}
                                             </strong>
-                                            <span className={`badge-pill ${qRow.is_mandatory ? 'badge-red' : 'badge-neutral'}`}>
-                                              {qRow.is_mandatory ? 'Mandatory' : 'Optional'}
-                                            </span>
+                                            {qRow.answer_type === 'EVIDENCE_ONLY' ? (
+                                              <span className="badge-pill badge-blue">Evidence Only</span>
+                                            ) : (
+                                              <span className={`badge-pill ${qRow.is_mandatory ? 'badge-red' : 'badge-neutral'}`}>
+                                                {qRow.is_mandatory ? 'Mandatory' : 'Optional'}
+                                              </span>
+                                            )}
                                             <span className={`badge-pill ${qRow.is_active !== false ? 'badge-green' : 'badge-neutral'}`}>
                                               {qRow.is_active !== false ? 'Active' : 'Inactive'}
                                             </span>
@@ -1830,15 +1885,17 @@ export const PmAdminConfigPage = () => {
                                           <>
                                             {/* Question Configuration Grid */}
                                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '10px' }}>
-                                              <div>
-                                                <label style={labelStyle}>Question Name *</label>
-                                                <input
-                                                  value={qRow.question_name}
-                                                  onChange={(e) => handleQuestionChange(secIdx, qIdx, { question_name: e.target.value })}
-                                                  placeholder="e.g. Is hydraulic oil level OK?"
-                                                  style={inputStyle}
-                                                />
-                                              </div>
+                                              {qRow.answer_type !== 'EVIDENCE_ONLY' && (
+                                                <div>
+                                                  <label style={labelStyle}>Question Name *</label>
+                                                  <input
+                                                    value={qRow.question_name}
+                                                    onChange={(e) => handleQuestionChange(secIdx, qIdx, { question_name: e.target.value })}
+                                                    placeholder="e.g. Is hydraulic oil level OK?"
+                                                    style={inputStyle}
+                                                  />
+                                                </div>
+                                              )}
                                               <div>
                                                 <label style={labelStyle}>Answer Type *</label>
                                                 <select
@@ -1851,17 +1908,19 @@ export const PmAdminConfigPage = () => {
                                                   ))}
                                                 </select>
                                               </div>
-                                              <div>
-                                                <label style={labelStyle}>Requirement</label>
-                                                <select
-                                                  value={qRow.is_mandatory ? 'MANDATORY' : 'OPTIONAL'}
-                                                  onChange={(e) => handleQuestionChange(secIdx, qIdx, { is_mandatory: e.target.value === 'MANDATORY' })}
-                                                  style={inputStyle}
-                                                >
-                                                  <option value="OPTIONAL">Optional</option>
-                                                  <option value="MANDATORY">Mandatory</option>
-                                                </select>
-                                              </div>
+                                              {qRow.answer_type !== 'EVIDENCE_ONLY' && (
+                                                <div>
+                                                  <label style={labelStyle}>Requirement</label>
+                                                  <select
+                                                    value={qRow.is_mandatory ? 'MANDATORY' : 'OPTIONAL'}
+                                                    onChange={(e) => handleQuestionChange(secIdx, qIdx, { is_mandatory: e.target.value === 'MANDATORY' })}
+                                                    style={inputStyle}
+                                                  >
+                                                    <option value="OPTIONAL">Optional</option>
+                                                    <option value="MANDATORY">Mandatory</option>
+                                                  </select>
+                                                </div>
+                                              )}
                                               <div>
                                                 <label style={labelStyle}>Display Order</label>
                                                 <input
@@ -1885,15 +1944,21 @@ export const PmAdminConfigPage = () => {
                                               </div>
                                             </div>
 
-                                            <div>
-                                              <label style={labelStyle}>Question Description</label>
-                                              <input
-                                                value={qRow.question_description}
-                                                onChange={(e) => handleQuestionChange(secIdx, qIdx, { question_description: e.target.value })}
-                                                placeholder="Optional guidance for operator"
-                                                style={inputStyle}
-                                              />
-                                            </div>
+                                            {qRow.answer_type !== 'EVIDENCE_ONLY' ? (
+                                              <div>
+                                                <label style={labelStyle}>Question Description</label>
+                                                <input
+                                                  value={qRow.question_description}
+                                                  onChange={(e) => handleQuestionChange(secIdx, qIdx, { question_description: e.target.value })}
+                                                  placeholder="Optional guidance for operator"
+                                                  style={inputStyle}
+                                                />
+                                              </div>
+                                            ) : (
+                                              <div style={{ fontSize: '0.75rem', color: '#1e40af', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '7px 10px' }}>
+                                                <strong>Evidence Only (No Answer):</strong> Operators will capture the configured Photo, Video, or GPS evidence below without answering a question.
+                                              </div>
+                                            )}
 
                                             {OPTION_ANSWER_TYPES.has(qRow.answer_type) && (
                                               <div style={{ padding: '10px', background: '#fff', borderRadius: '6px', border: '1px solid var(--border)' }}>
@@ -1962,7 +2027,9 @@ export const PmAdminConfigPage = () => {
                                               }}
                                             >
                                               <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', borderBottom: '1px solid var(--border)', paddingBottom: '6px' }}>
-                                                Evidence Requirements for Question {qIdx + 1}
+                                                {qRow.answer_type === 'EVIDENCE_ONLY'
+                                                  ? `Evidence Requirements (Evidence Only – No Answer)`
+                                                  : `Evidence Requirements for Question ${qIdx + 1}`}
                                               </div>
 
                                               {/* A. Photo Requirements */}
@@ -2856,7 +2923,7 @@ export const PmAdminConfigPage = () => {
                                   {(sec.questions || []).length > 0 ? (
                                     (sec.questions || []).map((q, qIdx) => (
                                       <div key={q.id || qIdx} style={{ paddingLeft: '8px', color: 'var(--text-secondary)' }}>
-                                        {qIdx + 1}. {q.question_name} ({q.answer_type}{q.condition_mode === 'CONDITIONAL' ? ' · Cond.' : ''})
+                                        {qIdx + 1}. {q.answer_type === 'EVIDENCE_ONLY' ? 'Evidence Only (No Answer)' : `${q.question_name} (${q.answer_type}${q.condition_mode === 'CONDITIONAL' ? ' · Cond.' : ''})`}
                                       </div>
                                     ))
                                   ) : (
@@ -2867,7 +2934,7 @@ export const PmAdminConfigPage = () => {
                             : cfg.questions && cfg.questions.length > 0
                               ? cfg.questions.map((q, i) => (
                                   <div key={q.id || i}>
-                                    {i + 1}. {q.question_name} ({q.answer_type}{q.condition_mode === 'CONDITIONAL' ? ' · Cond.' : ''})
+                                    {i + 1}. {q.answer_type === 'EVIDENCE_ONLY' ? 'Evidence Only (No Answer)' : `${q.question_name} (${q.answer_type}${q.condition_mode === 'CONDITIONAL' ? ' · Cond.' : ''})`}
                                   </div>
                                 ))
                               : <span className="badge-pill badge-neutral">None</span>}

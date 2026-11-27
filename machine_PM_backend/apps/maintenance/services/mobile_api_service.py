@@ -123,6 +123,7 @@ def _extract_primary_trigger(req_dict: dict) -> dict | None:
 
 
 def _format_question_for_mobile(q_dict: dict, checklist_item_id: int) -> dict:
+    is_ev_only = bool(q_dict.get("is_evidence_only") or q_dict.get("field_type") == "EVIDENCE_ONLY")
     return {
         **q_dict,
         "question_id": q_dict["id"],
@@ -132,8 +133,9 @@ def _format_question_for_mobile(q_dict: dict, checklist_item_id: int) -> dict:
         "description": q_dict["field_description"],
         "question_description": q_dict["field_description"],
         "answer_type": q_dict["field_type"],
+        "is_evidence_only": is_ev_only,
         "answer_options": q_dict["options"],
-        "required": bool(q_dict["is_mandatory"]),
+        "required": False if is_ev_only else bool(q_dict["is_mandatory"]),
     }
 
 
@@ -400,15 +402,22 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
                 "mapping_id": m.id,
                 "item_code": ci.item_code,
                 "activity_name": ci.description,
+                "activity_status": "ACTIVE" if ci.is_active else "INACTIVE",
+                "is_active": bool(ci.is_active),
                 "description": ci.special_instructions or ci.remarks or ci.description,
+                "category_id": ci.category_id,
                 "category": ci.category.name if ci.category else "",
+                "category_name": ci.category.name if ci.category else "",
                 "category_code": ci.category.code if ci.category else "",
                 "frequency": freq.code,
+                "frequency_type": freq.code,
                 "frequency_name": freq.name,
                 "applicable_schedule": sched_data,
+                "original_scheduled_date": scheduled_date,
                 "scheduled_date": scheduled_date,
                 "completion_deadline_date": completion_deadline_date,
                 "buffer_days": buffer_days,
+                "allow_duplicate_in_same_slot": bool((sched_data or {}).get("allow_duplicate_in_same_slot", False)),
                 "maintenance_due_date": completion_deadline_date or scheduled_date,
                 "next_due_date": next_due_date,
                 "is_mandatory": bool(m.is_mandatory),
@@ -430,15 +439,22 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
             "checklist_item_id": primary_act["checklist_item_id"],
             "item_code": primary_act["item_code"],
             "activity_name": primary_act["activity_name"],
+            "activity_status": primary_act["activity_status"],
+            "is_active": primary_act["is_active"],
             "description": primary_act["description"],
+            "category_id": primary_act["category_id"],
             "category": primary_act["category"],
+            "category_name": primary_act["category_name"],
             "category_code": primary_act["category_code"],
             "frequency": freq.code,
+            "frequency_type": freq.code,
             "frequency_name": freq.name,
             "applicable_schedule": primary_act["applicable_schedule"],
+            "original_scheduled_date": scheduled_date,
             "scheduled_date": scheduled_date,
             "completion_deadline_date": completion_deadline_date,
             "buffer_days": buffer_days,
+            "allow_duplicate_in_same_slot": primary_act["allow_duplicate_in_same_slot"],
             "maintenance_due_date": completion_deadline_date or scheduled_date,
             "next_due_date": next_due_date,
             "is_mandatory": primary_act["is_mandatory"],
@@ -450,13 +466,22 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
             "checklist_item_id": None,
             "item_code": None,
             "activity_name": None,
+            "activity_status": None,
+            "is_active": False,
             "description": "",
+            "category_id": None,
             "category": "",
+            "category_name": "",
             "category_code": "",
             "frequency": freq.code,
+            "frequency_type": freq.code,
             "frequency_name": freq.name,
             "applicable_schedule": None,
+            "original_scheduled_date": scheduled_date,
             "scheduled_date": scheduled_date,
+            "completion_deadline_date": completion_deadline_date,
+            "buffer_days": buffer_days,
+            "allow_duplicate_in_same_slot": False,
             "maintenance_due_date": scheduled_date,
             "next_due_date": next_due_date,
             "is_mandatory": True,
@@ -504,6 +529,7 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
         "frequency": {
             "id": freq.id,
             "code": freq.code,
+            "frequency_type": freq.code,
             "name": freq.name,
             "interval_hours": freq.interval_hours,
             "interval_days": freq.interval_days,
@@ -643,6 +669,28 @@ def submit_mobile_maintenance_data(request, payload: dict, files_map) -> dict:
         "submitted_by_name": submission.submitted_by_name,
         "submitted_by_role": submission.submitted_by_role,
         "frequency": submission.frequency.code,
+        "vendor_id": submission.vendor_id,
+        "vendor_name": submission.vendor_name,
+        "assigned_operator": submission.assigned_operator or "Not Assigned",
+        "assigned_operator_id": (submission.machine_assignment_snapshot or {}).get("assigned_operator_id"),
+        "scheduled_date": submission.scheduled_due_date.isoformat() if submission.scheduled_due_date else None,
+        "completion_deadline_date": (
+            submission.completion_deadline_date.isoformat() if submission.completion_deadline_date else None
+        ),
+        "buffer_days": int((submission.schedule_snapshot or {}).get("buffer_days", 0) or 0),
+        "allow_duplicate_in_same_slot": bool(
+            (submission.schedule_snapshot or {}).get("allow_duplicate_in_same_slot", False)
+        ),
+        "gps": (submission.submission_metadata or {}).get("gps") or (
+            {
+                "latitude": saved_locations[0].latitude,
+                "longitude": saved_locations[0].longitude,
+                "accuracy_meters": saved_locations[0].accuracy_meters,
+                "captured_at": saved_locations[0].captured_at.isoformat() if saved_locations[0].captured_at else None,
+            }
+            if saved_locations
+            else None
+        ),
         "hour_meter_reading": float(submission.hour_meter_reading),
         "total_items": submission.total_items,
         "completed_items_count": submission.completed_items_count,
@@ -900,7 +948,12 @@ def get_mobile_maintenance_list(request, query_params: dict) -> dict:
         item_payload = {
             "id": item.id,
             "checklist_item_id": item.id,
+            "activity_id": item.id,
             "item_code": item.item_code,
+            "activity_name": item.description,
+            "activity_status": "ACTIVE" if item.is_active else "INACTIVE",
+            "is_active": bool(item.is_active),
+            "category_id": item.category_id,
             "category_code": item.category.code,
             "category_name": item.category.name,
             "description": item.description,

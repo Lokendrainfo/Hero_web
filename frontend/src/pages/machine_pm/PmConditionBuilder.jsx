@@ -24,7 +24,10 @@ export const PmConditionBuilder = ({
   onChange,
 }) => {
   const eligibleQuestions = availableQuestions.filter(
-    (q) => q.is_active !== false && getQuestionKey(q) !== String(excludeQuestionKey || '')
+    (q) =>
+      q.is_active !== false &&
+      String(q.answer_type || '').toUpperCase() !== 'EVIDENCE_ONLY' &&
+      getQuestionKey(q) !== String(excludeQuestionKey || '')
   );
 
   const findQuestionByRule = (rule) => {
