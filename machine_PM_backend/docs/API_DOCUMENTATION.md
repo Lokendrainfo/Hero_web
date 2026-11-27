@@ -110,7 +110,7 @@ Standard Response Envelope:
 ### 1. Machine Maintenance Check API
 - `GET /api/v1/machine-maintenance/check`
 - Query params: `machine_id` (required), `user_id` (required with `X-API-Key`, alias `operator_id`), `frequency` (required: `DAILY | WEEKLY | EVERY_15_DAYS | MONTHLY | QUARTERLY | YEARLY`), `activity_id` (optional), `hour_meter_reading` (optional)
-- Validates machine, user, role, vendor, frequency schedule, hour meter, cycle due/overdue status, and duplicate submission, and returns the complete dynamic form from Admin Configuration (`maintenance`, `activities`, `questions`, `photo_requirements`, `video_requirements`, and `gps_configuration`).
+- Validates machine, user, role, vendor, frequency schedule, hour meter, cycle due/overdue status, and duplicate submission, and returns the complete dynamic form from Admin Configuration (`maintenance`, `activities` with nested `sections -> questions`, flat `questions`, `photo_requirements`, `video_requirements`, and `gps_configuration`).
 
 ### 2. Machine Maintenance Data Post API
 - `POST /api/v1/machine-maintenance/data` (`multipart/form-data`)

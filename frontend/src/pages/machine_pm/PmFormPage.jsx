@@ -23,6 +23,7 @@ import { PmVideoCaptureModal } from './PmVideoCaptureModal';
 import { PmPhotoLightboxModal } from './PmPhotoLightboxModal';
 import { PmSubmissionDetailModal } from './PmSubmissionDetailModal';
 import { evaluateActivityVisibility, isEmptyAnswer } from './pmConditionUtils';
+import { evaluateGeofenceClient } from './pmGeofenceUtils';
 
 const genRequestId = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
@@ -365,6 +366,8 @@ export const PmFormPage = () => {
           return;
         }
 
+        const geoEval = evaluateGeofenceClient(lreq, latitude, longitude);
+
         setCapturedLocations((prev) => ({
           ...prev,
           [lKey]: {
@@ -374,6 +377,7 @@ export const PmFormPage = () => {
             longitude,
             accuracy_meters: accuracy,
             captured_at: capturedAt,
+            geofenceResult: geoEval,
           },
         }));
         setSubmitBackendError('');
@@ -396,7 +400,21 @@ export const PmFormPage = () => {
           return;
         }
 
-        showToastRef.current(`GPS captured for "${lreq.location_name}": ${latitude}, ${longitude}`, 'success');
+        if (geoEval.geofenceRequired && !geoEval.isInside) {
+          setLocationErrors((prev) => ({ ...prev, [lKey]: geoEval.message }));
+          showToastRef.current(
+            lreq.is_mandatory ? geoEval.message : `${geoEval.message} (Optional GPS — submission still allowed)`,
+            lreq.is_mandatory ? 'error' : 'info'
+          );
+          return;
+        }
+
+        showToastRef.current(
+          geoEval.geofenceRequired
+            ? `GPS verified inside geofence for "${lreq.location_name}": ${latitude}, ${longitude}`
+            : `GPS captured for "${lreq.location_name}": ${latitude}, ${longitude}`,
+          'success'
+        );
       },
       (err) => {
         setLocatingKey(null);
@@ -527,7 +545,10 @@ export const PmFormPage = () => {
             loc?.accuracy_meters === null ||
             loc?.accuracy_meters === undefined ||
             loc.accuracy_meters <= Number(lreq.accuracy_threshold_meters);
-          if (hasCoords && accOk) {
+          const geoOk =
+            !lreq.is_geofence_required ||
+            (hasCoords && evaluateGeofenceClient(lreq, loc.latitude, loc.longitude).isInside === true);
+          if (hasCoords && accOk && geoOk) {
             requiredLocationsDone += 1;
           }
         }
@@ -680,6 +701,13 @@ export const PmFormPage = () => {
           const lMsg = `GPS accuracy (±${capLoc.accuracy_meters}m) exceeds maximum threshold (±${lreq.accuracy_threshold_meters}m) for "${lreq.location_name}".`;
           itemErrs.push(lMsg);
           setFirstErr(lMsg, `pm-activity-${item.id}`);
+        }
+        if (lreq.is_mandatory && hasCoords && lreq.is_geofence_required) {
+          const geoEval = evaluateGeofenceClient(lreq, capLoc.latitude, capLoc.longitude);
+          if (!geoEval.isInside) {
+            itemErrs.push(geoEval.message);
+            setFirstErr(geoEval.message, `pm-activity-${item.id}`);
+          }
         }
       }
 
@@ -877,6 +905,13 @@ export const PmFormPage = () => {
       const errMsg = err?.message || 'Maintenance submission failed. Please review the form and try again.';
       setSubmitBackendError(errMsg);
       showToastRef.current(errMsg, 'error');
+      if (err?.status === 409 && selectedFreq) {
+        pmService.getChecklist(selectedFreq, selectedMachineId || null)
+          .then((clRes) => {
+            if (clRes?.data) setChecklist(clRes.data);
+          })
+          .catch(() => {});
+      }
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -1258,6 +1293,10 @@ export const PmFormPage = () => {
     const capLoc = capturedLocations[lKey];
     const errMsg = locationErrors[lKey];
     const isBusy = locatingKey === lKey;
+    const hasCoords = Boolean(capLoc && capLoc.latitude !== null && capLoc.longitude !== null);
+    const geoEval = hasCoords ? evaluateGeofenceClient(lreq, capLoc.latitude, capLoc.longitude) : null;
+    const isHardGeoBlock = Boolean(geoEval?.geofenceRequired && !geoEval.isInside && lreq.is_mandatory);
+    const isSoftGeoWarn = Boolean(geoEval?.geofenceRequired && !geoEval.isInside && !lreq.is_mandatory);
 
     return (
       <div
@@ -1265,8 +1304,20 @@ export const PmFormPage = () => {
         style={{
           padding: '10px',
           borderRadius: 'var(--radius)',
-          border: capLoc && !errMsg ? '1px solid #86efac' : errMsg ? '1px solid #fca5a5' : '1px solid var(--border-strong)',
-          background: capLoc && !errMsg ? '#f0fdf4' : errMsg ? '#fef2f2' : 'var(--bg-subtle)',
+          border: (errMsg && lreq.is_mandatory) || isHardGeoBlock
+            ? '1px solid #fca5a5'
+            : isSoftGeoWarn
+              ? '1px solid #fcd34d'
+              : capLoc && !errMsg
+                ? '1px solid #86efac'
+                : '1px solid var(--border-strong)',
+          background: (errMsg && lreq.is_mandatory) || isHardGeoBlock
+            ? '#fef2f2'
+            : isSoftGeoWarn
+              ? '#fffbeb'
+              : capLoc && !errMsg
+                ? '#f0fdf4'
+                : 'var(--bg-subtle)',
           display: 'flex',
           flexDirection: 'column',
           gap: '8px',
@@ -1286,11 +1337,23 @@ export const PmFormPage = () => {
             <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
               Rule: {lreq.capture_rule === 'HIGH_ACCURACY' ? 'High Accuracy GPS' : 'Live Device GPS'}
               {lreq.accuracy_threshold_meters ? ` · Max ±${lreq.accuracy_threshold_meters}m` : ''}
+              {lreq.is_geofence_required
+                ? lreq.geofence_type === 'POLYGON'
+                  ? ` · Geofence: Polygon (${(lreq.geofence_polygon || []).length} pts${lreq.geofence_reference_name ? ` · ${lreq.geofence_reference_name}` : ''})`
+                  : ` · Geofence: Circle (${lreq.geofence_radius_meters}m${lreq.geofence_reference_name ? ` around ${lreq.geofence_reference_name}` : ''})`
+                : ' · Geofence: Not Required'}
             </div>
           </div>
-          <span className={`badge-pill ${lreq.is_mandatory ? 'badge-red' : 'badge-neutral'}`}>
-            {lreq.is_mandatory ? 'Mandatory' : 'Optional'}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+            {geoEval?.geofenceRequired && (
+              <span className={`badge-pill ${geoEval.isInside ? 'badge-green' : lreq.is_mandatory ? 'badge-red' : 'badge-neutral'}`}>
+                {geoEval.isInside ? 'Inside Geofence' : `Outside (+${geoEval.distanceFromBoundaryMeters ?? '?'}m)`}
+              </span>
+            )}
+            <span className={`badge-pill ${lreq.is_mandatory ? 'badge-red' : 'badge-neutral'}`}>
+              {lreq.is_mandatory ? 'Mandatory' : 'Optional'}
+            </span>
+          </div>
         </div>
 
         {capLoc && (
@@ -1299,7 +1362,7 @@ export const PmFormPage = () => {
               padding: '8px 10px',
               borderRadius: '4px',
               background: '#fff',
-              border: '1px solid #bbf7d0',
+              border: isHardGeoBlock ? '1px solid #fecaca' : isSoftGeoWarn ? '1px solid #fde68a' : '1px solid #bbf7d0',
               fontSize: '0.75rem',
               fontFamily: 'var(--font-mono)',
               display: 'grid',
@@ -1320,9 +1383,16 @@ export const PmFormPage = () => {
           </div>
         )}
 
+        {geoEval?.geofenceRequired && geoEval.isInside && (
+          <div style={{ fontSize: '0.74rem', color: '#15803d', fontWeight: 600 }}>
+            {geoEval.message}
+          </div>
+        )}
+
         {errMsg && (
-          <div style={{ fontSize: '0.75rem', color: '#b91c1c', fontWeight: 600 }}>
+          <div style={{ fontSize: '0.75rem', color: isSoftGeoWarn ? '#b45309' : '#b91c1c', fontWeight: 600 }}>
             {errMsg}
+            {isSoftGeoWarn ? ' (Optional GPS: submission will record geofence status without blocking.)' : ''}
           </div>
         )}
 
@@ -1358,11 +1428,71 @@ export const PmFormPage = () => {
     const itemError = validationErrors.itemErrors[item.id] || '';
     const {
       visibleQuestions: customFields,
+      visibleSections,
       allPhotos,
       visiblePhotos: photoRequirements,
       visibleVideos: videoRequirements,
       visibleLocations: locationRequirements,
     } = evaluateActivityVisibility(item, state.custom_fields || {});
+
+    const renderQuestionCard = (cf) => {
+      const qPhotos = photoRequirements.filter((p) => String(p.question_id || '') === String(cf.id));
+      const qVideos = videoRequirements.filter((v) => String(v.question_id || '') === String(cf.id));
+      const qLocations = locationRequirements.filter((l) => String(l.question_id || '') === String(cf.id));
+      const hasQuestionEvidence = qPhotos.length > 0 || qVideos.length > 0 || qLocations.length > 0;
+
+      return (
+        <div
+          key={cf.id}
+          style={{
+            padding: '10px',
+            background: 'var(--bg-subtle)',
+            borderRadius: 'var(--radius)',
+            border: '1px solid var(--border)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '10px',
+          }}
+        >
+          <div id={`pm-question-${item.id}-${cf.id}`}>
+            <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, marginBottom: '4px', color: 'var(--text-primary)' }}>
+              {cf.field_label} {cf.is_mandatory ? <span style={{ color: 'var(--danger)' }}>*</span> : <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(Optional)</span>}
+            </label>
+            {cf.field_description ? (
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                {cf.field_description}
+              </div>
+            ) : null}
+            {renderCustomFieldInput(item, cf, (state.custom_fields || {})[cf.id])}
+            {validationErrors.questionErrors[`${item.id}:${cf.id}`] && (
+              <div style={{ fontSize: '0.74rem', color: '#dc2626', fontWeight: 600, marginTop: '4px' }}>
+                {validationErrors.questionErrors[`${item.id}:${cf.id}`]}
+              </div>
+            )}
+          </div>
+
+          {hasQuestionEvidence && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '8px', borderTop: '1px dashed var(--border-strong)' }}>
+              {qPhotos.length > 0 && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '8px' }}>
+                  {qPhotos.map((req, pIdx) => renderPhotoCaptureSlot(item, req, pIdx + 1))}
+                </div>
+              )}
+              {qVideos.length > 0 && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
+                  {qVideos.map((vreq, vIdx) => renderVideoRequirementSlot(item, vreq, vIdx + 1))}
+                </div>
+              )}
+              {qLocations.length > 0 && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
+                  {qLocations.map((lreq, lIdx) => renderLocationRequirementSlot(item, lreq, lIdx + 1))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    };
 
     return (
       <div
@@ -1429,69 +1559,43 @@ export const PmFormPage = () => {
           </div>
         </div>
 
-        {/* Dynamic Questions with grouped per-question Photo, Video, and GPS evidence */}
-        {customFields.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {customFields.map((cf) => {
-              const qPhotos = photoRequirements.filter((p) => String(p.question_id || '') === String(cf.id));
-              const qVideos = videoRequirements.filter((v) => String(v.question_id || '') === String(cf.id));
-              const qLocations = locationRequirements.filter((l) => String(l.question_id || '') === String(cf.id));
-              const hasQuestionEvidence = qPhotos.length > 0 || qVideos.length > 0 || qLocations.length > 0;
-
-              return (
-                <div
-                  key={cf.id}
-                  style={{
-                    padding: '10px',
-                    background: 'var(--bg-subtle)',
-                    borderRadius: 'var(--radius)',
-                    border: '1px solid var(--border)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '10px',
-                  }}
-                >
-                  <div id={`pm-question-${item.id}-${cf.id}`}>
-                    <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, marginBottom: '4px', color: 'var(--text-primary)' }}>
-                      {cf.field_label} {cf.is_mandatory ? <span style={{ color: 'var(--danger)' }}>*</span> : <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(Optional)</span>}
-                    </label>
-                    {cf.field_description ? (
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                        {cf.field_description}
-                      </div>
-                    ) : null}
-                    {renderCustomFieldInput(item, cf, (state.custom_fields || {})[cf.id])}
-                    {validationErrors.questionErrors[`${item.id}:${cf.id}`] && (
-                      <div style={{ fontSize: '0.74rem', color: '#dc2626', fontWeight: 600, marginTop: '4px' }}>
-                        {validationErrors.questionErrors[`${item.id}:${cf.id}`]}
-                      </div>
-                    )}
+        {/* Dynamic Sections -> Questions -> Evidence */}
+        {visibleSections && visibleSections.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {visibleSections.map((sec, sIdx) => (
+              <div
+                key={sec.id || `sec-${sIdx}`}
+                style={{
+                  border: '1px solid var(--border-strong)',
+                  borderRadius: 'var(--radius)',
+                  padding: '10px',
+                  background: '#fff',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px',
+                }}
+              >
+                <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: '6px' }}>
+                  <div style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    Section {sIdx + 1} – {sec.section_name}
                   </div>
-
-                  {hasQuestionEvidence && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingTop: '8px', borderTop: '1px dashed var(--border-strong)' }}>
-                      {qPhotos.length > 0 && (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '8px' }}>
-                          {qPhotos.map((req, pIdx) => renderPhotoCaptureSlot(item, req, pIdx + 1))}
-                        </div>
-                      )}
-                      {qVideos.length > 0 && (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
-                          {qVideos.map((vreq, vIdx) => renderVideoRequirementSlot(item, vreq, vIdx + 1))}
-                        </div>
-                      )}
-                      {qLocations.length > 0 && (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '8px' }}>
-                          {qLocations.map((lreq, lIdx) => renderLocationRequirementSlot(item, lreq, lIdx + 1))}
-                        </div>
-                      )}
+                  {sec.section_description ? (
+                    <div style={{ fontSize: '0.73rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                      {sec.section_description}
                     </div>
-                  )}
+                  ) : null}
                 </div>
-              );
-            })}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {(sec.questions || []).map((cf) => renderQuestionCard(cf))}
+                </div>
+              </div>
+            ))}
           </div>
-        )}
+        ) : customFields.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {customFields.map((cf) => renderQuestionCard(cf))}
+          </div>
+        ) : null}
 
         <div>
           <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, marginBottom: '4px', color: 'var(--text-secondary)' }}>
@@ -1702,6 +1806,15 @@ export const PmFormPage = () => {
                   <span className="badge-pill badge-blue">{checklist.schedule_status.due_label}</span>
                 </div>
                 <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '0.75rem', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+                  {checklist.schedule_status.current_occurrence_date && (
+                    <span>Scheduled Date: {checklist.schedule_status.current_occurrence_date}</span>
+                  )}
+                  {checklist.frequency?.code !== 'DAILY' && checklist.schedule_status.completion_deadline_date && (
+                    <span>
+                      Completion Deadline: {checklist.schedule_status.completion_deadline_date}
+                      {checklist.schedule_status.buffer_days > 0 ? ` (+${checklist.schedule_status.buffer_days}d buffer)` : ''}
+                    </span>
+                  )}
                   {checklist.schedule_status.next_scheduled_date && (
                     <span>Next Due Date: {checklist.schedule_status.next_scheduled_date}</span>
                   )}

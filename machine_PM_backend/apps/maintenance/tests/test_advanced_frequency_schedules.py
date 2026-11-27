@@ -144,7 +144,7 @@ class TestAdvancedFrequencySchedules:
         assert multi_bad.status_code == 400
         assert 'Only one frequency' in json.dumps(multi_bad.json())
 
-        # 2) Configure 6 separate single-frequency activities cleanly (Daily has no config fields)
+        # 2) Configure 6 separate single-frequency activities cleanly (Daily defaults allow_duplicate=False, 0 buffer)
         cfg_daily = self._save_cfg(
             admin_client,
             {
@@ -155,7 +155,6 @@ class TestAdvancedFrequencySchedules:
                 'frequency_schedule': {
                     'schedule_type': 'DAILY_EVERY_DAY',
                     'start_date': '2026-01-01',  # must be stripped/ignored for Daily
-                    'allow_duplicate_in_same_slot': True,  # must be forced False for Daily
                 },
                 'questions_enabled': False,
             },
@@ -164,6 +163,7 @@ class TestAdvancedFrequencySchedules:
         assert cfg_daily['frequency_schedule']['schedule_summary'] == 'Maintenance is required every calendar day.'
         assert cfg_daily['frequency_schedule']['start_date'] is None
         assert cfg_daily['frequency_schedule']['end_date'] is None
+        assert cfg_daily['frequency_schedule']['buffer_days'] == 0
         assert cfg_daily['frequency_schedule']['allow_duplicate_in_same_slot'] is False
 
         cfg_weekly = self._save_cfg(
@@ -175,7 +175,7 @@ class TestAdvancedFrequencySchedules:
                 'frequency': 'WEEKLY',
                 'frequency_schedule': {
                     'schedule_type': 'WEEKLY_DAYS',
-                    'selected_weekdays': ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'],
+                    'selected_weekdays': [today.strftime('%A').upper()],
                 },
                 'questions_enabled': False,
             },
@@ -278,7 +278,7 @@ class TestAdvancedFrequencySchedules:
         m1_row = dash_res.json()['data']['machines'][0]
         weekly_st = next(fs for fs in m1_row['frequency_statuses'] if fs['frequency_code'] == 'WEEKLY')
         assert weekly_st['status'] == 'COMPLETED'
-        assert weekly_st['next_due_date'] == (today + timedelta(days=1)).isoformat()
+        assert weekly_st['next_due_date'] == (today + timedelta(days=7)).isoformat()
 
         dup_sub = self._submit_freq(
             op_alpha,
@@ -312,3 +312,102 @@ class TestAdvancedFrequencySchedules:
         f15_after = next(fs for fs in dash_after['machines'][0]['frequency_statuses'] if fs['frequency_code'] == 'EVERY_15_DAYS')
         assert f15_after['next_due_date'] == future_start
         assert MaintenanceSubmission.objects.get(id=sub_id).submission_date == today
+
+    def test_weekly_single_weekday_restriction_and_legacy_preservation(self, seeded_masters, users, make_auth_client):
+        admin_client = make_auth_client(users['admin'])
+
+        # 1) Save without selecting a weekday -> rejected
+        no_day = admin_client.post(
+            '/api/v1/pm/admin/activity-configurations/',
+            {
+                'activity_name': 'Weekly Empty Days',
+                'description': 'No weekday provided',
+                'item_code': 'WK-SINGLE-ERR0',
+                'frequency': 'WEEKLY',
+                'frequency_schedule': {'schedule_type': 'WEEKLY_DAYS', 'selected_weekdays': []},
+                'questions_enabled': False,
+            },
+            format='json',
+        )
+        assert no_day.status_code == 400
+        assert 'Select exactly one weekday' in json.dumps(no_day.json())
+
+        # 2) Submit multiple weekdays through API -> rejected
+        multi_days = admin_client.post(
+            '/api/v1/pm/admin/activity-configurations/',
+            {
+                'activity_name': 'Weekly Multi Days',
+                'description': 'Multiple weekdays should fail',
+                'item_code': 'WK-SINGLE-ERRM',
+                'frequency': 'WEEKLY',
+                'frequency_schedule': {'schedule_type': 'WEEKLY_DAYS', 'selected_weekdays': ['MONDAY', 'WEDNESDAY']},
+                'questions_enabled': False,
+            },
+            format='json',
+        )
+        assert multi_days.status_code == 400
+        assert 'Only one weekday can be selected' in json.dumps(multi_days.json())
+
+        # 3) Select Monday -> accepted; switch Monday -> Tuesday -> Sunday -> single day preserved
+        cfg_mon = self._save_cfg(
+            admin_client,
+            {
+                'activity_name': 'Weekly Single Day Check',
+                'description': 'Strict single weekday schedule',
+                'item_code': 'WK-SINGLE-01',
+                'frequency': 'WEEKLY',
+                'frequency_schedule': {'schedule_type': 'WEEKLY_DAYS', 'selected_weekdays': ['MONDAY']},
+                'questions_enabled': False,
+            },
+        )
+        assert cfg_mon['frequency_schedule']['selected_weekdays'] == ['MONDAY']
+
+        cfg_tue = self._update_cfg(
+            admin_client,
+            cfg_mon['id'],
+            {
+                'activity_name': cfg_mon['activity_name'],
+                'description': cfg_mon['description'],
+                'item_code': cfg_mon['item_code'],
+                'frequency': 'WEEKLY',
+                'frequency_schedule': {'schedule_type': 'WEEKLY_DAYS', 'selected_weekdays': ['TUESDAY']},
+                'questions_enabled': False,
+            },
+        )
+        assert cfg_tue['frequency_schedule']['selected_weekdays'] == ['TUESDAY']
+
+        cfg_sun = self._update_cfg(
+            admin_client,
+            cfg_mon['id'],
+            {
+                'activity_name': cfg_mon['activity_name'],
+                'description': cfg_mon['description'],
+                'item_code': cfg_mon['item_code'],
+                'frequency': 'WEEKLY',
+                'frequency_schedule': {'schedule_type': 'WEEKLY_DAYS', 'selected_weekdays': ['SUNDAY']},
+                'questions_enabled': False,
+            },
+        )
+        assert cfg_sun['frequency_schedule']['selected_weekdays'] == ['SUNDAY']
+
+        # 4) Legacy multi-weekday DB row remains readable, while PUT with multiple weekdays is rejected until corrected
+        sched_row = ChecklistFrequencySchedule.objects.get(checklist_item_id=cfg_mon['id'], is_active=True)
+        sched_row.selected_weekdays = ['MONDAY', 'THURSDAY']
+        sched_row.save(update_fields=['selected_weekdays'])
+        legacy_dates = get_schedule_dates_in_range(sched_row, date(2026, 12, 1), date(2026, 12, 10))
+        assert len(legacy_dates) == len(set(legacy_dates))
+
+        bad_put = admin_client.put(
+            f"/api/v1/pm/admin/activity-configurations/{cfg_mon['id']}/",
+            {
+                'activity_name': cfg_mon['activity_name'],
+                'description': cfg_mon['description'],
+                'item_code': cfg_mon['item_code'],
+                'frequency': 'WEEKLY',
+                'frequency_schedule': {'schedule_type': 'WEEKLY_DAYS', 'selected_weekdays': ['MONDAY', 'THURSDAY']},
+                'questions_enabled': False,
+            },
+            format='json',
+        )
+        assert bad_put.status_code == 400
+        assert 'Only one weekday can be selected' in json.dumps(bad_put.json())

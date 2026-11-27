@@ -21,6 +21,7 @@ from apps.maintenance.models import (
     MaintenanceCategoryMaster,
     MaintenanceChecklistMaster,
     MaintenanceFrequencyMaster,
+    MaintenanceSection,
     MaintenanceSubmission,
     RoleFrequencyMapping,
 )
@@ -41,11 +42,12 @@ def get_dynamic_configs_for_items(item_ids: list[int], frequency_id: int | None 
 
     cf_by_item = {}
     for cf in (
-        ChecklistCustomFieldConfig.objects.select_related('frequency')
+        ChecklistCustomFieldConfig.objects.select_related('frequency', 'section')
         .prefetch_related('option_rows')
         .filter(checklist_item_id__in=item_ids, is_active=True)
+        .filter(Q(section__isnull=True) | Q(section__is_active=True))
         .filter(freq_q)
-        .order_by('display_order', 'id')
+        .order_by('section__display_order', 'display_order', 'id')
     ):
         opt_values = list(cf.options or [])
         if not opt_values:
@@ -57,6 +59,10 @@ def get_dynamic_configs_for_items(item_ids: list[int], frequency_id: int | None 
         cf_by_item.setdefault(cf.checklist_item_id, []).append(
             {
                 "id": cf.id,
+                "section_id": cf.section_id,
+                "section_name": cf.section.section_name if cf.section else "",
+                "section_description": cf.section.section_description if cf.section else "",
+                "section_display_order": cf.section.display_order if cf.section else 0,
                 "field_name": cf.field_name,
                 "field_label": cf.field_label,
                 "field_description": cf.field_description,
@@ -129,6 +135,62 @@ def get_dynamic_configs_for_items(item_ids: list[int], frequency_id: int | None 
     return cf_by_item, photo_by_item, video_by_item
 
 
+def get_sections_for_items(item_ids: list[int], questions_by_item: dict, *, include_empty: bool = False) -> dict:
+    """
+    Groups active questions into their active `MaintenanceSection` containers per `checklist_item_id`.
+    Sections with zero active questions are omitted unless `include_empty=True`.
+    """
+    if not item_ids:
+        return {}
+
+    sections_by_item = {}
+    sec_rows_by_item = {}
+    for sec in MaintenanceSection.objects.filter(
+        checklist_item_id__in=item_ids, is_active=True
+    ).order_by('display_order', 'id'):
+        sec_rows_by_item.setdefault(sec.checklist_item_id, []).append(sec)
+
+    for item_id in item_ids:
+        q_list = questions_by_item.get(item_id, []) or []
+        q_by_sec = {}
+        orphan_qs = []
+        for q in q_list:
+            sid = q.get("section_id")
+            if sid:
+                q_by_sec.setdefault(sid, []).append(q)
+            else:
+                orphan_qs.append(q)
+
+        item_sections = []
+        for sec in sec_rows_by_item.get(item_id, []):
+            sec_qs = q_by_sec.get(sec.id, [])
+            if not sec_qs and not include_empty:
+                continue
+            item_sections.append(
+                {
+                    "id": sec.id,
+                    "section_name": sec.section_name,
+                    "section_description": sec.section_description or "",
+                    "display_order": sec.display_order,
+                    "is_active": sec.is_active,
+                    "questions": sec_qs,
+                }
+            )
+        if orphan_qs:
+            item_sections.append(
+                {
+                    "id": None,
+                    "section_name": "General Inspection",
+                    "section_description": "",
+                    "display_order": len(item_sections) + 1,
+                    "is_active": True,
+                    "questions": orphan_qs,
+                }
+            )
+        sections_by_item[item_id] = item_sections
+    return sections_by_item
+
+
 def get_location_requirements_for_items(item_ids: list[int], frequency_id: int | None = None) -> dict:
     if not item_ids:
         return {}
@@ -156,6 +218,13 @@ def get_location_requirements_for_items(item_ids: list[int], frequency_id: int |
                 "capture_rule": lr.capture_rule,
                 "is_required": lr.is_required,
                 "is_mandatory": lr.is_mandatory,
+                "is_geofence_required": bool(lr.is_geofence_required),
+                "geofence_type": lr.geofence_type or ChecklistLocationRequirement.GEOFENCE_CIRCLE,
+                "geofence_reference_name": lr.geofence_reference_name or "",
+                "geofence_latitude": lr.geofence_latitude,
+                "geofence_longitude": lr.geofence_longitude,
+                "geofence_radius_meters": lr.geofence_radius_meters,
+                "geofence_polygon": lr.geofence_polygon or [],
                 "is_active": lr.is_active,
                 "condition_mode": lr.condition_mode,
                 "condition_logic": lr.condition_logic,
@@ -331,6 +400,7 @@ def get_checklist_for_frequency(user, frequency_code: str, machine_id=None) -> d
         item_ids,
         frequency_id=freq.id,
     )
+    sections_by_item = get_sections_for_items(item_ids, cf_by_item)
 
     items = []
     grouped = {}
@@ -359,6 +429,7 @@ def get_checklist_for_frequency(user, frequency_code: str, machine_id=None) -> d
             "config_version": getattr(ci, 'config_version', 1),
             "sort_order": m.sort_order or ci.sort_order,
             "schedule": serialize_schedule(sched_obj) if (sched_obj and sched_obj.is_active) else None,
+            "sections": sections_by_item.get(ci.id, []),
             "custom_fields": cf_by_item.get(ci.id, []),
             "photo_requirements": photo_by_item.get(ci.id, []),
             "video_requirements": video_by_item.get(ci.id, []),
@@ -397,13 +468,34 @@ def get_checklist_for_frequency(user, frequency_code: str, machine_id=None) -> d
                 .first()
             )
 
+    today = timezone.localdate()
     schedule_status = evaluate_scheduled_cycle(
         freq=freq,
         schedules=active_scheds,
         latest_completed_sub=latest_complete_sub,
-        today=timezone.localdate(),
+        today=today,
         latest_any_sub=latest_sub,
     )
+    if schedule_status is None and machine_obj is not None:
+        allow_dup = bool(active_scheds) and all(bool(s.allow_duplicate_in_same_slot) for s in active_scheds)
+        submitted_today = bool(latest_sub and latest_sub.submission_date >= today)
+        schedule_status = {
+            "status": "COMPLETED" if (latest_complete_sub and latest_complete_sub.submission_date >= today) else "DUE",
+            "due_label": f"{freq.name} Completed ({today})" if (latest_complete_sub and latest_complete_sub.submission_date >= today) else f"{freq.name} Due ({today})",
+            "current_occurrence_date": today.isoformat(),
+            "completion_deadline_date": today.isoformat(),
+            "next_scheduled_date": None,
+            "upcoming_dates": [],
+            "last_completed_date": latest_complete_sub.submission_date.isoformat() if latest_complete_sub else None,
+            "schedule_summaries": [s.schedule_summary for s in active_scheds if s.schedule_summary] or ["Default interval"],
+            "buffer_days": 0,
+            "within_buffer_period": False,
+            "allow_duplicate_in_same_slot": allow_dup,
+            "already_completed_for_occurrence": submitted_today if not allow_dup else False,
+            "existing_submission_number": (
+                latest_sub.submission_number if (submitted_today and not allow_dup and latest_sub) else None
+            ),
+        }
 
     safety_guidelines = get_safety_guidelines()
 

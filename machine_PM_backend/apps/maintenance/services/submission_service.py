@@ -1,7 +1,7 @@
 import math
 from decimal import Decimal, InvalidOperation
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
@@ -33,6 +33,7 @@ from apps.maintenance.models import (
 )
 from .audit_service import record_audit_log
 from .condition_service import evaluate_activity_visibility
+from .geofence_service import evaluate_geofence
 from .photo_service import validate_and_store_photo
 from .schedule_service import evaluate_scheduled_cycle, serialize_schedule
 from .video_service import validate_and_store_video
@@ -76,7 +77,36 @@ def _parse_hour_meter(raw_value) -> Decimal:
     return val.quantize(Decimal('0.01'))
 
 
-def _check_duplicate_submission(machine, freq, hour_meter: Decimal, client_request_id: str | None, user, request):
+def _extract_submitted_item_ids(raw_responses) -> list[int]:
+    if not isinstance(raw_responses, list):
+        return []
+    ids = []
+    seen = set()
+    for r in raw_responses:
+        if not isinstance(r, dict):
+            continue
+        cid = r.get('checklist_item_id') or r.get('item_id')
+        if cid is None:
+            continue
+        try:
+            cid_int = int(cid)
+        except (TypeError, ValueError):
+            continue
+        if cid_int not in seen:
+            seen.add(cid_int)
+            ids.append(cid_int)
+    return ids
+
+
+def _check_duplicate_submission(
+    machine,
+    freq,
+    hour_meter: Decimal,
+    client_request_id: str | None,
+    user,
+    request,
+    submitted_item_ids: list[int] | None = None,
+):
     if client_request_id:
         existing_req = MaintenanceSubmission.objects.filter(client_request_id=client_request_id).first()
         if existing_req:
@@ -100,96 +130,164 @@ def _check_duplicate_submission(machine, freq, hour_meter: Decimal, client_reque
         frequency=freq,
     ).exclude(approval_status=MaintenanceSubmission.APPROVAL_REJECTED).order_by('-submitted_at', '-id')
 
-    custom_scheds = list(
-        ChecklistFrequencySchedule.objects.filter(
+    all_scheds = list(
+        ChecklistFrequencySchedule.objects.select_related('checklist_item')
+        .filter(
             frequency=freq,
             is_active=True,
             checklist_item__is_active=True,
             checklist_item__is_archived=False,
             checklist_item__category__is_active=True,
             checklist_item__category__is_checkable=True,
-        ).exclude(schedule_type=ChecklistFrequencySchedule.SCHED_DEFAULT)
+        )
+    )
+    sched_by_item_id = {s.checklist_item_id: s for s in all_scheds}
+    custom_scheds = [
+        s for s in all_scheds
+        if s.schedule_type != ChecklistFrequencySchedule.SCHED_DEFAULT
+    ]
+
+    latest_sub = active_non_rejected.first()
+    latest_complete = (
+        latest_sub
+        if (latest_sub and latest_sub.status == MaintenanceSubmission.STATUS_COMPLETED)
+        else active_non_rejected.filter(status=MaintenanceSubmission.STATUS_COMPLETED).first()
     )
 
-    sched_context = {"scheduled_due_date": None, "schedule_snapshot": {}}
+    sched_context = {"scheduled_due_date": None, "completion_deadline_date": None, "schedule_snapshot": {}}
+    sched_eval = None
     if custom_scheds:
-        latest_sub = active_non_rejected.first()
         sched_eval = evaluate_scheduled_cycle(
             freq=freq,
             schedules=custom_scheds,
-            latest_completed_sub=latest_sub if (latest_sub and latest_sub.status == MaintenanceSubmission.STATUS_COMPLETED) else None,
+            latest_completed_sub=latest_complete,
             today=today,
             latest_any_sub=latest_sub,
         )
         occ_str = sched_eval.get("current_occurrence_date") if sched_eval else None
         occ_date = parse_date(occ_str) if occ_str else None
+        deadline_str = sched_eval.get("completion_deadline_date") if sched_eval else None
+        deadline_date = occ_date if freq.code == 'DAILY' else (parse_date(deadline_str) if deadline_str else occ_date)
         sched_context = {
             "scheduled_due_date": occ_date,
+            "completion_deadline_date": deadline_date,
             "schedule_snapshot": {
                 "frequency": freq.code,
+                "buffer_days": 0 if freq.code == 'DAILY' else int(sched_eval.get("buffer_days", 0) if sched_eval else 0),
+                "scheduled_date": occ_str,
+                "completion_deadline_date": deadline_date.isoformat() if deadline_date else occ_str,
                 "schedules": [serialize_schedule(s) for s in custom_scheds],
                 "evaluation": sched_eval,
             },
         }
-        if sched_eval and sched_eval.get("already_completed_for_occurrence"):
-            existing_num = sched_eval.get("existing_submission_number") or (latest_sub.submission_number if latest_sub else "")
-            record_audit_log(
-                entity_type='SUBMISSION',
-                entity_id=latest_sub.id if latest_sub else None,
-                action='DUPLICATE_BLOCKED',
-                actor=user,
-                machine_id=machine.id,
-                frequency_code=freq.code,
-                details={
-                    "reason": "Duplicate submission blocked for same scheduled occurrence",
-                    "occurrence_date": occ_str,
-                    "existing": existing_num,
-                },
-                request=request,
+
+    # Per-activity enforcement: allow only 1 submission per machine, activity, and scheduled occurrence
+    # unless allow_duplicate_in_same_slot is explicitly enabled on that activity's schedule.
+    target_item_ids = list(submitted_item_ids or [])
+    if target_item_ids:
+        for cid in target_item_ids:
+            item_sched = sched_by_item_id.get(cid)
+            item_allow_dup = bool(item_sched.allow_duplicate_in_same_slot) if item_sched else False
+            if item_allow_dup:
+                continue
+
+            if item_sched and item_sched.schedule_type != ChecklistFrequencySchedule.SCHED_DEFAULT:
+                item_eval = evaluate_scheduled_cycle(
+                    freq=freq,
+                    schedules=[item_sched],
+                    latest_completed_sub=latest_complete,
+                    today=today,
+                    latest_any_sub=latest_sub,
+                )
+                item_occ_str = item_eval.get("current_occurrence_date") if item_eval else None
+                item_occ_date = (parse_date(item_occ_str) if item_occ_str else None) or today
+                slot_q = Q(submission__scheduled_due_date=item_occ_date) | Q(submission__submission_date__gte=item_occ_date)
+            else:
+                item_occ_date = today
+                slot_q = Q(submission__submission_date=today)
+
+            existing_resp = (
+                MaintenanceChecklistResponse.objects.select_related('submission', 'checklist_item')
+                .filter(
+                    submission__machine_id=machine.id,
+                    submission__frequency=freq,
+                    checklist_item_id=cid,
+                )
+                .exclude(submission__approval_status=MaintenanceSubmission.APPROVAL_REJECTED)
+                .filter(slot_q)
+                .order_by('-submission__submitted_at', '-id')
+                .first()
             )
-            raise ConflictError(
-                f"{freq.name} maintenance for machine {machine.code} has already been completed "
-                f"for the current scheduled occurrence ({occ_str}) ({existing_num})."
-            )
+            if existing_resp:
+                occ_label = item_occ_date.isoformat()
+                existing_num = existing_resp.submission.submission_number
+                activity_name = existing_resp.checklist_item.description
+                record_audit_log(
+                    entity_type='SUBMISSION',
+                    entity_id=existing_resp.submission_id,
+                    action='DUPLICATE_BLOCKED',
+                    actor=user,
+                    machine_id=machine.id,
+                    frequency_code=freq.code,
+                    details={
+                        "reason": "Duplicate submission blocked for same machine, activity, and scheduled occurrence",
+                        "checklist_item_id": cid,
+                        "occurrence_date": occ_label,
+                        "existing": existing_num,
+                    },
+                    request=request,
+                )
+                raise ConflictError(
+                    f"Duplicate submission rejected: '{activity_name}' ({freq.name}) for machine {machine.code} "
+                    f"has already been completed for scheduled occurrence {occ_label} ({existing_num}). "
+                    f"Multiple completions in the same scheduled window are disabled."
+                )
         return sched_context
 
-    active_today = active_non_rejected.filter(submission_date=today)
-    if freq.code == 'DAILY':
-        existing_daily = active_today.first()
-        if existing_daily:
-            record_audit_log(
-                entity_type='SUBMISSION',
-                entity_id=existing_daily.id,
-                action='DUPLICATE_BLOCKED',
-                actor=user,
-                machine_id=machine.id,
-                frequency_code=freq.code,
-                details={"reason": "Daily maintenance already submitted today", "existing": existing_daily.submission_number},
-                request=request,
-            )
-            raise ConflictError(
-                f"Daily maintenance for machine {machine.code} has already been submitted today ({existing_daily.submission_number})."
-            )
-    else:
-        existing_same_meter = active_today.filter(hour_meter_reading=hour_meter).first()
-        if existing_same_meter:
-            record_audit_log(
-                entity_type='SUBMISSION',
-                entity_id=existing_same_meter.id,
-                action='DUPLICATE_BLOCKED',
-                actor=user,
-                machine_id=machine.id,
-                frequency_code=freq.code,
-                details={
-                    "reason": "Same machine, frequency, date, and hour-meter reading already submitted",
-                    "existing": existing_same_meter.submission_number,
-                    "hour_meter_reading": str(hour_meter),
-                },
-                request=request,
-            )
-            raise ConflictError(
-                f"{freq.name} maintenance for machine {machine.code} at {hour_meter} hrs has already been submitted today ({existing_same_meter.submission_number})."
-            )
+    if custom_scheds and sched_eval and sched_eval.get("already_completed_for_occurrence"):
+        occ_str = sched_eval.get("current_occurrence_date") or today.isoformat()
+        existing_num = sched_eval.get("existing_submission_number") or (latest_sub.submission_number if latest_sub else "")
+        record_audit_log(
+            entity_type='SUBMISSION',
+            entity_id=latest_sub.id if latest_sub else None,
+            action='DUPLICATE_BLOCKED',
+            actor=user,
+            machine_id=machine.id,
+            frequency_code=freq.code,
+            details={
+                "reason": "Duplicate submission blocked for same scheduled occurrence",
+                "occurrence_date": occ_str,
+                "existing": existing_num,
+            },
+            request=request,
+        )
+        raise ConflictError(
+            f"{freq.name} maintenance for machine {machine.code} has already been completed "
+            f"for the current scheduled occurrence ({occ_str}) ({existing_num})."
+        )
+
+    if not custom_scheds:
+        allow_default_dup = bool(all_scheds) and all(bool(s.allow_duplicate_in_same_slot) for s in all_scheds)
+        if not allow_default_dup:
+            existing_today = active_non_rejected.filter(submission_date=today).first()
+            if existing_today:
+                record_audit_log(
+                    entity_type='SUBMISSION',
+                    entity_id=existing_today.id,
+                    action='DUPLICATE_BLOCKED',
+                    actor=user,
+                    machine_id=machine.id,
+                    frequency_code=freq.code,
+                    details={
+                        "reason": "Maintenance already submitted today for this machine and frequency",
+                        "existing": existing_today.submission_number,
+                    },
+                    request=request,
+                )
+                raise ConflictError(
+                    f"{freq.name} maintenance for machine {machine.code} has already been completed "
+                    f"for scheduled occurrence {today.isoformat()} ({existing_today.submission_number})."
+                )
     return sched_context
 
 
@@ -287,9 +385,21 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
     if top_gps:
         submission_metadata['gps_information'] = top_gps
 
-    sched_context = _check_duplicate_submission(machine, freq, hour_meter, client_request_id, user, request) or {}
+    raw_responses = payload.get('responses')
+    submitted_item_ids = _extract_submitted_item_ids(raw_responses)
+    sched_context = _check_duplicate_submission(
+        machine,
+        freq,
+        hour_meter,
+        client_request_id,
+        user,
+        request,
+        submitted_item_ids=submitted_item_ids,
+    ) or {}
     if parsed_sched_date and not sched_context.get('scheduled_due_date'):
         sched_context['scheduled_due_date'] = parsed_sched_date
+        if not sched_context.get('completion_deadline_date'):
+            sched_context['completion_deadline_date'] = parsed_sched_date
 
     required_mappings = list(
         ChecklistFrequencyMapping.objects.select_related('checklist_item', 'checklist_item__category')
@@ -363,16 +473,23 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
 
     cf_by_item = {}
     for cf in (
-        ChecklistCustomFieldConfig.objects.filter(checklist_item_id__in=item_ids, is_active=True)
+        ChecklistCustomFieldConfig.objects.select_related('section')
+        .filter(checklist_item_id__in=item_ids, is_active=True)
+        .filter(Q(section__isnull=True) | Q(section__is_active=True))
         .prefetch_related('option_rows')
         .filter(freq_q)
-        .order_by('display_order', 'id')
+        .order_by('section__display_order', 'display_order', 'id')
     ):
         cf_by_item.setdefault(cf.checklist_item_id, []).append(cf)
+
+    active_q_parent_filter = Q(question__isnull=True) | (
+        Q(question__is_active=True) & (Q(question__section__isnull=True) | Q(question__section__is_active=True))
+    )
 
     photo_reqs_by_item = {}
     for pr in (
         ChecklistPhotoRequirement.objects.filter(checklist_item_id__in=item_ids, is_active=True, is_required=True)
+        .filter(active_q_parent_filter)
         .filter(freq_q)
         .order_by('display_order', 'id')
     ):
@@ -381,6 +498,7 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
     video_reqs_by_item = {}
     for vr in (
         ChecklistVideoRequirement.objects.filter(checklist_item_id__in=item_ids, is_active=True, is_required=True)
+        .filter(active_q_parent_filter)
         .filter(freq_q)
         .order_by('display_order', 'id')
     ):
@@ -389,6 +507,7 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
     location_reqs_by_item = {}
     for lr in (
         ChecklistLocationRequirement.objects.filter(checklist_item_id__in=item_ids, is_active=True, is_required=True)
+        .filter(active_q_parent_filter)
         .filter(freq_q)
         .order_by('display_order', 'id')
     ):
@@ -680,9 +799,17 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
                                 {"custom_fields": f"Question '{cf.field_label}' must be Yes or No."}
                             )
 
+            sec_obj = getattr(cf, 'section', None)
+            sec_id = cf.section_id
+            sec_name = sec_obj.section_name if sec_obj else ""
+            sec_desc = sec_obj.section_description if sec_obj else ""
+            sec_order = sec_obj.display_order if sec_obj else None
+
             saved_custom_fields.append(
                 {
                     "field_id": cf.id,
+                    "section_id": sec_id,
+                    "section_name": sec_name,
                     "field_name": cf.field_name,
                     "field_label": cf.field_label,
                     "field_description": cf.field_description,
@@ -694,6 +821,11 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
             question_snapshots.append(
                 {
                     "question_id": cf.id,
+                    "section_id": sec_id,
+                    "section_name": sec_name,
+                    "section_description": sec_desc,
+                    "section_display_order": sec_order,
+                    "display_order": cf.display_order,
                     "question_name": cf.field_label,
                     "question_description": cf.field_description,
                     "answer_type": cf.field_type,
@@ -1121,6 +1253,10 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
                         }
                     )
 
+            geo_eval = evaluate_geofence(lr, lat_val, lon_val)
+            if geo_eval["geofence_required"] and not geo_eval["is_inside"] and must_provide_loc:
+                raise ValidationError({"locations": geo_eval["message"]})
+
             captured_dt = timezone.now()
             if lr.capture_timestamp and ts_raw:
                 parsed_dt = parse_datetime(str(ts_raw))
@@ -1141,6 +1277,13 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
                     "longitude": lon_val if lr.capture_longitude else None,
                     "accuracy_meters": acc_val,
                     "captured_at": captured_dt,
+                    "geofence_required_snapshot": bool(geo_eval["geofence_required"]),
+                    "geofence_type_snapshot": geo_eval["geofence_type"],
+                    "geofence_reference_name_snapshot": geo_eval["reference_name"][:150],
+                    "geofence_radius_meters_snapshot": geo_eval["radius_meters"],
+                    "geofence_is_valid": geo_eval["is_inside"],
+                    "geofence_distance_meters": geo_eval["distance_from_boundary_meters"],
+                    "geofence_validation_message": geo_eval["message"][:255],
                 }
             )
             location_snapshots.append(
@@ -1157,8 +1300,30 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
                     "longitude": lon_val if lr.capture_longitude else None,
                     "accuracy_meters": acc_val,
                     "captured_at": captured_dt.isoformat(),
+                    "geofence_required": bool(geo_eval["geofence_required"]),
+                    "geofence_type": geo_eval["geofence_type"],
+                    "geofence_reference_name": geo_eval["reference_name"],
+                    "geofence_radius_meters": geo_eval["radius_meters"],
+                    "geofence_is_valid": geo_eval["is_inside"],
+                    "geofence_distance_meters": geo_eval["distance_from_boundary_meters"],
+                    "geofence_validation_message": geo_eval["message"],
                 }
             )
+
+        sections_snap_map = {}
+        for qs in question_snapshots:
+            s_key = str(qs.get("section_id") or f"name:{qs.get('section_name') or 'General Inspection'}")
+            bucket = sections_snap_map.setdefault(
+                s_key,
+                {
+                    "section_id": qs.get("section_id"),
+                    "section_name": qs.get("section_name") or "General Inspection",
+                    "section_description": qs.get("section_description") or "",
+                    "display_order": qs.get("section_display_order") or (len(sections_snap_map) + 1),
+                    "questions": [],
+                },
+            )
+            bucket["questions"].append({k: v for k, v in qs.items() if k != "cf_obj"})
 
         validated_entries.append(
             {
@@ -1166,6 +1331,7 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
                 "status": item_status,
                 "remarks": remarks,
                 "custom_field_values": saved_custom_fields,
+                "sections_snapshot": list(sections_snap_map.values()),
                 "question_snapshots": question_snapshots,
                 "photo_snapshots": photo_snapshots,
                 "video_snapshots": video_snapshots,
@@ -1198,36 +1364,52 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
         for entry in validated_entries
     ]
 
-    submission = MaintenanceSubmission.objects.create(
-        submission_number=MaintenanceSubmission.generate_submission_number(),
-        machine_id=machine.id,
-        machine_number=machine_number,
-        machine_name=machine.name,
-        machine_model=machine.model_name or '',
-        machine_type=machine.category or '',
-        vendor_id=machine.vendor_id,
-        vendor_name=machine.vendor.name if machine.vendor else 'HERO Direct',
-        assigned_operator=extract_assigned_operator(machine),
-        machine_assignment_snapshot=assignment_snapshot,
-        frequency=freq,
-        hour_meter_reading=hour_meter,
-        submitted_by_id=user.id,
-        submitted_by_name=user.get_display_name(),
-        submitted_by_role=get_primary_pm_role(user),
-        status=overall_status,
-        approval_status=MaintenanceSubmission.APPROVAL_PENDING,
-        total_items=len(validated_entries),
-        completed_items_count=completed_count,
-        not_completed_items_count=not_completed_count,
-        general_remarks=general_remarks,
-        submission_date=timezone.localdate(),
-        scheduled_due_date=sched_context.get("scheduled_due_date"),
-        schedule_snapshot=sched_snap,
-        submission_metadata=submission_metadata,
-        submitted_at=timezone.now(),
-        client_request_id=client_request_id,
-        is_locked=True,
-    )
+    try:
+        with transaction.atomic():
+            submission = MaintenanceSubmission.objects.create(
+                submission_number=MaintenanceSubmission.generate_submission_number(),
+                machine_id=machine.id,
+                machine_number=machine_number,
+                machine_name=machine.name,
+                machine_model=machine.model_name or '',
+                machine_type=machine.category or '',
+                vendor_id=machine.vendor_id,
+                vendor_name=machine.vendor.name if machine.vendor else 'HERO Direct',
+                assigned_operator=extract_assigned_operator(machine),
+                machine_assignment_snapshot=assignment_snapshot,
+                frequency=freq,
+                hour_meter_reading=hour_meter,
+                submitted_by_id=user.id,
+                submitted_by_name=user.get_display_name(),
+                submitted_by_role=get_primary_pm_role(user),
+                status=overall_status,
+                approval_status=MaintenanceSubmission.APPROVAL_PENDING,
+                total_items=len(validated_entries),
+                completed_items_count=completed_count,
+                not_completed_items_count=not_completed_count,
+                general_remarks=general_remarks,
+                submission_date=timezone.localdate(),
+                scheduled_due_date=sched_context.get("scheduled_due_date"),
+                completion_deadline_date=sched_context.get("completion_deadline_date") or sched_context.get("scheduled_due_date"),
+                schedule_snapshot=sched_snap,
+                submission_metadata=submission_metadata,
+                submitted_at=timezone.now(),
+                client_request_id=client_request_id,
+                is_locked=True,
+            )
+    except IntegrityError:
+        existing_req = (
+            MaintenanceSubmission.objects.filter(client_request_id=client_request_id).first()
+            if client_request_id
+            else None
+        )
+        if existing_req:
+            raise ConflictError(
+                f"Duplicate submission blocked (request already processed as {existing_req.submission_number})."
+            )
+        raise ConflictError(
+            "Duplicate submission rejected. This maintenance request was already submitted."
+        )
 
     for entry in validated_entries:
         ci = entry["checklist_item"]
@@ -1245,6 +1427,7 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
             remarks=entry["remarks"],
             custom_field_values=entry["custom_field_values"],
             config_version_snapshot=getattr(ci, 'config_version', 1),
+            sections_snapshot=entry.get("sections_snapshot", []),
             questions_snapshot=serializable_q_snaps,
             photo_requirements_snapshot=entry["photo_snapshots"],
             video_requirements_snapshot=entry["video_snapshots"],
@@ -1264,6 +1447,10 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
                 response=resp_obj,
                 checklist_item=ci,
                 question=cf_obj,
+                section=cf_obj.section,
+                section_name_snapshot=qs.get("section_name", ""),
+                section_description_snapshot=qs.get("section_description", ""),
+                section_display_order_snapshot=qs.get("section_display_order"),
                 question_name_snapshot=qs["question_name"],
                 question_description_snapshot=qs["question_description"],
                 answer_type_snapshot=qs["answer_type"],
@@ -1310,6 +1497,13 @@ def create_maintenance_submission(user, payload: dict, files_map=None, request=N
                 longitude=loc_data["longitude"],
                 accuracy_meters=loc_data["accuracy_meters"],
                 captured_at=loc_data["captured_at"],
+                geofence_required_snapshot=loc_data.get("geofence_required_snapshot", False),
+                geofence_type_snapshot=loc_data.get("geofence_type_snapshot", ""),
+                geofence_reference_name_snapshot=loc_data.get("geofence_reference_name_snapshot", ""),
+                geofence_radius_meters_snapshot=loc_data.get("geofence_radius_meters_snapshot"),
+                geofence_is_valid=loc_data.get("geofence_is_valid"),
+                geofence_distance_meters=loc_data.get("geofence_distance_meters"),
+                geofence_validation_message=loc_data.get("geofence_validation_message", ""),
             )
 
     record_audit_log(

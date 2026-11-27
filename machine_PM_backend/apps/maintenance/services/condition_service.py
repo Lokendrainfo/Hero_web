@@ -124,8 +124,15 @@ def evaluate_activity_visibility(
     Any child evidence attached to a hidden Question is automatically hidden as well.
     """
     active_questions = sorted(
-        [q for q in questions if q.is_active],
-        key=lambda x: (x.display_order, x.id),
+        [
+            q for q in questions
+            if q.is_active and (getattr(q, 'section_id', None) is None or (getattr(q, 'section', None) and q.section.is_active))
+        ],
+        key=lambda x: (
+            x.section.display_order if getattr(x, 'section', None) else 0,
+            x.display_order,
+            x.id,
+        ),
     )
 
     visible_questions = []

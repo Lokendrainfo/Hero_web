@@ -64,7 +64,7 @@ class TestMobileApkDynamicIntegration:
                 'frequency': 'WEEKLY',
                 'frequency_schedule': {
                     'schedule_type': 'WEEKLY_DAYS',
-                    'selected_weekdays': ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'],
+                    'selected_weekdays': [timezone.localdate().strftime('%A').upper()],
                 },
                 'questions_enabled': True,
                 'questions': [
@@ -246,7 +246,7 @@ class TestMobileApkDynamicIntegration:
                 'frequency': 'WEEKLY',
                 'frequency_schedule': {
                     'schedule_type': 'WEEKLY_DAYS',
-                    'selected_weekdays': ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'],
+                    'selected_weekdays': [timezone.localdate().strftime('%A').upper()],
                 },
                 'questions_enabled': True,
                 'questions': [
@@ -558,7 +558,7 @@ class TestMobileApkDynamicIntegration:
                 'frequency': 'WEEKLY',
                 'frequency_schedule': {
                     'schedule_type': 'WEEKLY_DAYS',
-                    'selected_weekdays': ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'],
+                    'selected_weekdays': [timezone.localdate().strftime('%A').upper()],
                 },
                 'questions_enabled': False,
             },
@@ -601,7 +601,7 @@ class TestMobileApkDynamicIntegration:
                 'frequency': 'WEEKLY',
                 'frequency_schedule': {
                     'schedule_type': 'WEEKLY_DAYS',
-                    'selected_weekdays': ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'],
+                    'selected_weekdays': [timezone.localdate().strftime('%A').upper()],
                 },
                 'questions_enabled': True,
                 'questions': [

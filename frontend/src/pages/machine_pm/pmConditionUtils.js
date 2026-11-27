@@ -113,10 +113,24 @@ export const evaluateCondition = (conditionMode, conditionLogic, conditionRules,
 };
 
 export const evaluateActivityVisibility = (item, rawAnswersById = {}) => {
+  const sectionsList = Array.isArray(item?.sections) ? item.sections : [];
+  const sectionById = new Map(sectionsList.map((s) => [String(s.id), s]));
+
   const allQuestions = (item?.custom_fields || [])
-    .filter((q) => q.is_active !== false)
+    .filter((q) => {
+      if (q.is_active === false) return false;
+      if (q.section_id && sectionById.has(String(q.section_id))) {
+        return sectionById.get(String(q.section_id)).is_active !== false;
+      }
+      return true;
+    })
     .slice()
-    .sort((a, b) => (a.display_order || 0) - (b.display_order || 0) || a.id - b.id);
+    .sort((a, b) => {
+      const secA = a.section_display_order ?? sectionById.get(String(a.section_id))?.display_order ?? 0;
+      const secB = b.section_display_order ?? sectionById.get(String(b.section_id))?.display_order ?? 0;
+      if (secA !== secB) return secA - secB;
+      return (a.display_order || 0) - (b.display_order || 0) || a.id - b.id;
+    });
 
   const visibleQuestions = [];
   const effectiveAnswers = {};
@@ -175,9 +189,70 @@ export const evaluateActivityVisibility = (item, rawAnswersById = {}) => {
       evaluateCondition(l.condition_mode, l.condition_logic, l.condition_rules, effectiveAnswers)
   );
 
+  const visibleSections = [];
+  if (sectionsList.length > 0) {
+    const visQBySecId = new Map();
+    const unlinkedVisQs = [];
+    visibleQuestions.forEach((vq) => {
+      if (vq.section_id !== null && vq.section_id !== undefined && vq.section_id !== '') {
+        const key = String(vq.section_id);
+        if (!visQBySecId.has(key)) visQBySecId.set(key, []);
+        visQBySecId.get(key).push(vq);
+      } else {
+        unlinkedVisQs.push(vq);
+      }
+    });
+    sectionsList
+      .filter((s) => s.is_active !== false)
+      .slice()
+      .sort((a, b) => (a.display_order || 0) - (b.display_order || 0) || (a.id || 0) - (b.id || 0))
+      .forEach((s) => {
+        const key = String(s.id ?? '');
+        const qs = visQBySecId.get(key) || [];
+        if (qs.length > 0) {
+          visibleSections.push({
+            id: s.id ?? null,
+            section_name: s.section_name,
+            section_description: s.section_description || '',
+            display_order: s.display_order || 1,
+            questions: qs,
+          });
+        }
+      });
+    if (unlinkedVisQs.length > 0) {
+      visibleSections.push({
+        id: null,
+        section_name: 'General Inspection',
+        section_description: '',
+        display_order: visibleSections.length + 1,
+        questions: unlinkedVisQs,
+      });
+    }
+  } else if (visibleQuestions.length > 0) {
+    const bySecName = new Map();
+    visibleQuestions.forEach((vq) => {
+      const sName = vq.section_name || '';
+      if (!sName) return;
+      if (!bySecName.has(sName)) {
+        bySecName.set(sName, {
+          id: vq.section_id || null,
+          section_name: sName,
+          section_description: vq.section_description || '',
+          display_order: vq.section_display_order || bySecName.size + 1,
+          questions: [],
+        });
+      }
+      bySecName.get(sName).questions.push(vq);
+    });
+    if (bySecName.size > 0) {
+      visibleSections.push(...bySecName.values());
+    }
+  }
+
   return {
     allQuestions,
     visibleQuestions,
+    visibleSections,
     allPhotos,
     visiblePhotos,
     allVideos,

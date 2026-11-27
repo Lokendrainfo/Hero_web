@@ -52,12 +52,21 @@ const QUICK_MONTHLY_DATES = [
 
 const ALL_MONTH_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
 
+export const BUFFER_SUPPORTED_FREQUENCIES = new Set([
+  'WEEKLY',
+  'EVERY_15_DAYS',
+  'MONTHLY',
+  'QUARTERLY',
+  'YEARLY',
+]);
+
 export const createDefaultScheduleForFrequency = (freqCode) => {
   const code = String(freqCode || '').toUpperCase();
   if (code === 'DAILY') {
     return {
       frequency_type: 'DAILY',
       schedule_type: 'DAILY_EVERY_DAY',
+      allow_duplicate_in_same_slot: false,
       is_active: true,
     };
   }
@@ -65,7 +74,8 @@ export const createDefaultScheduleForFrequency = (freqCode) => {
     return {
       frequency_type: 'WEEKLY',
       schedule_type: 'WEEKLY_DAYS',
-      selected_weekdays: ['MONDAY'],
+      selected_weekdays: [],
+      buffer_days: 0,
       allow_duplicate_in_same_slot: false,
       is_active: true,
     };
@@ -80,6 +90,7 @@ export const createDefaultScheduleForFrequency = (freqCode) => {
       first_date: 1,
       second_date: 16,
       use_last_day_fallback: true,
+      buffer_days: 0,
       allow_duplicate_in_same_slot: false,
       is_active: true,
     };
@@ -90,6 +101,7 @@ export const createDefaultScheduleForFrequency = (freqCode) => {
       schedule_type: 'MONTHLY_DATES',
       selected_dates: [1],
       use_last_day_fallback: true,
+      buffer_days: 0,
       allow_duplicate_in_same_slot: false,
       is_active: true,
     };
@@ -102,6 +114,7 @@ export const createDefaultScheduleForFrequency = (freqCode) => {
       repeat_interval: 3,
       quarter_dates: [15],
       use_last_day_fallback: true,
+      buffer_days: 0,
       allow_duplicate_in_same_slot: false,
       is_active: true,
     };
@@ -112,6 +125,7 @@ export const createDefaultScheduleForFrequency = (freqCode) => {
       schedule_type: 'YEARLY_DATES',
       yearly_schedules: [{ month: 1, day: 15 }],
       use_last_day_fallback: true,
+      buffer_days: 0,
       allow_duplicate_in_same_slot: false,
       is_active: true,
     };
@@ -126,7 +140,11 @@ export const hydrateScheduleFromApi = (freqCode, apiSched) => {
   }
   const selDates = Array.isArray(apiSched.selected_dates) ? apiSched.selected_dates : base.selected_dates || [];
   if (String(freqCode || '').toUpperCase() === 'DAILY') {
-    return base;
+    return {
+      ...base,
+      allow_duplicate_in_same_slot: Boolean(apiSched.allow_duplicate_in_same_slot),
+      is_active: apiSched.is_active !== false,
+    };
   }
   return {
     ...base,
@@ -143,6 +161,7 @@ export const hydrateScheduleFromApi = (freqCode, apiSched) => {
       Array.isArray(apiSched.yearly_schedules) && apiSched.yearly_schedules.length > 0
         ? apiSched.yearly_schedules
         : base.yearly_schedules || [],
+    buffer_days: Number(apiSched.buffer_days ?? 0),
     use_last_day_fallback: apiSched.use_last_day_fallback !== false,
     allow_duplicate_in_same_slot: Boolean(apiSched.allow_duplicate_in_same_slot),
   };
@@ -156,12 +175,15 @@ export const serializeSchedulePayload = (freqCode, sched) => {
       frequency_type: 'DAILY',
       schedule_type: 'DAILY_EVERY_DAY',
       repeat_interval: 1,
+      allow_duplicate_in_same_slot: Boolean(s.allow_duplicate_in_same_slot),
       is_active: true,
     };
   }
+  const parsedBuf = s.buffer_days === '' || s.buffer_days === null || s.buffer_days === undefined ? 0 : Number(s.buffer_days);
   const common = {
     frequency_type: code,
     schedule_type: s.schedule_type,
+    buffer_days: Number.isFinite(parsedBuf) ? Math.trunc(parsedBuf) : 0,
     use_last_day_fallback: s.use_last_day_fallback !== false,
     allow_duplicate_in_same_slot: Boolean(s.allow_duplicate_in_same_slot),
     is_active: s.is_active !== false,
@@ -215,9 +237,21 @@ export const serializeSchedulePayload = (freqCode, sched) => {
 export const validateScheduleClient = (freqCode, s) => {
   const code = String(freqCode || '').toUpperCase();
   if (!s) return `Configure schedule for ${code}.`;
+  if (BUFFER_SUPPORTED_FREQUENCIES.has(code)) {
+    const rawBuf = s.buffer_days;
+    if (rawBuf !== '' && rawBuf !== null && rawBuf !== undefined) {
+      const bufNum = Number(rawBuf);
+      if (Number.isNaN(bufNum) || !Number.isInteger(bufNum) || bufNum < 0 || bufNum > 365) {
+        return `${code}: Buffer Days must be a whole number between 0 and 365.`;
+      }
+    }
+  }
   if (code === 'WEEKLY') {
     if (!s.selected_weekdays || s.selected_weekdays.length === 0) {
-      return 'Weekly: Select at least one day of the week.';
+      return 'Weekly: Select one day of the week before saving.';
+    }
+    if (s.selected_weekdays.length > 1) {
+      return 'Weekly: Only one weekday can be selected. Please choose a single weekday before saving.';
     }
   } else if (code === 'EVERY_15_DAYS') {
     if (s.schedule_type === 'INTERVAL_15_DAYS') {
@@ -351,11 +385,8 @@ export const PmFrequencyScheduleEditor = ({ freqCode, freqLabel, schedule, onCha
     update({ [field]: next });
   };
 
-  const toggleWeekday = (wdKey) => {
-    const cur = Array.isArray(s.selected_weekdays) ? s.selected_weekdays : [];
-    const exists = cur.includes(wdKey);
-    const next = exists ? cur.filter((k) => k !== wdKey) : [...cur, wdKey];
-    update({ selected_weekdays: next });
+  const selectWeekday = (wdKey) => {
+    update({ selected_weekdays: [wdKey] });
   };
 
   const quarterMonthsPreview = () => {
@@ -382,12 +413,24 @@ export const PmFrequencyScheduleEditor = ({ freqCode, freqLabel, schedule, onCha
           fontWeight: 600,
           color: '#1e3a8a',
           display: 'flex',
+          justifyContent: 'space-between',
           alignItems: 'center',
+          flexWrap: 'wrap',
           gap: '8px',
         }}
       >
-        <LucideCalendar size={15} />
-        <span>Maintenance is required every calendar day.</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+          <LucideCalendar size={15} />
+          <span>Maintenance is required every calendar day.</span>
+        </span>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.73rem', fontWeight: 500, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={Boolean(s.allow_duplicate_in_same_slot)}
+            onChange={(e) => update({ allow_duplicate_in_same_slot: e.target.checked })}
+          />
+          Allow multiple completions in same scheduled window
+        </label>
       </div>
     );
   }
@@ -421,10 +464,11 @@ export const PmFrequencyScheduleEditor = ({ freqCode, freqLabel, schedule, onCha
       {/* B. WEEKLY */}
       {freqCode === 'WEEKLY' && (
         <div>
-          <label style={subLabelStyle}>Select Days of Week *</label>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+          <label style={subLabelStyle}>Select Day of Week (Choose exactly one) *</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }} role="radiogroup" aria-label="Weekly weekday selection">
             {WEEKDAY_OPTIONS.map((wd) => {
-              const active = (s.selected_weekdays || []).includes(wd.key);
+              const selectedList = Array.isArray(s.selected_weekdays) ? s.selected_weekdays : [];
+              const active = selectedList.length === 1 && selectedList[0] === wd.key;
               return (
                 <label
                   key={wd.key}
@@ -442,15 +486,26 @@ export const PmFrequencyScheduleEditor = ({ freqCode, freqLabel, schedule, onCha
                   }}
                 >
                   <input
-                    type="checkbox"
+                    type="radio"
+                    name="pm_weekly_weekday"
                     checked={active}
-                    onChange={() => toggleWeekday(wd.key)}
+                    onChange={() => selectWeekday(wd.key)}
                   />
                   {wd.label}
                 </label>
               );
             })}
           </div>
+          {(!s.selected_weekdays || s.selected_weekdays.length === 0) && (
+            <div style={{ marginTop: '6px', fontSize: '0.73rem', color: '#dc2626', fontWeight: 600 }}>
+              Please select exactly one weekday before saving.
+            </div>
+          )}
+          {Array.isArray(s.selected_weekdays) && s.selected_weekdays.length > 1 && (
+            <div style={{ marginTop: '6px', fontSize: '0.73rem', color: '#b45309', fontWeight: 600 }}>
+              Saved configuration contains multiple weekdays ({s.selected_weekdays.join(', ')}). Select one weekday above before saving changes.
+            </div>
+          )}
         </div>
       )}
 
@@ -669,6 +724,42 @@ export const PmFrequencyScheduleEditor = ({ freqCode, freqLabel, schedule, onCha
             />
             In non-leap years, map Feb 29 schedules to Feb 28 (uncheck to skip until next leap year)
           </label>
+        </div>
+      )}
+
+      {BUFFER_SUPPORTED_FREQUENCIES.has(freqCode) && (
+        <div
+          style={{
+            paddingTop: '10px',
+            marginTop: '2px',
+            borderTop: '1px solid #dbeafe',
+            display: 'grid',
+            gridTemplateColumns: 'minmax(160px, 220px) 1fr',
+            gap: '10px',
+            alignItems: 'center',
+          }}
+        >
+          <div>
+            <label style={subLabelStyle} htmlFor={`pm-buffer-days-${freqCode}`}>
+              Buffer Days
+            </label>
+            <input
+              id={`pm-buffer-days-${freqCode}`}
+              type="number"
+              min={0}
+              max={365}
+              step={1}
+              value={s.buffer_days ?? 0}
+              onChange={(e) => {
+                const raw = e.target.value;
+                update({ buffer_days: raw === '' ? '' : Math.max(0, Math.min(365, parseInt(raw, 10) || 0)) });
+              }}
+              style={{ ...smallInputStyle, width: '100%' }}
+            />
+          </div>
+          <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', paddingTop: '16px' }}>
+            Additional days allowed after the scheduled maintenance date.
+          </div>
         </div>
       )}
     </div>

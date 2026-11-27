@@ -64,6 +64,10 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
     const questionAnswers = Array.isArray(item.questions_snapshot) && item.questions_snapshot.length > 0
       ? item.questions_snapshot.map((q) => ({
           id: q.question_id,
+          section_id: q.section_id || null,
+          section_name: q.section_name || '',
+          section_description: q.section_description || '',
+          section_display_order: q.section_display_order || 0,
           label: q.question_name,
           description: q.question_description,
           type: q.answer_type,
@@ -72,6 +76,10 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
         }))
       : (Array.isArray(item.custom_field_values) ? item.custom_field_values : []).map((cf) => ({
           id: cf.field_id,
+          section_id: cf.section_id || null,
+          section_name: cf.section_name || '',
+          section_description: '',
+          section_display_order: 0,
           label: cf.field_label || cf.field_name,
           description: cf.field_description || '',
           type: cf.field_type,
@@ -81,6 +89,25 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
     const questionLabelById = Object.fromEntries(
       questionAnswers.filter((qa) => qa.id).map((qa) => [String(qa.id), qa.label])
     );
+
+    const hasSectionGrouping = questionAnswers.some((qa) => Boolean(qa.section_name));
+    const groupedQuestionSections = [];
+    if (hasSectionGrouping) {
+      const secMap = new Map();
+      questionAnswers.forEach((qa) => {
+        const key = `${qa.section_id || ''}:${qa.section_name || 'General Inspection'}`;
+        if (!secMap.has(key)) {
+          secMap.set(key, {
+            key,
+            section_name: qa.section_name || 'General Inspection',
+            section_description: qa.section_description || '',
+            questions: [],
+          });
+        }
+        secMap.get(key).questions.push(qa);
+      });
+      groupedQuestionSections.push(...secMap.values());
+    }
 
     return (
       <div
@@ -117,25 +144,61 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
         </div>
 
         {questionAnswers.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '8px', padding: '10px', background: 'var(--bg-subtle)', borderRadius: '6px', border: '1px solid var(--border)' }}>
-            {questionAnswers.map((qa, cIdx) => {
-              const displayVal = Array.isArray(qa.value) ? qa.value.join(', ') : (qa.value !== null && qa.value !== undefined && String(qa.value) !== '' ? String(qa.value) : 'Not answered');
-              return (
-                <div key={qa.id || cIdx} style={{ fontSize: '0.76rem' }}>
-                  <div style={{ color: 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                    <span>{qa.label}</span>
-                    {qa.is_mandatory !== undefined && (
-                      <span className={`badge-pill ${qa.is_mandatory ? 'badge-red' : 'badge-neutral'}`} style={{ fontSize: '0.65rem', padding: '1px 5px' }}>
-                        {qa.is_mandatory ? 'Mandatory' : 'Optional'}
-                      </span>
-                    )}
+          hasSectionGrouping ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {groupedQuestionSections.map((sec, sIdx) => (
+                <div key={sec.key || sIdx} style={{ padding: '10px', background: 'var(--bg-subtle)', borderRadius: '6px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: '4px' }}>
+                    <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      Section {sIdx + 1}: {sec.section_name}
+                    </div>
+                    {sec.section_description ? (
+                      <div style={{ fontSize: '0.71rem', color: 'var(--text-secondary)' }}>{sec.section_description}</div>
+                    ) : null}
                   </div>
-                  {qa.description ? <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{qa.description}</div> : null}
-                  <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginTop: '2px' }}>{displayVal}</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '8px' }}>
+                    {sec.questions.map((qa, cIdx) => {
+                      const displayVal = Array.isArray(qa.value) ? qa.value.join(', ') : (qa.value !== null && qa.value !== undefined && String(qa.value) !== '' ? String(qa.value) : 'Not answered');
+                      return (
+                        <div key={qa.id || cIdx} style={{ fontSize: '0.76rem' }}>
+                          <div style={{ color: 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                            <span>{qa.label}</span>
+                            {qa.is_mandatory !== undefined && (
+                              <span className={`badge-pill ${qa.is_mandatory ? 'badge-red' : 'badge-neutral'}`} style={{ fontSize: '0.65rem', padding: '1px 5px' }}>
+                                {qa.is_mandatory ? 'Mandatory' : 'Optional'}
+                              </span>
+                            )}
+                          </div>
+                          {qa.description ? <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{qa.description}</div> : null}
+                          <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginTop: '2px' }}>{displayVal}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '8px', padding: '10px', background: 'var(--bg-subtle)', borderRadius: '6px', border: '1px solid var(--border)' }}>
+              {questionAnswers.map((qa, cIdx) => {
+                const displayVal = Array.isArray(qa.value) ? qa.value.join(', ') : (qa.value !== null && qa.value !== undefined && String(qa.value) !== '' ? String(qa.value) : 'Not answered');
+                return (
+                  <div key={qa.id || cIdx} style={{ fontSize: '0.76rem' }}>
+                    <div style={{ color: 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                      <span>{qa.label}</span>
+                      {qa.is_mandatory !== undefined && (
+                        <span className={`badge-pill ${qa.is_mandatory ? 'badge-red' : 'badge-neutral'}`} style={{ fontSize: '0.65rem', padding: '1px 5px' }}>
+                          {qa.is_mandatory ? 'Mandatory' : 'Optional'}
+                        </span>
+                      )}
+                    </div>
+                    {qa.description ? <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{qa.description}</div> : null}
+                    <div style={{ color: 'var(--text-primary)', fontWeight: 600, marginTop: '2px' }}>{displayVal}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )
         )}
 
         {photos.length > 0 ? (
@@ -278,6 +341,18 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
                   <span className={`badge-pill ${loc.is_mandatory_snapshot ? 'badge-red' : 'badge-neutral'}`} style={{ fontSize: '0.65rem', padding: '1px 5px' }}>
                     {loc.is_mandatory_snapshot ? 'Mandatory' : 'Optional'}
                   </span>
+                  {loc.geofence_required_snapshot && (
+                    <span
+                      className={`badge-pill ${loc.geofence_is_valid ? 'badge-green' : 'badge-red'}`}
+                      style={{ fontSize: '0.65rem', padding: '1px 5px' }}
+                    >
+                      {loc.geofence_is_valid
+                        ? 'Geofence Verified (Inside)'
+                        : loc.geofence_distance_meters !== null && loc.geofence_distance_meters !== undefined
+                          ? `Outside Geofence (+${loc.geofence_distance_meters}m)`
+                          : 'Outside Geofence'}
+                    </span>
+                  )}
                 </div>
                 {loc.question_id && questionLabelById[String(loc.question_id)] ? (
                   <div style={{ fontSize: '0.7rem', color: '#15803d', fontWeight: 600 }}>
@@ -286,6 +361,12 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
                 ) : null}
                 {loc.requirement_description ? (
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>{loc.requirement_description}</div>
+                ) : null}
+                {loc.geofence_required_snapshot && loc.geofence_validation_message ? (
+                  <div style={{ fontSize: '0.7rem', color: loc.geofence_is_valid ? '#15803d' : '#b91c1c', fontWeight: 600 }}>
+                    {loc.geofence_type_snapshot}{loc.geofence_reference_name_snapshot ? ` · ${loc.geofence_reference_name_snapshot}` : ''}
+                    {loc.geofence_radius_meters_snapshot ? ` (${loc.geofence_radius_meters_snapshot}m)` : ''} — {loc.geofence_validation_message}
+                  </div>
                 ) : null}
                 <div style={{ fontSize: '0.73rem', fontFamily: 'var(--font-mono)', color: 'var(--text-primary)', display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '2px' }}>
                   {loc.latitude !== null && loc.latitude !== undefined && <span>Lat: {loc.latitude}</span>}
@@ -364,6 +445,14 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
                 <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
                   Role: {submission.submitted_by_role} · Assigned Op: {submission.assigned_operator || 'Unassigned'}
                 </div>
+                {submission.scheduled_due_date && (
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', marginTop: '3px' }}>
+                    Scheduled: {submission.scheduled_due_date}
+                    {submission.frequency_code !== 'DAILY' && submission.completion_deadline_date
+                      ? ` · Deadline: ${submission.completion_deadline_date}`
+                      : ''}
+                  </div>
+                )}
               </div>
             </div>
 

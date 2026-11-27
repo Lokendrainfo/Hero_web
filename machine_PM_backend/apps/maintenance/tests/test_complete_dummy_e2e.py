@@ -235,7 +235,7 @@ class TestCompleteDummyMaintenanceSuite:
         # ------------------------------------------------------------------
         # 2. Create TEST-PM-002 (WEEKLY) with all 5 Questions + 3 Conditional Photos + 2 Conditional Videos
         # ------------------------------------------------------------------
-        all_weekdays = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY']
+        today_weekday = timezone.localdate().strftime('%A').upper()
         pm_002 = self._save_cfg(
             admin_client,
             {
@@ -245,7 +245,7 @@ class TestCompleteDummyMaintenanceSuite:
                 'frequency': 'WEEKLY',
                 'frequency_schedule': {
                     'schedule_type': 'WEEKLY_DAYS',
-                    'selected_weekdays': all_weekdays,
+                    'selected_weekdays': [today_weekday],
                 },
                 'questions_enabled': True,
                 'questions': [

@@ -120,6 +120,7 @@ class TestFullyDynamicQuestionEvidenceSystem:
                 'description': 'Only photos, zero questions/videos.',
                 'item_code': 'SCEN-C',
                 'frequencies': ['QUARTERLY'],
+                'frequency_schedule': {'schedule_type': 'DEFAULT', 'allow_duplicate_in_same_slot': True},
                 'questions_enabled': False,
                 'is_photo_required': True,
                 'photos': [
@@ -239,7 +240,7 @@ class TestFullyDynamicQuestionEvidenceSystem:
         )
         assert cfg_e['id'] and cfg_f['id'] and cfg_g['id'] and cfg_h['id']
 
-        # Optional G submits cleanly on Quarterly (with Scenario C photo satisfied) on a distinct meter reading
+        # Optional G submits cleanly on Quarterly (with Scenario C photo satisfied) on machine m1
         ok_g = op_alpha.post(
             '/api/v1/machine-maintenance/data',
             {
@@ -271,6 +272,7 @@ class TestFullyDynamicQuestionEvidenceSystem:
                 'description': 'Conditional evidence based on inspection answers.',
                 'item_code': 'COND-HYD-01',
                 'frequencies': ['WEEKLY'],
+                'frequency_schedule': {'schedule_type': 'DEFAULT', 'allow_duplicate_in_same_slot': True},
                 'questions_enabled': True,
                 'questions': [
                     {
@@ -348,6 +350,7 @@ class TestFullyDynamicQuestionEvidenceSystem:
                 'description': cfg['description'],
                 'item_code': cfg['item_code'],
                 'frequencies': ['WEEKLY'],
+                'frequency_schedule': {'schedule_type': 'DEFAULT', 'allow_duplicate_in_same_slot': True},
                 'questions_enabled': True,
                 'questions': [cfg['questions'][1]],
                 'is_photo_required': True,
@@ -378,7 +381,7 @@ class TestFullyDynamicQuestionEvidenceSystem:
         # Verify submission #1 snapshots stored in DB
         assert MaintenanceQuestionResponse.objects.filter(submission_id=sub_yes_id).count() == 2
 
-        # Answer NO on distinct hour meter: missing v_no_id MUST fail on backend (400), even if only photo given
+        # Answer NO on m1: missing v_no_id MUST fail on backend (400), even if only photo given
         bad_no = op_alpha.post(
             '/api/v1/machine-maintenance/data',
             {

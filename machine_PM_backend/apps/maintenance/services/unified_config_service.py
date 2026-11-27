@@ -13,10 +13,12 @@ from apps.maintenance.models import (
     MaintenanceCategoryMaster,
     MaintenanceChecklistMaster,
     MaintenanceFrequencyMaster,
+    MaintenanceSection,
     RoleFrequencyMapping,
 )
 from apps.maintenance.services.audit_service import record_audit_log
 from apps.maintenance.services.condition_service import ALLOWED_OPERATORS_BY_TYPE
+from apps.maintenance.services.geofence_service import validate_and_normalize_geofence_config
 from apps.maintenance.services.schedule_service import serialize_schedule, validate_and_normalize_schedule
 
 CALENDAR_FREQUENCIES = (
@@ -181,11 +183,52 @@ def _serialize_location_req(lr: ChecklistLocationRequirement) -> dict:
         "capture_timestamp": lr.capture_timestamp,
         "capture_rule": lr.capture_rule,
         "is_mandatory": lr.is_mandatory,
+        "is_geofence_required": bool(lr.is_geofence_required),
+        "geofence_type": lr.geofence_type or ChecklistLocationRequirement.GEOFENCE_CIRCLE,
+        "geofence_reference_name": lr.geofence_reference_name or "",
+        "geofence_latitude": lr.geofence_latitude,
+        "geofence_longitude": lr.geofence_longitude,
+        "geofence_radius_meters": lr.geofence_radius_meters,
+        "geofence_polygon": lr.geofence_polygon or [],
         "display_order": lr.display_order,
         "is_active": lr.is_active,
         "condition_mode": lr.condition_mode,
         "condition_logic": lr.condition_logic,
         "condition_rules": lr.condition_rules or [],
+    }
+
+
+def _serialize_question_dict(q, photos_by_q: dict, videos_by_q: dict, locs_by_q: dict) -> dict:
+    opts = list(q.options or [])
+    if not opts:
+        opts = [o.option_label for o in q.option_rows.all() if o.is_active]
+    q_photos = photos_by_q.get(q.id, [])
+    q_videos = videos_by_q.get(q.id, [])
+    q_locs = locs_by_q.get(q.id, [])
+    sec_obj = getattr(q, "section", None)
+    return {
+        "id": q.id,
+        "temp_key": f"q-{q.id}",
+        "section_id": q.section_id,
+        "section_name": sec_obj.section_name if sec_obj else "",
+        "section_display_order": sec_obj.display_order if sec_obj else 0,
+        "question_name": q.field_label,
+        "field_name": q.field_name,
+        "question_description": q.field_description,
+        "answer_type": q.field_type,
+        "options": opts,
+        "is_mandatory": q.is_mandatory,
+        "display_order": q.display_order,
+        "is_active": q.is_active,
+        "condition_mode": q.condition_mode,
+        "condition_logic": q.condition_logic,
+        "condition_rules": q.condition_rules or [],
+        "is_photo_required": len(q_photos) > 0,
+        "photos": q_photos,
+        "is_video_required": len(q_videos) > 0,
+        "videos": q_videos,
+        "is_location_required": len(q_locs) > 0,
+        "locations": q_locs,
     }
 
 
@@ -210,6 +253,8 @@ def serialize_activity_configuration(item: MaintenanceChecklistMaster) -> dict:
                 "frequency_code": freq_code,
                 "frequency_type": freq_code,
                 "schedule_type": ChecklistFrequencySchedule.SCHED_DEFAULT,
+                "buffer_days": 0,
+                "allow_duplicate_in_same_slot": False,
                 "schedule_summary": "Default interval",
                 "is_active": True,
             }
@@ -220,10 +265,14 @@ def serialize_activity_configuration(item: MaintenanceChecklistMaster) -> dict:
     freq_schedules = {freq_code: freq_sched} if freq_code else {}
     freq_schedule_summaries = {freq_code: freq_sched_summary} if freq_code else {}
 
+    all_sections = list(
+        MaintenanceSection.objects.filter(checklist_item=item).order_by("display_order", "id")
+    )
     all_questions = list(
         ChecklistCustomFieldConfig.objects.filter(checklist_item=item)
+        .select_related("section")
         .prefetch_related("option_rows")
-        .order_by("display_order", "id")
+        .order_by("section__display_order", "display_order", "id")
     )
     all_photos = list(
         ChecklistPhotoRequirement.objects.filter(checklist_item=item, is_required=True)
@@ -263,34 +312,40 @@ def serialize_activity_configuration(item: MaintenanceChecklistMaster) -> dict:
             unlinked_locs.append(_serialize_location_req(lr))
 
     questions_data = []
+    questions_by_sec = {}
+    orphan_questions = []
     for q in all_questions:
-        opts = list(q.options or [])
-        if not opts:
-            opts = [o.option_label for o in q.option_rows.all() if o.is_active]
-        q_photos = photos_by_q.get(q.id, [])
-        q_videos = videos_by_q.get(q.id, [])
-        q_locs = locs_by_q.get(q.id, [])
-        questions_data.append(
+        q_dict = _serialize_question_dict(q, photos_by_q, videos_by_q, locs_by_q)
+        questions_data.append(q_dict)
+        if q.section_id:
+            questions_by_sec.setdefault(q.section_id, []).append(q_dict)
+        else:
+            orphan_questions.append(q_dict)
+
+    sections_data = []
+    for sec in all_sections:
+        sec_qs = questions_by_sec.get(sec.id, [])
+        sections_data.append(
             {
-                "id": q.id,
-                "temp_key": f"q-{q.id}",
-                "question_name": q.field_label,
-                "field_name": q.field_name,
-                "question_description": q.field_description,
-                "answer_type": q.field_type,
-                "options": opts,
-                "is_mandatory": q.is_mandatory,
-                "display_order": q.display_order,
-                "is_active": q.is_active,
-                "condition_mode": q.condition_mode,
-                "condition_logic": q.condition_logic,
-                "condition_rules": q.condition_rules or [],
-                "is_photo_required": len(q_photos) > 0,
-                "photos": q_photos,
-                "is_video_required": len(q_videos) > 0,
-                "videos": q_videos,
-                "is_location_required": len(q_locs) > 0,
-                "locations": q_locs,
+                "id": sec.id,
+                "temp_key": f"sec-{sec.id}",
+                "section_name": sec.section_name,
+                "section_description": sec.section_description or "",
+                "display_order": sec.display_order,
+                "is_active": sec.is_active,
+                "questions": sec_qs,
+            }
+        )
+    if orphan_questions:
+        sections_data.append(
+            {
+                "id": None,
+                "temp_key": "sec-general",
+                "section_name": "General Inspection",
+                "section_description": "",
+                "display_order": len(sections_data) + 1,
+                "is_active": True,
+                "questions": orphan_questions,
             }
         )
 
@@ -311,7 +366,8 @@ def serialize_activity_configuration(item: MaintenanceChecklistMaster) -> dict:
         "frequency_schedules": freq_schedules,
         "frequency_schedule_summaries": freq_schedule_summaries,
         "config_version": getattr(item, "config_version", 1),
-        "questions_enabled": len(questions_data) > 0,
+        "questions_enabled": len(sections_data) > 0 or len(questions_data) > 0,
+        "sections": sections_data,
         "questions": questions_data,
         "is_photo_required": len(all_photos) > 0 or bool(item.requires_photo),
         "photos": unlinked_photos,
@@ -459,6 +515,7 @@ def _validate_location_entries(locations_list: list, scope_label: str):
                 raise ValidationError({"locations": f"{scope_label}: Invalid GPS accuracy threshold on Location #{idx}."})
             if acc_num <= 0:
                 raise ValidationError({"locations": f"{scope_label}: GPS accuracy threshold must be > 0 meters."})
+        validate_and_normalize_geofence_config(lr, f"{scope_label} -> Location #{idx} ({lr['location_name']})")
 
 
 def _sync_evidence_batch(
@@ -597,6 +654,7 @@ def _sync_evidence_batch(
         if cap_rule not in VALID_CAPTURE_RULES:
             cap_rule = ChecklistLocationRequirement.RULE_LIVE_GPS
 
+        geo_norm = validate_and_normalize_geofence_config(lr, f"Location '{l_name}'")
         c_mode, c_logic, c_rules = _resolve_and_validate_rules(
             raw_mode=lr.get("condition_mode", "ALWAYS"),
             raw_logic=lr.get("condition_logic", "AND"),
@@ -618,6 +676,7 @@ def _sync_evidence_batch(
             "capture_timestamp": bool(lr.get("capture_timestamp", True)),
             "capture_rule": cap_rule,
             "is_mandatory": bool(lr.get("is_mandatory", False)),
+            **geo_norm,
             "condition_mode": c_mode,
             "condition_logic": c_logic,
             "condition_rules": c_rules,
@@ -746,39 +805,88 @@ def save_unified_activity_configuration(
     validated_schedules = {selected_freq_code: validated_schedule}
 
     questions_enabled = bool(payload.get("questions_enabled", False))
-    raw_questions = payload.get("questions") if questions_enabled else []
+    normalized_sections = []
     if questions_enabled:
-        if not isinstance(raw_questions, list) or len(raw_questions) == 0:
-            raise ValidationError({"questions": "Add at least one question or set Enable Questions to No."})
-        for idx, q in enumerate(raw_questions, start=1):
-            if not isinstance(q, dict) or not str(q.get("question_name") or "").strip():
-                raise ValidationError({"questions": f"Question Name is required for Question #{idx}."})
-            a_type = str(q.get("answer_type") or "TEXT").strip().upper()
-            if a_type not in VALID_ANSWER_TYPES:
-                raise ValidationError({"questions": f"Invalid answer type '{a_type}' for Question #{idx}."})
-            if a_type in OPTION_ANSWER_TYPES:
-                opts = [str(o).strip() for o in (q.get("options") or []) if str(o).strip()]
-                if len(opts) == 0:
-                    raise ValidationError(
-                        {"questions": f"Question #{idx} ({q['question_name']}) requires at least one answer option."}
-                    )
+        has_sections_key = "sections" in payload and payload.get("sections") is not None
+        if has_sections_key:
+            raw_sections = payload.get("sections")
+            if not isinstance(raw_sections, list) or len(raw_sections) == 0:
+                raise ValidationError({"sections": "Add at least one section or set Enable Questions to No."})
+            normalized_sections = raw_sections
+        else:
+            raw_questions = payload.get("questions")
+            if not isinstance(raw_questions, list) or len(raw_questions) == 0:
+                raise ValidationError({"questions": "Add at least one question or set Enable Questions to No."})
+            existing_default_sec = (
+                MaintenanceSection.objects.filter(checklist_item=instance).order_by("display_order", "id").first()
+                if instance
+                else None
+            )
+            normalized_sections = [
+                {
+                    "id": existing_default_sec.id if existing_default_sec else None,
+                    "section_name": existing_default_sec.section_name if existing_default_sec else "General Inspection",
+                    "section_description": existing_default_sec.section_description if existing_default_sec else "",
+                    "display_order": existing_default_sec.display_order if existing_default_sec else 1,
+                    "is_active": True,
+                    "questions": raw_questions,
+                }
+            ]
 
-            q_label = f"Question '{q['question_name']}'"
-            if bool(q.get("is_photo_required", False)):
-                q_photos = q.get("photos") or []
-                if not isinstance(q_photos, list) or len(q_photos) == 0:
-                    raise ValidationError({"photos": f"{q_label}: Photo Required is Yes; add at least one photo."})
-                _validate_photo_entries(q_photos, q_label)
-            if bool(q.get("is_video_required", False)):
-                q_videos = q.get("videos") or []
-                if not isinstance(q_videos, list) or len(q_videos) == 0:
-                    raise ValidationError({"videos": f"{q_label}: Video Required is Yes; add at least one video."})
-                _validate_video_entries(q_videos, q_label)
-            if bool(q.get("is_location_required", False)):
-                q_locs = q.get("locations") or []
-                if not isinstance(q_locs, list) or len(q_locs) == 0:
-                    raise ValidationError({"locations": f"{q_label}: Location Required is Yes; configure GPS settings."})
-                _validate_location_entries(q_locs, q_label)
+        seen_section_names = set()
+        for s_idx, sec in enumerate(normalized_sections, start=1):
+            if not isinstance(sec, dict):
+                raise ValidationError({"sections": f"Invalid section payload at Section #{s_idx}."})
+            sec_name = str(sec.get("section_name") or "").strip()
+            if not sec_name:
+                raise ValidationError({"sections": f"Section Name is required for Section #{s_idx}."})
+            sec_key = sec_name.lower()
+            if sec_key in seen_section_names:
+                raise ValidationError({"sections": f"Duplicate section name '{sec_name}' in this activity."})
+            seen_section_names.add(sec_key)
+
+            sec_questions = sec.get("questions") if sec.get("questions") is not None else []
+            if not isinstance(sec_questions, list):
+                raise ValidationError({"questions": f"Section '{sec_name}': invalid questions list."})
+
+            for q_idx, q in enumerate(sec_questions, start=1):
+                if not isinstance(q, dict) or not str(q.get("question_name") or "").strip():
+                    raise ValidationError(
+                        {"questions": f"Section '{sec_name}': Question Name is required for Question #{q_idx}."}
+                    )
+                a_type = str(q.get("answer_type") or "TEXT").strip().upper()
+                if a_type not in VALID_ANSWER_TYPES:
+                    raise ValidationError(
+                        {"questions": f"Section '{sec_name}': Invalid answer type '{a_type}' for Question #{q_idx}."}
+                    )
+                if a_type in OPTION_ANSWER_TYPES:
+                    opts = [str(o).strip() for o in (q.get("options") or []) if str(o).strip()]
+                    if len(opts) == 0:
+                        raise ValidationError(
+                            {
+                                "questions": (
+                                    f"Section '{sec_name}' -> Question #{q_idx} ({q['question_name']}) "
+                                    "requires at least one answer option."
+                                )
+                            }
+                        )
+
+                q_label = f"Section '{sec_name}' -> Question '{q['question_name']}'"
+                if bool(q.get("is_photo_required", False)):
+                    q_photos = q.get("photos") or []
+                    if not isinstance(q_photos, list) or len(q_photos) == 0:
+                        raise ValidationError({"photos": f"{q_label}: Photo Required is Yes; add at least one photo."})
+                    _validate_photo_entries(q_photos, q_label)
+                if bool(q.get("is_video_required", False)):
+                    q_videos = q.get("videos") or []
+                    if not isinstance(q_videos, list) or len(q_videos) == 0:
+                        raise ValidationError({"videos": f"{q_label}: Video Required is Yes; add at least one video."})
+                    _validate_video_entries(q_videos, q_label)
+                if bool(q.get("is_location_required", False)):
+                    q_locs = q.get("locations") or []
+                    if not isinstance(q_locs, list) or len(q_locs) == 0:
+                        raise ValidationError({"locations": f"{q_label}: Location Required is Yes; configure GPS settings."})
+                    _validate_location_entries(q_locs, q_label)
 
     # Top-level unlinked evidence support (when passed directly via API)
     top_photo_req = bool(payload.get("is_photo_required", False))
@@ -865,73 +973,99 @@ def save_unified_activity_configuration(
     # Clear old relational condition rules before rebuilding cleanly
     ChecklistConditionRule.objects.filter(checklist_item=item).delete()
 
-    # 2. First Pass: Upsert Questions & Options
+    # 2. First Pass: Upsert Sections, Questions & Options
     question_lookup_by_ref: dict[str, ChecklistCustomFieldConfig] = {}
     saved_questions: list[tuple[ChecklistCustomFieldConfig, dict]] = []
     if not questions_enabled:
         ChecklistCustomFieldConfig.objects.filter(checklist_item=item).delete()
+        MaintenanceSection.objects.filter(checklist_item=item).delete()
         ChecklistPhotoRequirement.objects.filter(checklist_item=item, question__isnull=False).update(is_active=False, is_required=False)
         ChecklistVideoRequirement.objects.filter(checklist_item=item, question__isnull=False).update(is_active=False, is_required=False)
         ChecklistLocationRequirement.objects.filter(checklist_item=item, question__isnull=False).update(is_active=False, is_required=False)
     else:
+        kept_sec_ids = []
         kept_q_ids = []
         used_field_names = set()
-        for idx, q in enumerate(raw_questions, start=1):
-            q_id = q.get("id")
-            q_name = str(q["question_name"]).strip()
-            a_type = str(q.get("answer_type") or "TEXT").strip().upper()
-            opts = (
-                [str(o).strip() for o in (q.get("options") or []) if str(o).strip()]
-                if a_type in OPTION_ANSWER_TYPES
-                else []
-            )
-            f_name = str(q.get("field_name") or "").strip() or _slug_field_name(q_name, idx)
-            if f_name in used_field_names:
-                f_name = f"{f_name[:58]}_{idx}"
-            used_field_names.add(f_name)
-
-            defaults = {
-                "category": category,
+        global_q_counter = 0
+        for s_idx, sec in enumerate(normalized_sections, start=1):
+            sec_id = sec.get("id")
+            sec_defaults = {
                 "checklist_item": item,
-                "frequency": None,
-                "field_name": f_name,
-                "field_label": q_name,
-                "field_description": str(q.get("question_description") or "").strip(),
-                "field_type": a_type,
-                "options": opts,
-                "is_mandatory": bool(q.get("is_mandatory", False)),
-                "display_order": int(q.get("display_order") or idx),
-                "is_active": bool(q.get("is_active", True)),
+                "section_name": str(sec["section_name"]).strip(),
+                "section_description": str(sec.get("section_description") or "").strip(),
+                "display_order": int(sec.get("display_order") or s_idx),
+                "is_active": bool(sec.get("is_active", True)),
             }
-
-            existing_q = ChecklistCustomFieldConfig.objects.filter(id=q_id, checklist_item=item).first() if q_id else None
-            if existing_q:
-                for k, v in defaults.items():
-                    setattr(existing_q, k, v)
-                existing_q.save()
-                q_obj = existing_q
+            existing_sec = MaintenanceSection.objects.filter(id=sec_id, checklist_item=item).first() if sec_id else None
+            if existing_sec:
+                for k, v in sec_defaults.items():
+                    setattr(existing_sec, k, v)
+                existing_sec.save()
+                sec_obj = existing_sec
             else:
-                q_obj = ChecklistCustomFieldConfig.objects.create(**defaults)
+                sec_obj = MaintenanceSection.objects.create(**sec_defaults)
+            kept_sec_ids.append(sec_obj.id)
 
-            kept_q_ids.append(q_obj.id)
-            ChecklistQuestionOption.objects.filter(question=q_obj).delete()
-            for o_idx, opt_str in enumerate(opts, start=1):
-                ChecklistQuestionOption.objects.create(
-                    question=q_obj,
-                    option_label=opt_str,
-                    option_value=opt_str,
-                    display_order=o_idx,
-                    is_active=True,
+            sec_questions = sec.get("questions") or []
+            for q_idx, q in enumerate(sec_questions, start=1):
+                global_q_counter += 1
+                q_id = q.get("id")
+                q_name = str(q["question_name"]).strip()
+                a_type = str(q.get("answer_type") or "TEXT").strip().upper()
+                opts = (
+                    [str(o).strip() for o in (q.get("options") or []) if str(o).strip()]
+                    if a_type in OPTION_ANSWER_TYPES
+                    else []
                 )
+                f_name = str(q.get("field_name") or "").strip() or _slug_field_name(q_name, global_q_counter)
+                if f_name in used_field_names:
+                    f_name = f"{f_name[:54]}_{s_idx}_{q_idx}"
+                used_field_names.add(f_name)
 
-            if q.get("id") is not None:
-                question_lookup_by_ref[str(q["id"])] = q_obj
-            if q.get("temp_key"):
-                question_lookup_by_ref[str(q["temp_key"])] = q_obj
-            question_lookup_by_ref[str(q_obj.id)] = q_obj
-            saved_questions.append((q_obj, q))
+                defaults = {
+                    "category": category,
+                    "checklist_item": item,
+                    "section": sec_obj,
+                    "frequency": None,
+                    "field_name": f_name,
+                    "field_label": q_name,
+                    "field_description": str(q.get("question_description") or "").strip(),
+                    "field_type": a_type,
+                    "options": opts,
+                    "is_mandatory": bool(q.get("is_mandatory", False)),
+                    "display_order": int(q.get("display_order") or q_idx),
+                    "is_active": bool(q.get("is_active", True)),
+                }
+
+                existing_q = ChecklistCustomFieldConfig.objects.filter(id=q_id, checklist_item=item).first() if q_id else None
+                if existing_q:
+                    for k, v in defaults.items():
+                        setattr(existing_q, k, v)
+                    existing_q.save()
+                    q_obj = existing_q
+                else:
+                    q_obj = ChecklistCustomFieldConfig.objects.create(**defaults)
+
+                kept_q_ids.append(q_obj.id)
+                ChecklistQuestionOption.objects.filter(question=q_obj).delete()
+                for o_idx, opt_str in enumerate(opts, start=1):
+                    ChecklistQuestionOption.objects.create(
+                        question=q_obj,
+                        option_label=opt_str,
+                        option_value=opt_str,
+                        display_order=o_idx,
+                        is_active=True,
+                    )
+
+                if q.get("id") is not None:
+                    question_lookup_by_ref[str(q["id"])] = q_obj
+                if q.get("temp_key"):
+                    question_lookup_by_ref[str(q["temp_key"])] = q_obj
+                question_lookup_by_ref[str(q_obj.id)] = q_obj
+                saved_questions.append((q_obj, q))
 
         ChecklistCustomFieldConfig.objects.filter(checklist_item=item).exclude(id__in=kept_q_ids).delete()
+        MaintenanceSection.objects.filter(checklist_item=item).exclude(id__in=kept_sec_ids).delete()
 
     # Second Pass: Validate & store Question-level conditions AND Question's nested Photos, Videos & Locations
     for q_obj, raw_q in saved_questions:

@@ -541,12 +541,32 @@ const ENDPOINTS_CATALOG = [
               is_mandatory: true,
               total_activities: 1,
             },
-            activities: [],
+            activities: [
+              {
+                activity_id: 16,
+                checklist_item_id: 16,
+                item_code: 'PM-ACT-001',
+                activity_name: 'Hydraulic Oil Check',
+                sections: [
+                  {
+                    id: 1,
+                    section_name: 'Engine Oil Inspection',
+                    section_description: 'Verify oil level and sight glass',
+                    display_order: 1,
+                    is_active: true,
+                    questions: [],
+                  },
+                ],
+              },
+            ],
             questions: [
               {
                 id: 101,
                 question_id: 101,
                 checklist_item_id: 16,
+                section_id: 1,
+                section_name: 'Engine Oil Inspection',
+                section_display_order: 1,
                 field_name: 'is_hydraulic_oil_level_ok',
                 name: 'Is Hydraulic Oil Level OK?',
                 question_name: 'Is Hydraulic Oil Level OK?',

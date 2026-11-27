@@ -6,10 +6,13 @@ import { useToast } from '../../context/ToastContext';
 import { PmLayoutHeader } from './PmLayoutHeader';
 
 const describeItemRules = (it) => {
+  const secCount = (it.sections || []).length;
   const qCount = (it.custom_fields || []).length;
   const pReqs = (it.photo_requirements || []).filter((p) => p.is_required !== false && p.is_active !== false);
   const vReqs = (it.video_requirements || []).filter((v) => v.is_required !== false && v.is_active !== false);
+  const lReqs = (it.location_requirements || []).filter((l) => l.is_required !== false && l.is_active !== false);
 
+  const sText = secCount > 0 ? `${secCount} Section(s) · ` : '';
   const qText = qCount > 0 ? `${qCount} Question(s)` : 'No Questions';
   const pText = pReqs.length > 0
     ? `${pReqs.length} Photo(s)`
@@ -17,7 +20,8 @@ const describeItemRules = (it) => {
       ? '1 Photo (Mandatory)'
       : 'No Photos';
   const vText = vReqs.length > 0 ? `${vReqs.length} Video(s)` : 'No Videos';
-  return `${qText} · ${pText} · ${vText}`;
+  const lText = lReqs.length > 0 ? ` · ${lReqs.length} GPS` : '';
+  return `${sText}${qText} · ${pText} · ${vText}${lText}`;
 };
 
 export const PmMyChecklistPage = () => {
@@ -60,8 +64,15 @@ export const PmMyChecklistPage = () => {
       .finally(() => setLoading(false));
   }, [selectedFreq]);
 
-  const machineItems = checklistData?.categories?.MACHINE || [];
-  const engineItems = checklistData?.categories?.ENGINE || [];
+  const categoryGroups = Array.isArray(checklistData?.category_groups)
+    ? checklistData.category_groups.filter((g) => Array.isArray(g.items) && g.items.length > 0)
+    : Object.entries(checklistData?.categories || {})
+        .filter(([, rows]) => Array.isArray(rows) && rows.length > 0)
+        .map(([code, rows]) => ({
+          category_code: code,
+          category_name: rows[0]?.category_name || code,
+          items: rows,
+        }));
 
   const renderCategoryTable = (title, rows) => (
     <div>
@@ -72,27 +83,38 @@ export const PmMyChecklistPage = () => {
         <thead>
           <tr>
             <th>Code</th>
-            <th>Activity Name</th>
+            <th>Activity Name &amp; Sections</th>
             <th>Description</th>
             <th>Configured Rules</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((it) => (
-            <tr key={it.id}>
-              <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.76rem' }}>{it.item_code}</td>
-              <td style={{ fontWeight: 600 }}>{it.description}</td>
-              <td style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                {it.special_instructions || it.remarks || '-'}
-              </td>
-              <td>
-                <span className="badge-pill badge-neutral">{describeItemRules(it)}</span>
-              </td>
-            </tr>
-          ))}
-          {rows.length === 0 ? (
-            <tr><td colSpan={4} style={{ color: 'var(--text-muted)' }}>No activities configured for this frequency.</td></tr>
-          ) : null}
+          {rows.map((it) => {
+            const secs = Array.isArray(it.sections) ? it.sections : [];
+            return (
+              <tr key={it.id}>
+                <td style={{ fontFamily: 'var(--font-mono)', fontSize: '0.76rem' }}>{it.item_code}</td>
+                <td>
+                  <div style={{ fontWeight: 600 }}>{it.description}</div>
+                  {secs.length > 0 && (
+                    <div style={{ fontSize: '0.73rem', color: 'var(--text-secondary)', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      {secs.map((sec, sIdx) => (
+                        <div key={sec.id || sIdx}>
+                          Section {sIdx + 1}: <strong>{sec.section_name}</strong> ({(sec.questions || []).length} Question(s))
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </td>
+                <td style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                  {it.special_instructions || it.remarks || '-'}
+                </td>
+                <td>
+                  <span className="badge-pill badge-neutral">{describeItemRules(it)}</span>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -180,8 +202,17 @@ export const PmMyChecklistPage = () => {
             ) : null}
           </div>
 
-          {renderCategoryTable('Category 1: Machine', machineItems)}
-          {renderCategoryTable('Category 2: Engine', engineItems)}
+          {categoryGroups.length === 0 ? (
+            <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.84rem' }}>
+              No activities are configured for {checklistData.frequency?.name}.
+            </div>
+          ) : (
+            categoryGroups.map((group, idx) => (
+              <React.Fragment key={group.category_code || idx}>
+                {renderCategoryTable(`Category ${idx + 1}: ${group.category_name}`, group.items)}
+              </React.Fragment>
+            ))
+          )}
         </div>
       ) : (
         <div className="empty-state">

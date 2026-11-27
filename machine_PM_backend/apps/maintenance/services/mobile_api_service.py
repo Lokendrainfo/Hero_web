@@ -36,6 +36,7 @@ from .checklist_service import (
     get_dynamic_configs_for_items,
     get_location_requirements_for_items,
     get_safety_guidelines,
+    get_sections_for_items,
 )
 from .dashboard_service import _compute_cycle_status
 from .schedule_service import evaluate_scheduled_cycle, serialize_schedule
@@ -166,6 +167,13 @@ def _build_gps_configuration(loc_reqs: list[dict]) -> dict:
             "accuracy_threshold_meters": lr.get("accuracy_threshold_meters"),
             "capture_timestamp": bool(lr.get("capture_timestamp", True)),
             "is_mandatory": bool(lr.get("is_mandatory", False)),
+            "is_geofence_required": bool(lr.get("is_geofence_required", False)),
+            "geofence_type": lr.get("geofence_type") or "CIRCLE",
+            "geofence_reference_name": lr.get("geofence_reference_name", ""),
+            "geofence_latitude": lr.get("geofence_latitude"),
+            "geofence_longitude": lr.get("geofence_longitude"),
+            "geofence_radius_meters": lr.get("geofence_radius_meters"),
+            "geofence_polygon": lr.get("geofence_polygon") or [],
             "condition_mode": lr.get("condition_mode", "ALWAYS"),
             "condition_logic": lr.get("condition_logic", "AND"),
             "condition_rules": lr.get("condition_rules", []),
@@ -180,6 +188,7 @@ def _build_gps_configuration(loc_reqs: list[dict]) -> dict:
         "accuracy_required": len(thresholds) > 0,
         "accuracy_threshold_meters": min(thresholds) if thresholds else None,
         "gps_capture_mandatory": gps_mandatory,
+        "geofence_required": any(bool(lr.get("is_geofence_required", False)) for lr in loc_reqs),
         "location_validation_rules": rules,
         "location_requirements": loc_reqs,
     }
@@ -295,6 +304,8 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
         due_status = sched_eval['status']
         due_label = sched_eval['due_label']
         scheduled_date = sched_eval.get('current_occurrence_date') or sched_eval.get('next_scheduled_date')
+        completion_deadline_date = scheduled_date if freq.code == 'DAILY' else (sched_eval.get('completion_deadline_date') or scheduled_date)
+        buffer_days = 0 if freq.code == 'DAILY' else int(sched_eval.get('buffer_days') or 0)
         next_due_date = sched_eval.get('next_scheduled_date')
         has_duplicate = bool(sched_eval.get('already_completed_for_occurrence'))
         duplicate_sub = latest_sub if has_duplicate else None
@@ -303,6 +314,8 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
             machine, freq, latest_complete_sub, today, latest_any_sub=latest_sub
         )
         scheduled_date = today.isoformat() if due_status in ('DUE', 'OVERDUE') else None
+        completion_deadline_date = scheduled_date
+        buffer_days = 0
         next_due_date = (
             (latest_complete_sub.submission_date + timedelta(days=max(1, int(freq.interval_days)))).isoformat()
             if (latest_complete_sub and freq.interval_days and not freq.interval_hours)
@@ -313,15 +326,18 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
             frequency=freq,
             submission_date=today,
         ).exclude(approval_status=MaintenanceSubmission.APPROVAL_REJECTED)
-        if freq.code == 'DAILY':
-            duplicate_sub = today_subs.order_by('-submitted_at').first()
-        else:
-            duplicate_sub = today_subs.filter(hour_meter_reading=check_hm).order_by('-submitted_at').first()
+        allow_default_dup = bool(active_scheds) and all(bool(s.allow_duplicate_in_same_slot) for s in active_scheds)
+        duplicate_sub = today_subs.order_by('-submitted_at').first() if not allow_default_dup else None
         has_duplicate = duplicate_sub is not None
 
     item_ids = [m.checklist_item_id for m in mappings]
     cf_by_item, photo_by_item, video_by_item = get_dynamic_configs_for_items(item_ids, frequency_id=freq.id)
     loc_by_item = get_location_requirements_for_items(item_ids, frequency_id=freq.id)
+    formatted_q_by_item = {
+        m.checklist_item_id: [_format_question_for_mobile(q, m.checklist_item_id) for q in cf_by_item.get(m.checklist_item_id, [])]
+        for m in mappings
+    }
+    sections_by_item = get_sections_for_items(item_ids, formatted_q_by_item)
 
     activities = []
     all_questions = []
@@ -334,7 +350,8 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
         sched_obj = getattr(m, 'schedule', None)
         sched_data = serialize_schedule(sched_obj) if (sched_obj and sched_obj.is_active) else None
 
-        q_list = [_format_question_for_mobile(q, ci.id) for q in cf_by_item.get(ci.id, [])]
+        q_list = formatted_q_by_item.get(ci.id, [])
+        sec_list = sections_by_item.get(ci.id, [])
         p_list = [_format_photo_req_for_mobile(p, ci.id) for p in photo_by_item.get(ci.id, [])]
         v_list = [_format_video_req_for_mobile(v, ci.id) for v in video_by_item.get(ci.id, [])]
         l_list = loc_by_item.get(ci.id, [])
@@ -359,11 +376,14 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
                 "frequency_name": freq.name,
                 "applicable_schedule": sched_data,
                 "scheduled_date": scheduled_date,
-                "maintenance_due_date": scheduled_date,
+                "completion_deadline_date": completion_deadline_date,
+                "buffer_days": buffer_days,
+                "maintenance_due_date": completion_deadline_date or scheduled_date,
                 "next_due_date": next_due_date,
                 "is_mandatory": bool(m.is_mandatory),
                 "requires_photo": bool(ci.requires_photo) or len(p_list) > 0,
                 "config_version": getattr(ci, 'config_version', 1),
+                "sections": sec_list,
                 "questions": q_list,
                 "photo_requirements": p_list,
                 "video_requirements": v_list,
@@ -386,7 +406,9 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
             "frequency_name": freq.name,
             "applicable_schedule": primary_act["applicable_schedule"],
             "scheduled_date": scheduled_date,
-            "maintenance_due_date": scheduled_date,
+            "completion_deadline_date": completion_deadline_date,
+            "buffer_days": buffer_days,
+            "maintenance_due_date": completion_deadline_date or scheduled_date,
             "next_due_date": next_due_date,
             "is_mandatory": primary_act["is_mandatory"],
             "total_activities": len(activities),
@@ -784,6 +806,7 @@ def get_mobile_maintenance_list(request, query_params: dict) -> dict:
         [it.id for it in items_list],
         frequency_id=target_freq_id,
     )
+    sections_by_item = get_sections_for_items([it.id for it in items_list], cf_by_item)
 
     filtered_items_with_freqs = []
     for item in items_list:
@@ -819,6 +842,7 @@ def get_mobile_maintenance_list(request, query_params: dict) -> dict:
             "requires_remarks_if_not_completed": item.requires_remarks_if_not_completed,
             "is_as_required": item.is_as_required,
             "sort_order": item.sort_order,
+            "sections": sections_by_item.get(item.id, []),
             "custom_fields": cf_by_item.get(item.id, []),
             "photo_requirements": photo_by_item.get(item.id, []),
             "video_requirements": video_by_item.get(item.id, []),

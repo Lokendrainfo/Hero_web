@@ -436,6 +436,7 @@ def get_maintenance_report(user, query_params: dict) -> dict:
 
     subs_qs = (
         MaintenanceSubmission.objects.select_related('frequency')
+        .prefetch_related('responses__question_responses')
         .filter(machine_id__in=machine_ids)
         .order_by('-submitted_at')
     )
@@ -454,6 +455,7 @@ def get_maintenance_report(user, query_params: dict) -> dict:
 
     by_vendor = {}
     by_user = {}
+    section_question_map = {}
     approval_counts = {"PENDING_REVIEW": 0, "APPROVED": 0, "REJECTED": 0, "CHANGES_REQUESTED": 0}
     total_items_checked = 0
     total_items_completed = 0
@@ -482,6 +484,39 @@ def get_maintenance_report(user, query_params: dict) -> dict:
         total_items_checked += s.total_items
         total_items_completed += s.completed_items_count
 
+        for resp in s.responses.all():
+            qr_rows = list(resp.question_responses.all())
+            if qr_rows:
+                for qr in qr_rows:
+                    sec_label = qr.section_name_snapshot or 'General Inspection'
+                    q_label = qr.question_name_snapshot
+                    sq_key = (sec_label, q_label)
+                    bucket = section_question_map.setdefault(
+                        sq_key,
+                        {
+                            "section_name": sec_label,
+                            "question_name": q_label,
+                            "responses_count": 0,
+                        },
+                    )
+                    bucket["responses_count"] += 1
+            else:
+                for qs in (resp.questions_snapshot or []):
+                    sec_label = qs.get("section_name") or 'General Inspection'
+                    q_label = qs.get("question_name") or ''
+                    if not q_label:
+                        continue
+                    sq_key = (sec_label, q_label)
+                    bucket = section_question_map.setdefault(
+                        sq_key,
+                        {
+                            "section_name": sec_label,
+                            "question_name": q_label,
+                            "responses_count": 0,
+                        },
+                    )
+                    bucket["responses_count"] += 1
+
     return {
         "kpis": dash["kpis"],
         "frequency_completion": dash["frequency_completion"],
@@ -491,5 +526,6 @@ def get_maintenance_report(user, query_params: dict) -> dict:
         ),
         "by_vendor": list(by_vendor.values()),
         "by_user": list(by_user.values()),
+        "section_question_summary": list(section_question_map.values()),
         "vendor_filter": vendor_id or "ALL",
     }

@@ -179,6 +179,7 @@ class ChecklistFrequencySchedule(models.Model):
     yearly_month = models.PositiveSmallIntegerField(null=True, blank=True)
     yearly_day = models.PositiveSmallIntegerField(null=True, blank=True)
     yearly_schedules = models.JSONField(default=list, blank=True)
+    buffer_days = models.PositiveSmallIntegerField(default=0)
     allow_duplicate_in_same_slot = models.BooleanField(default=False)
     schedule_summary = models.CharField(max_length=300, blank=True, default='')
     is_active = models.BooleanField(default=True, db_index=True)
@@ -294,6 +295,7 @@ class MaintenanceSubmission(models.Model):
 
     submission_date = models.DateField(default=timezone.localdate, db_index=True)
     scheduled_due_date = models.DateField(null=True, blank=True, db_index=True)
+    completion_deadline_date = models.DateField(null=True, blank=True, db_index=True)
     schedule_snapshot = models.JSONField(default=dict, blank=True)
     submission_metadata = models.JSONField(default=dict, blank=True)
     submitted_at = models.DateTimeField(default=timezone.now, db_index=True)
@@ -362,6 +364,7 @@ class MaintenanceChecklistResponse(models.Model):
     remarks = models.TextField(blank=True, default='')
     custom_field_values = models.JSONField(default=list, blank=True)
     config_version_snapshot = models.PositiveIntegerField(default=1)
+    sections_snapshot = models.JSONField(default=list, blank=True)
     questions_snapshot = models.JSONField(default=list, blank=True)
     photo_requirements_snapshot = models.JSONField(default=list, blank=True)
     video_requirements_snapshot = models.JSONField(default=list, blank=True)
@@ -392,6 +395,34 @@ CONDITION_LOGIC_CHOICES = (
     (CONDITION_LOGIC_AND, 'AND'),
     (CONDITION_LOGIC_OR, 'OR'),
 )
+
+
+class MaintenanceSection(models.Model):
+    """
+    Admin-configured logical section grouping questions within a maintenance activity (`machine_pm_db`).
+    """
+
+    checklist_item = models.ForeignKey(
+        MaintenanceChecklistMaster,
+        on_delete=models.CASCADE,
+        related_name='sections',
+    )
+    section_name = models.CharField(max_length=150)
+    section_description = models.TextField(blank=True, default='')
+    display_order = models.PositiveIntegerField(default=1, db_index=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'pm_maintenance_section'
+        ordering = ['display_order', 'id']
+        indexes = [
+            models.Index(fields=['checklist_item', 'is_active', 'display_order']),
+        ]
+
+    def __str__(self):
+        return f"{self.checklist_item.item_code} | Section {self.display_order}: {self.section_name}"
 
 
 class ChecklistCustomFieldConfig(models.Model):
@@ -434,6 +465,13 @@ class ChecklistCustomFieldConfig(models.Model):
         on_delete=models.CASCADE,
         related_name='custom_fields',
     )
+    section = models.ForeignKey(
+        MaintenanceSection,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='questions',
+    )
     frequency = models.ForeignKey(
         MaintenanceFrequencyMaster,
         on_delete=models.CASCADE,
@@ -461,6 +499,7 @@ class ChecklistCustomFieldConfig(models.Model):
         ordering = ['display_order', 'id']
         indexes = [
             models.Index(fields=['checklist_item', 'is_active']),
+            models.Index(fields=['section', 'is_active', 'display_order']),
         ]
 
     def save(self, *args, **kwargs):
@@ -630,6 +669,12 @@ class ChecklistLocationRequirement(models.Model):
         (RULE_LIVE_GPS, 'Live Device GPS'),
         (RULE_HIGH_ACCURACY, 'High Accuracy GPS'),
     )
+    GEOFENCE_CIRCLE = 'CIRCLE'
+    GEOFENCE_POLYGON = 'POLYGON'
+    GEOFENCE_TYPE_CHOICES = (
+        (GEOFENCE_CIRCLE, 'Circle'),
+        (GEOFENCE_POLYGON, 'Polygon'),
+    )
 
     category = models.ForeignKey(
         MaintenanceCategoryMaster,
@@ -666,6 +711,13 @@ class ChecklistLocationRequirement(models.Model):
     capture_timestamp = models.BooleanField(default=True)
     capture_rule = models.CharField(max_length=30, choices=CAPTURE_RULE_CHOICES, default=RULE_LIVE_GPS)
     is_mandatory = models.BooleanField(default=False)
+    is_geofence_required = models.BooleanField(default=False)
+    geofence_type = models.CharField(max_length=20, choices=GEOFENCE_TYPE_CHOICES, default=GEOFENCE_CIRCLE)
+    geofence_reference_name = models.CharField(max_length=150, blank=True, default='')
+    geofence_latitude = models.FloatField(null=True, blank=True)
+    geofence_longitude = models.FloatField(null=True, blank=True)
+    geofence_radius_meters = models.FloatField(null=True, blank=True)
+    geofence_polygon = models.JSONField(default=list, blank=True)
     condition_mode = models.CharField(max_length=20, choices=CONDITION_MODE_CHOICES, default=CONDITION_MODE_ALWAYS)
     condition_logic = models.CharField(max_length=10, choices=CONDITION_LOGIC_CHOICES, default=CONDITION_LOGIC_AND)
     condition_rules = models.JSONField(default=list, blank=True)
@@ -800,6 +852,16 @@ class MaintenanceQuestionResponse(models.Model):
         blank=True,
         related_name='submission_answers',
     )
+    section = models.ForeignKey(
+        MaintenanceSection,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='submission_answers',
+    )
+    section_name_snapshot = models.CharField(max_length=150, blank=True, default='')
+    section_description_snapshot = models.TextField(blank=True, default='')
+    section_display_order_snapshot = models.PositiveIntegerField(null=True, blank=True)
     question_name_snapshot = models.CharField(max_length=150)
     question_description_snapshot = models.TextField(blank=True, default='')
     answer_type_snapshot = models.CharField(max_length=20)
@@ -1034,9 +1096,13 @@ class MaintenanceLocationAttachment(models.Model):
     longitude = models.FloatField(null=True, blank=True)
     accuracy_meters = models.FloatField(null=True, blank=True)
     captured_at = models.DateTimeField(default=timezone.now, db_index=True)
-    latitude = models.FloatField(null=True, blank=True)
-    longitude = models.FloatField(null=True, blank=True)
-    accuracy_meters = models.FloatField(null=True, blank=True)
+    geofence_required_snapshot = models.BooleanField(default=False)
+    geofence_type_snapshot = models.CharField(max_length=20, blank=True, default='')
+    geofence_reference_name_snapshot = models.CharField(max_length=150, blank=True, default='')
+    geofence_radius_meters_snapshot = models.FloatField(null=True, blank=True)
+    geofence_is_valid = models.BooleanField(null=True, blank=True)
+    geofence_distance_meters = models.FloatField(null=True, blank=True)
+    geofence_validation_message = models.CharField(max_length=255, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

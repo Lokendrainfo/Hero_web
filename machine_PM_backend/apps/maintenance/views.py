@@ -505,20 +505,40 @@ class MaintenanceReportView(APIView):
     def get(self, request):
         export_fmt = str(request.query_params.get('export') or '').lower()
         if export_fmt == 'csv':
-            qs = _filter_submissions_queryset(request)
+            qs = _filter_submissions_queryset(request).prefetch_related('responses__question_responses')
             buf = StringIO()
             writer = csv.writer(buf)
             writer.writerow([
                 'Submission Number', 'Machine Number', 'Machine Name', 'Model',
                 'Vendor', 'Frequency', 'Hour Meter', 'Performed By', 'Role',
-                'Status', 'Approval Status', 'Completed Items', 'Total Items', 'Submitted At',
+                'Status', 'Approval Status', 'Completed Items', 'Total Items',
+                'Sections', 'Questions & Answers', 'Submitted At',
             ])
             for s in qs:
+                sec_names = []
+                qa_entries = []
+                for resp in s.responses.all():
+                    qr_rows = list(resp.question_responses.all())
+                    if qr_rows:
+                        for qr in qr_rows:
+                            s_name = qr.section_name_snapshot or 'General Inspection'
+                            if s_name not in sec_names:
+                                sec_names.append(s_name)
+                            ans_disp = ', '.join(str(x) for x in qr.answer_value) if isinstance(qr.answer_value, list) else ('' if qr.answer_value is None else str(qr.answer_value))
+                            qa_entries.append(f"[{s_name}] {qr.question_name_snapshot}: {ans_disp}")
+                    else:
+                        for q_snap in (resp.questions_snapshot or []):
+                            s_name = q_snap.get('section_name') or 'General Inspection'
+                            if s_name not in sec_names:
+                                sec_names.append(s_name)
+                            ans_val = q_snap.get('answer')
+                            ans_disp = ', '.join(str(x) for x in ans_val) if isinstance(ans_val, list) else ('' if ans_val is None else str(ans_val))
+                            qa_entries.append(f"[{s_name}] {q_snap.get('question_name', '')}: {ans_disp}")
                 writer.writerow([
                     s.submission_number, s.machine_number, s.machine_name, s.machine_model,
                     s.vendor_name, s.frequency.name, s.hour_meter_reading, s.submitted_by_name,
                     s.submitted_by_role, s.status, s.approval_status, s.completed_items_count,
-                    s.total_items, s.submitted_at.isoformat(),
+                    s.total_items, '; '.join(sec_names), ' | '.join(qa_entries), s.submitted_at.isoformat(),
                 ])
             resp = HttpResponse(buf.getvalue(), content_type='text/csv')
             resp['Content-Disposition'] = 'attachment; filename="pm_maintenance_report.csv"'

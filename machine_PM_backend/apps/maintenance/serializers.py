@@ -14,6 +14,7 @@ from apps.maintenance.models import (
     MaintenanceFrequencyMaster,
     MaintenanceLocationAttachment,
     MaintenancePhotoAttachment,
+    MaintenanceSection,
     MaintenanceSubmission,
     MaintenanceVideoAttachment,
     RoleFrequencyMapping,
@@ -104,11 +105,25 @@ class RoleFrequencyMappingSerializer(serializers.ModelSerializer):
         ]
 
 
+class MaintenanceSectionSerializer(serializers.ModelSerializer):
+    checklist_item_code = serializers.CharField(source='checklist_item.item_code', read_only=True)
+
+    class Meta:
+        model = MaintenanceSection
+        fields = [
+            'id', 'checklist_item', 'checklist_item_code',
+            'section_name', 'section_description', 'display_order', 'is_active',
+            'created_at', 'updated_at',
+        ]
+
+
 class ChecklistCustomFieldConfigSerializer(serializers.ModelSerializer):
     category_code = serializers.CharField(source='checklist_item.category.code', read_only=True)
     category_name = serializers.CharField(source='checklist_item.category.name', read_only=True)
     checklist_item_code = serializers.CharField(source='checklist_item.item_code', read_only=True)
     checklist_description = serializers.CharField(source='checklist_item.description', read_only=True)
+    section_name = serializers.CharField(source='section.section_name', read_only=True, allow_null=True)
+    section_display_order = serializers.IntegerField(source='section.display_order', read_only=True, allow_null=True)
     frequency_code = serializers.CharField(source='frequency.code', read_only=True, allow_null=True)
     frequency_name = serializers.CharField(source='frequency.name', read_only=True, allow_null=True)
 
@@ -117,6 +132,7 @@ class ChecklistCustomFieldConfigSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'category', 'category_code', 'category_name',
             'checklist_item', 'checklist_item_code', 'checklist_description',
+            'section', 'section_name', 'section_display_order',
             'frequency', 'frequency_code', 'frequency_name',
             'field_name', 'field_label', 'field_description', 'field_type',
             'options', 'is_mandatory', 'condition_mode', 'condition_logic', 'condition_rules',
@@ -248,7 +264,10 @@ class MaintenanceLocationAttachmentSerializer(serializers.ModelSerializer):
             'location_requirement_id', 'question_id', 'requirement_name', 'requirement_description',
             'capture_rule_snapshot', 'is_mandatory_snapshot',
             'machine_id', 'checklist_item_id', 'captured_by_id', 'user_id', 'frequency_code',
-            'latitude', 'longitude', 'accuracy_meters', 'captured_at', 'created_at',
+            'latitude', 'longitude', 'accuracy_meters', 'captured_at',
+            'geofence_required_snapshot', 'geofence_type_snapshot', 'geofence_reference_name_snapshot',
+            'geofence_radius_meters_snapshot', 'geofence_is_valid', 'geofence_distance_meters',
+            'geofence_validation_message', 'created_at',
         ]
 
 
@@ -270,7 +289,7 @@ class MaintenanceChecklistResponseSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'checklist_item_id', 'item_code', 'category_code', 'category_name',
             'description_snapshot', 'status', 'remarks', 'custom_field_values',
-            'config_version_snapshot', 'questions_snapshot',
+            'config_version_snapshot', 'sections_snapshot', 'questions_snapshot',
             'photo_requirements_snapshot', 'video_requirements_snapshot', 'location_requirements_snapshot',
             'remarks_hint', 'service_interval',
             'responded_by_id', 'responded_at', 'photo_id', 'photo_url', 'photo_hash',
@@ -339,7 +358,7 @@ class MaintenanceSubmissionListSerializer(serializers.ModelSerializer):
             'status', 'approval_status', 'total_items',
             'completed_items_count', 'not_completed_items_count',
             'photo_count', 'video_count', 'location_count', 'general_remarks',
-            'submission_date', 'scheduled_due_date', 'schedule_snapshot',
+            'submission_date', 'scheduled_due_date', 'completion_deadline_date', 'schedule_snapshot',
             'submitted_at', 'is_locked',
         ]
 

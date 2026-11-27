@@ -118,6 +118,7 @@ def validate_and_normalize_schedule(freq_code: str, raw_schedule: dict | None) -
             "yearly_month": None,
             "yearly_day": None,
             "yearly_schedules": [],
+            "buffer_days": 0,
             "allow_duplicate_in_same_slot": False,
             "schedule_summary": "Default interval",
             "is_active": True,
@@ -125,6 +126,24 @@ def validate_and_normalize_schedule(freq_code: str, raw_schedule: dict | None) -
 
     if not isinstance(raw_schedule, dict):
         raise ValidationError({"frequency_schedules": f"{code}: Invalid schedule configuration."})
+
+    raw_buffer = raw_schedule.get("buffer_days", 0)
+    if code == "DAILY":
+        if raw_buffer not in (None, "", 0, "0"):
+            raise ValidationError({"frequency_schedules": "Daily maintenance cannot have Buffer Days configured."})
+        buffer_days = 0
+    else:
+        if raw_buffer in (None, ""):
+            buffer_days = 0
+        else:
+            try:
+                if isinstance(raw_buffer, bool):
+                    raise ValueError()
+                buffer_days = int(raw_buffer)
+            except (TypeError, ValueError):
+                raise ValidationError({"frequency_schedules": f"{code}: Buffer Days must be a whole number between 0 and 365."})
+            if buffer_days < 0 or buffer_days > 365:
+                raise ValidationError({"frequency_schedules": f"{code}: Buffer Days must be between 0 and 365."})
 
     sched_type = str(raw_schedule.get("schedule_type") or "").strip().upper()
     start_date = (
@@ -151,13 +170,16 @@ def validate_and_normalize_schedule(freq_code: str, raw_schedule: dict | None) -
         "yearly_month": None,
         "yearly_day": None,
         "yearly_schedules": [],
+        "buffer_days": buffer_days,
         "allow_duplicate_in_same_slot": allow_dup,
         "schedule_summary": "",
         "is_active": is_active,
     }
 
     if sched_type == ChecklistFrequencySchedule.SCHED_DEFAULT:
-        base["schedule_summary"] = "Default interval"
+        base["schedule_summary"] = (
+            f"Default interval · Buffer: +{buffer_days}d" if (code != "DAILY" and buffer_days > 0) else "Default interval"
+        )
         return base
 
     if code == "DAILY":
@@ -175,7 +197,8 @@ def validate_and_normalize_schedule(freq_code: str, raw_schedule: dict | None) -
             "yearly_month": None,
             "yearly_day": None,
             "yearly_schedules": [],
-            "allow_duplicate_in_same_slot": False,
+            "buffer_days": 0,
+            "allow_duplicate_in_same_slot": allow_dup,
             "schedule_summary": "Maintenance is required every calendar day.",
             "is_active": is_active,
         }
@@ -183,23 +206,16 @@ def validate_and_normalize_schedule(freq_code: str, raw_schedule: dict | None) -
     if code == "WEEKLY":
         raw_days = raw_schedule.get("selected_weekdays") or raw_schedule.get("weekdays") or []
         if not isinstance(raw_days, list) or len(raw_days) == 0:
-            raise ValidationError({"frequency_schedules": "Weekly: Select at least one day of the week."})
-        normalized = []
-        seen = set()
-        for d in raw_days:
-            canon = WEEKDAY_ALIAS_BY_UPPER.get(str(d).strip().upper())
-            if not canon:
-                raise ValidationError({"frequency_schedules": f"Weekly: Invalid weekday '{d}'."})
-            if canon in seen:
-                raise ValidationError({"frequency_schedules": f"Weekly: Duplicate weekday '{WEEKDAY_LABEL_BY_KEY[canon]}'."})
-            seen.add(canon)
-            normalized.append(canon)
-        # Canonical Mon..Sun order
-        normalized.sort(key=lambda k: WEEKDAY_BY_KEY[k])
+            raise ValidationError({"frequency_schedules": "Weekly: Select exactly one weekday before saving."})
+        if len(raw_days) > 1:
+            raise ValidationError({"frequency_schedules": "Weekly: Only one weekday can be selected."})
+        canon = WEEKDAY_ALIAS_BY_UPPER.get(str(raw_days[0]).strip().upper())
+        if not canon:
+            raise ValidationError({"frequency_schedules": f"Weekly: Invalid weekday '{raw_days[0]}'."})
         base["schedule_type"] = ChecklistFrequencySchedule.SCHED_WEEKLY_DAYS
-        base["selected_weekdays"] = normalized
+        base["selected_weekdays"] = [canon]
         base["repeat_interval"] = 7
-        base["schedule_summary"] = ", ".join(WEEKDAY_LABEL_BY_KEY[k] for k in normalized)
+        base["schedule_summary"] = _with_buffer_summary(WEEKDAY_LABEL_BY_KEY[canon], buffer_days)
         return base
 
     if code == "EVERY_15_DAYS":
@@ -222,7 +238,7 @@ def validate_and_normalize_schedule(freq_code: str, raw_schedule: dict | None) -
             base["schedule_type"] = ChecklistFrequencySchedule.SCHED_INTERVAL_15_DAYS
             base["start_date"] = start_date
             base["repeat_interval"] = interval_days
-            base["schedule_summary"] = f"Every {interval_days} days from {start_date.isoformat()}"
+            base["schedule_summary"] = _with_buffer_summary(f"Every {interval_days} days from {start_date.isoformat()}", buffer_days)
             return base
 
         if sched_type == ChecklistFrequencySchedule.SCHED_TWICE_MONTHLY_DATES:
@@ -239,7 +255,7 @@ def validate_and_normalize_schedule(freq_code: str, raw_schedule: dict | None) -
             base["schedule_type"] = ChecklistFrequencySchedule.SCHED_TWICE_MONTHLY_DATES
             base["selected_dates"] = norm_dates
             base["repeat_interval"] = 15
-            base["schedule_summary"] = f"{_ordinal(norm_dates[0])} & {_ordinal(norm_dates[1])} of every month"
+            base["schedule_summary"] = _with_buffer_summary(f"{_ordinal(norm_dates[0])} & {_ordinal(norm_dates[1])} of every month", buffer_days)
             return base
 
         raise ValidationError({"frequency_schedules": f"Every 15 Days: Unsupported schedule_type '{sched_type}'."})
@@ -252,7 +268,7 @@ def validate_and_normalize_schedule(freq_code: str, raw_schedule: dict | None) -
         base["schedule_type"] = ChecklistFrequencySchedule.SCHED_MONTHLY_DATES
         base["selected_dates"] = norm_dates
         base["repeat_interval"] = 1
-        base["schedule_summary"] = ", ".join(_ordinal(d) for d in norm_dates) + " of every month"
+        base["schedule_summary"] = _with_buffer_summary(", ".join(_ordinal(d) for d in norm_dates) + " of every month", buffer_days)
         return base
 
     if code == "QUARTERLY":
@@ -292,7 +308,7 @@ def validate_and_normalize_schedule(freq_code: str, raw_schedule: dict | None) -
         base["quarter_dates"] = norm_q_dates
         base["selected_dates"] = norm_q_dates
         base["repeat_interval"] = q_interval
-        base["schedule_summary"] = f"{d_labels} ({', '.join(dict.fromkeys(m_labels))})"
+        base["schedule_summary"] = _with_buffer_summary(f"{d_labels} ({', '.join(dict.fromkeys(m_labels))})", buffer_days)
         return base
 
     if code == "YEARLY":
@@ -343,15 +359,20 @@ def validate_and_normalize_schedule(freq_code: str, raw_schedule: dict | None) -
         base["yearly_month"] = clean_ys[0]["month"]
         base["yearly_day"] = None if clean_ys[0]["day"] == 'LAST' else int(clean_ys[0]["day"])
         base["repeat_interval"] = 1
-        base["schedule_summary"] = ", ".join(f"{_ordinal(r['day'])} {MONTH_NAMES[r['month']]}" for r in clean_ys)
+        base["schedule_summary"] = _with_buffer_summary(", ".join(f"{_ordinal(r['day'])} {MONTH_NAMES[r['month']]}" for r in clean_ys), buffer_days)
         return base
 
     raise ValidationError({"frequency_schedules": f"Unsupported frequency type '{freq_code}'."})
 
 
+def _with_buffer_summary(summary: str, buffer_days: int) -> str:
+    return f"{summary} · Buffer: +{buffer_days}d" if buffer_days > 0 else summary
+
+
 def serialize_schedule(s: ChecklistFrequencySchedule | None) -> dict | None:
     if not s:
         return None
+    eff_buffer = 0 if s.frequency_type == 'DAILY' else int(getattr(s, 'buffer_days', 0) or 0)
     return {
         "id": s.id,
         "frequency_code": s.frequency_type,
@@ -368,6 +389,7 @@ def serialize_schedule(s: ChecklistFrequencySchedule | None) -> dict | None:
         "yearly_month": s.yearly_month,
         "yearly_day": s.yearly_day,
         "yearly_schedules": s.yearly_schedules or [],
+        "buffer_days": eff_buffer,
         "allow_duplicate_in_same_slot": s.allow_duplicate_in_same_slot,
         "schedule_summary": s.schedule_summary or "",
         "is_active": s.is_active,
@@ -531,17 +553,23 @@ def evaluate_scheduled_cycle(
 
         summaries = ["Maintenance is required every calendar day."]
         completed_today = bool(latest_any_sub and latest_any_sub.submission_date >= today)
+        allow_dup = all(bool(s.allow_duplicate_in_same_slot) for s in custom_scheds)
         return {
             "status": status,
             "due_label": due_label,
             "current_occurrence_date": today.isoformat(),
+            "completion_deadline_date": today.isoformat(),
             "next_scheduled_date": next_scheduled.isoformat(),
             "upcoming_dates": [tomorrow.isoformat(), (today + timedelta(days=2)).isoformat(), (today + timedelta(days=3)).isoformat()],
             "last_completed_date": latest_completed_sub.submission_date.isoformat() if latest_completed_sub else None,
             "schedule_summaries": summaries,
-            "allow_duplicate_in_same_slot": False,
-            "already_completed_for_occurrence": completed_today,
-            "existing_submission_number": latest_any_sub.submission_number if (completed_today and latest_any_sub) else None,
+            "buffer_days": 0,
+            "within_buffer_period": False,
+            "allow_duplicate_in_same_slot": allow_dup,
+            "already_completed_for_occurrence": completed_today if not allow_dup else False,
+            "existing_submission_number": (
+                latest_any_sub.submission_number if (completed_today and not allow_dup and latest_any_sub) else None
+            ),
         }
 
     min_anchor = today
@@ -555,8 +583,14 @@ def evaluate_scheduled_cycle(
     range_end = today + timedelta(days=400)
 
     all_dates: set[date] = set()
+    buffer_by_date: dict[date, int] = {}
     for s in custom_scheds:
-        all_dates.update(get_schedule_dates_in_range(s, range_start, range_end))
+        s_buffer = 0 if getattr(freq, 'code', s.frequency_type) == 'DAILY' else int(getattr(s, 'buffer_days', 0) or 0)
+        s_dates = get_schedule_dates_in_range(s, range_start, range_end)
+        for d in s_dates:
+            all_dates.add(d)
+            if s_buffer > buffer_by_date.get(d, 0):
+                buffer_by_date[d] = s_buffer
 
     sorted_dates = sorted(all_dates)
     past_or_today = [d for d in sorted_dates if d <= today]
@@ -564,6 +598,13 @@ def evaluate_scheduled_cycle(
 
     last_due = past_or_today[-1] if past_or_today else None
     next_future = future[0] if future else None
+    eff_buffer = (
+        0
+        if getattr(freq, 'code', '') == 'DAILY'
+        else (buffer_by_date.get(last_due, max(buffer_by_date.values(), default=0)) if last_due else max((int(getattr(s, 'buffer_days', 0) or 0) for s in custom_scheds), default=0))
+    )
+    completion_deadline = (last_due + timedelta(days=eff_buffer)) if last_due is not None else None
+    within_buffer = False
 
     completed_this_slot = bool(
         last_due is not None
@@ -584,32 +625,51 @@ def evaluate_scheduled_cycle(
         elif latest_any_sub and latest_any_sub.submission_date == today:
             status = 'PENDING'
             next_scheduled = last_due
+            within_buffer = bool(eff_buffer > 0 and last_due < today <= completion_deadline)
             due_label = f"{freq.name} Partially Completed Today"
         elif last_due == today:
             status = 'DUE'
             next_scheduled = today
-            due_label = f"{freq.name} Due Today ({today})"
+            due_label = (
+                f"{freq.name} Due Today ({today} · Deadline {completion_deadline})"
+                if eff_buffer > 0
+                else f"{freq.name} Due Today ({today})"
+            )
+        elif completion_deadline is not None and today <= completion_deadline:
+            status = 'DUE'
+            next_scheduled = last_due
+            within_buffer = True
+            days_left = (completion_deadline - today).days
+            due_label = f"{freq.name} Within Buffer ({days_left}d left · Scheduled {last_due}, Deadline {completion_deadline})"
         else:
-            overdue_days = (today - last_due).days
+            overdue_ref = completion_deadline or last_due
+            overdue_days = (today - overdue_ref).days
             status = 'OVERDUE'
             next_scheduled = last_due
-            due_label = f"{freq.name} Overdue by {overdue_days}d (Due {last_due})"
+            due_label = (
+                f"{freq.name} Overdue by {overdue_days}d (Scheduled {last_due}, Deadline {completion_deadline})"
+                if eff_buffer > 0
+                else f"{freq.name} Overdue by {overdue_days}d (Due {last_due})"
+            )
     else:
         status = 'SCHEDULED'
         next_scheduled = next_future
         due_label = f"Next {freq.name} on {next_future}" if next_future else f"{freq.name} No Upcoming Dates"
 
     summaries = list(dict.fromkeys(s.schedule_summary for s in custom_scheds if s.schedule_summary))
-    allow_dup = any(s.allow_duplicate_in_same_slot for s in custom_scheds)
+    allow_dup = all(bool(s.allow_duplicate_in_same_slot) for s in custom_scheds)
 
     return {
         "status": status,
         "due_label": due_label,
         "current_occurrence_date": last_due.isoformat() if last_due else None,
+        "completion_deadline_date": completion_deadline.isoformat() if completion_deadline else None,
         "next_scheduled_date": next_scheduled.isoformat() if next_scheduled else None,
         "upcoming_dates": [d.isoformat() for d in future[:3]],
         "last_completed_date": latest_completed_sub.submission_date.isoformat() if latest_completed_sub else None,
         "schedule_summaries": summaries,
+        "buffer_days": eff_buffer,
+        "within_buffer_period": within_buffer,
         "allow_duplicate_in_same_slot": allow_dup,
         "already_completed_for_occurrence": any_submitted_this_slot if not allow_dup else False,
         "existing_submission_number": (
