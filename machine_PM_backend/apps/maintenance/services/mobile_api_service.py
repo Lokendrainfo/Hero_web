@@ -21,6 +21,8 @@ from apps.hero_integration.services import (
     get_authorized_machine_or_403,
     get_authorized_machines_queryset,
     get_user_vendor_ids,
+    is_user_authorized_for_machine,
+    resolve_assigned_operator_info,
     serialize_machine_info,
 )
 from apps.maintenance.models import (
@@ -46,15 +48,51 @@ from .submission_service import create_maintenance_submission
 def resolve_target_user(request, raw_user_id) -> HeroUser:
     """
     Resolves and validates target HERO user for Mobile APK endpoints.
-    - When authenticated via X-API-Key (HeroAPIKey), any active HERO user_id can be validated/acted on.
-    - When authenticated via user JWT, non-admin users cannot act on behalf of another user_id.
+    - When authenticated via user JWT, operator identity MUST come from the authenticated token;
+      any mismatched client-supplied user_id/operator_id is rejected (non-admins cannot act for another user).
+    - When authenticated via X-API-Key: if the key is bound to a non-admin user, identity is locked to that user;
+      service/admin keys require explicit active user_id.
     """
     is_api_key_auth = isinstance(getattr(request, 'auth', None), HeroAPIKey)
 
+    if not is_api_key_auth:
+        if not request.user or not getattr(request.user, 'is_authenticated', False):
+            raise PermissionDenied("Authentication credentials were not provided.")
+        if raw_user_id not in (None, ''):
+            try:
+                uid_int = int(raw_user_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"user_id": "user_id must be a valid integer ID."})
+            if uid_int != request.user.id and not is_pm_admin(request.user):
+                raise PermissionDenied("You are not authorized to perform or check maintenance using another operator's identity.")
+            if is_pm_admin(request.user) and uid_int != request.user.id:
+                target_user = HeroUser.objects.select_related('vendor').filter(id=uid_int).first()
+                if not target_user:
+                    raise NotFound(f"User with id '{raw_user_id}' not found in HERO User Master.")
+                if not target_user.is_active:
+                    raise ValidationError({"user_id": f"User '{target_user.username}' is inactive."})
+                return target_user
+        live_user = HeroUser.objects.select_related('vendor').filter(id=request.user.id, is_active=True).first()
+        if not live_user:
+            raise PermissionDenied("Authenticated operator account is missing or inactive.")
+        return live_user
+
+    key_owner = getattr(request.auth, 'user', None)
+    if key_owner is not None and not is_pm_admin(key_owner):
+        if raw_user_id not in (None, ''):
+            try:
+                uid_int = int(raw_user_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"user_id": "user_id must be a valid integer ID."})
+            if uid_int != key_owner.id:
+                raise PermissionDenied("API key is bound to a specific operator and cannot select another operator identity.")
+        live_owner = HeroUser.objects.select_related('vendor').filter(id=key_owner.id, is_active=True).first()
+        if not live_owner:
+            raise PermissionDenied("API key operator account is missing or inactive.")
+        return live_owner
+
     if raw_user_id in (None, ''):
-        if is_api_key_auth:
-            raise ValidationError({"user_id": "user_id is required when authenticating with X-API-Key."})
-        return request.user
+        raise ValidationError({"user_id": "user_id is required when authenticating with a service X-API-Key."})
 
     try:
         uid_int = int(raw_user_id)
@@ -66,9 +104,6 @@ def resolve_target_user(request, raw_user_id) -> HeroUser:
         raise NotFound(f"User with id '{raw_user_id}' not found in HERO User Master.")
     if not target_user.is_active:
         raise ValidationError({"user_id": f"User '{target_user.username}' is inactive."})
-
-    if not is_api_key_auth and target_user.id != request.user.id and not is_pm_admin(request.user):
-        raise PermissionDenied("You are not authorized to perform or check maintenance for another user.")
 
     return target_user
 
@@ -238,11 +273,7 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
     allowed_frequencies = get_user_allowed_frequencies(target_user, for_submit=True)
     role_authorized = user_can_access_frequency(target_user, freq.code, for_submit=True)
 
-    target_vendor_ids = get_user_vendor_ids(target_user)
-    vendor_authorized = (
-        target_vendor_ids is None
-        or (bool(target_vendor_ids) and machine.vendor_id in target_vendor_ids)
-    )
+    vendor_authorized, machine_auth_reason = is_user_authorized_for_machine(target_user, machine)
 
     # Load dynamic Admin Configuration for this frequency (optionally narrowed by activity_id)
     raw_activity_id = query_params.get('activity_id') or query_params.get('checklist_item_id')
@@ -439,7 +470,7 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
             f"Role '{primary_role}' is not authorized for {freq.name}. Allowed frequencies: {allowed_frequencies}."
         )
     if not vendor_authorized:
-        reasons.append("User is not authorized for this machine's assigned vendor.")
+        reasons.append(machine_auth_reason or "User is not authorized for this machine's assigned operator or vendor.")
     if has_duplicate:
         reasons.append(
             f"Duplicate maintenance blocked: {freq.name} already submitted for this occurrence ({duplicate_sub.submission_number})."
@@ -458,6 +489,7 @@ def check_machine_maintenance_eligibility(request, query_params: dict) -> dict:
             "frequency_valid": True,
             "role_authorized": role_authorized,
             "vendor_authorized": vendor_authorized,
+            "operator_authorized": vendor_authorized,
             "duplicate_submission_exists": has_duplicate,
         },
         "machine": machine_payload,
@@ -519,13 +551,35 @@ def submit_mobile_maintenance_data(request, payload: dict, files_map) -> dict:
     from django.utils.datastructures import MultiValueDict
     from apps.maintenance.services.photo_service import validate_capture_source
 
-    target_user = resolve_target_user(
-        request,
-        payload.get('user_id') if payload.get('user_id') not in (None, '') else payload.get('operator_id'),
-    )
+    is_api_key_auth = isinstance(getattr(request, 'auth', None), HeroAPIKey)
+    if not is_api_key_auth:
+        # Derive submitting operator strictly from authenticated JWT user/session; reject spoofing.
+        raw_client_uid = payload.get('user_id') if payload.get('user_id') not in (None, '') else payload.get('operator_id')
+        if raw_client_uid not in (None, ''):
+            try:
+                if int(raw_client_uid) != request.user.id:
+                    raise PermissionDenied("You cannot submit maintenance under another operator's identity.")
+            except (TypeError, ValueError):
+                raise ValidationError({"user_id": "user_id must be a valid integer ID."})
+        target_user = HeroUser.objects.select_related('vendor').filter(id=request.user.id, is_active=True).first()
+        if not target_user:
+            raise PermissionDenied("Authenticated operator account is missing or inactive.")
+    else:
+        target_user = resolve_target_user(
+            request,
+            payload.get('user_id') if payload.get('user_id') not in (None, '') else payload.get('operator_id'),
+        )
 
-    if payload.get('capture_source'):
-        validate_capture_source(payload.get('capture_source'), require_explicit=False)
+    # Never trust operator name / role / vendor supplied by client body
+    sanitized_payload = dict(payload)
+    for untrusted_key in (
+        'submitted_by_id', 'submitted_by_name', 'submitted_by_role',
+        'operator_name', 'assigned_operator', 'user_role', 'vendor_name', 'vendor_id',
+    ):
+        sanitized_payload.pop(untrusted_key, None)
+
+    if sanitized_payload.get('capture_source'):
+        validate_capture_source(sanitized_payload.get('capture_source'), require_explicit=False)
 
     normalized_files = MultiValueDict()
     if files_map:
@@ -543,7 +597,7 @@ def submit_mobile_maintenance_data(request, payload: dict, files_map) -> dict:
                 elif val is not None:
                     normalized_files[k] = val
 
-    responses = payload.get('responses')
+    responses = sanitized_payload.get('responses')
     if isinstance(responses, list):
         for r in responses:
             if isinstance(r, dict):
@@ -554,10 +608,11 @@ def submit_mobile_maintenance_data(request, payload: dict, files_map) -> dict:
                 if cid and f"photos[{cid}]" in normalized_files and f"photo_{cid}" not in normalized_files:
                     normalized_files.setlist(f"photo_{cid}", normalized_files.getlist(f"photos[{cid}]"))
 
-    payload['_raise_media_http_status'] = True
+    sanitized_payload['_require_explicit_camera'] = False
+    sanitized_payload['_raise_media_http_status'] = True
     submission = create_maintenance_submission(
         user=target_user,
-        payload=payload,
+        payload=sanitized_payload,
         files_map=normalized_files,
         request=request,
     )
@@ -709,13 +764,23 @@ def get_mobile_maintenance_list(request, query_params: dict) -> dict:
         machine_obj = get_authorized_machine_or_403(request.user, machine_id)
         machine_info = serialize_machine_info(machine_obj, include_assignment=True)
 
+    is_api_key_auth = isinstance(getattr(request, 'auth', None), HeroAPIKey)
     operator_user = None
     if operator_id not in (None, ''):
         try:
             op_int = int(operator_id)
         except (TypeError, ValueError):
             raise ValidationError({"operator_id": "operator_id must be a valid integer ID."})
-        operator_user = HeroUser.objects.filter(id=op_int).first()
+        if not is_api_key_auth and op_int != request.user.id and not is_pm_admin(request.user):
+            raise PermissionDenied("You are not authorized to view another operator's assigned machines.")
+        key_owner = getattr(request.auth, 'user', None) if is_api_key_auth else None
+        if key_owner is not None and not is_pm_admin(key_owner) and op_int != key_owner.id:
+            raise PermissionDenied("API key cannot query another operator's assigned machines.")
+        operator_user = HeroUser.objects.select_related('vendor').filter(id=op_int, is_active=True).first()
+    elif not is_api_key_auth and not is_pm_admin(request.user):
+        operator_user = HeroUser.objects.select_related('vendor').filter(id=request.user.id, is_active=True).first()
+    elif is_api_key_auth and getattr(request.auth, 'user', None) and not is_pm_admin(request.auth.user):
+        operator_user = HeroUser.objects.select_related('vendor').filter(id=request.auth.user.id, is_active=True).first()
 
     # Role -> Frequency mappings
     role_mappings_qs = RoleFrequencyMapping.objects.select_related('frequency').filter(
@@ -725,6 +790,12 @@ def get_mobile_maintenance_list(request, query_params: dict) -> dict:
 
     if role_filter:
         role_mappings_qs = role_mappings_qs.filter(role_code=role_filter)
+    elif operator_user is not None and not is_pm_admin(operator_user):
+        allowed_for_op = get_user_allowed_frequencies(operator_user, for_submit=False)
+        role_mappings_qs = role_mappings_qs.filter(
+            role_code__in=get_user_role_codes(operator_user),
+            frequency__code__in=allowed_for_op,
+        )
 
     roles_by_freq = {}
     role_assignments = {}
@@ -754,7 +825,7 @@ def get_mobile_maintenance_list(request, query_params: dict) -> dict:
     freqs_qs = MaintenanceFrequencyMaster.objects.filter(is_active=True).order_by('sort_order', 'id')
     if freq_filter and freq_filter != 'ALL':
         freqs_qs = freqs_qs.filter(code=freq_filter)
-    if role_filter:
+    if role_filter or (operator_user is not None and not is_pm_admin(operator_user)):
         freqs_qs = freqs_qs.filter(code__in=allowed_freqs_for_role)
     target_freqs = list(freqs_qs)
     target_freq_codes = {f.code for f in target_freqs}
@@ -895,21 +966,18 @@ def get_mobile_maintenance_list(request, query_params: dict) -> dict:
     today = timezone.localdate()
     content_records = []
 
+    authorized_machines = []
     for m in machines_list:
         m_num = m.machine_chassis_no or m.code or m.serial_number
-        assigned_op = extract_assigned_operator(m)
+        op_info = resolve_assigned_operator_info(m)
+        assigned_op = op_info["assigned_operator"]
         if operator_id not in (None, ''):
-            op_matches_machine = (
-                operator_user is not None
-                and (
-                    (operator_user.vendor_id and m.vendor_id == operator_user.vendor_id)
-                    or operator_user.username.lower() in assigned_op.lower()
-                    or operator_user.get_display_name().lower() in assigned_op.lower()
-                )
-            )
-            has_op_sub = any(sub.machine_id == m.id for sub in subs_list)
-            if not op_matches_machine and not has_op_sub:
+            if operator_user is None:
                 continue
+            op_matches_machine, _ = is_user_authorized_for_machine(operator_user, m)
+            if not op_matches_machine:
+                continue
+        authorized_machines.append(serialize_machine_info(m, include_assignment=False))
 
         for item, item_freqs, map_by_freq_code in filtered_items_with_freqs:
             for fc in item_freqs:
@@ -1018,7 +1086,27 @@ def get_mobile_maintenance_list(request, query_params: dict) -> dict:
             "user_role": role_filter or "ALL",
             "category": category_filter or "ALL",
         },
+        "authenticated_operator": (
+            {
+                "id": operator_user.id,
+                "username": operator_user.username,
+                "name": operator_user.get_display_name(),
+                "role": get_primary_pm_role(operator_user),
+            }
+            if operator_user is not None
+            else (
+                {
+                    "id": request.user.id,
+                    "username": request.user.username,
+                    "name": request.user.get_display_name(),
+                    "role": get_primary_pm_role(request.user),
+                }
+                if getattr(request, 'user', None) and getattr(request.user, 'is_authenticated', False) and not is_pm_admin(request.user)
+                else None
+            )
+        ),
         "machine": machine_info,
+        "machines": authorized_machines,
         "categories": categories,
         "role_assignments": list(role_assignments.values()),
         "total_checklist_items": len(checklist_items),

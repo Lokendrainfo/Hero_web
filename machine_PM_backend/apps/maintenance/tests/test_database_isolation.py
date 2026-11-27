@@ -59,5 +59,5 @@ class TestMultiDatabaseIsolation:
         res = client.get(f'/api/v1/pm/machines/{m1.id}/validate/')
         assert res.status_code == 200
         assert res.json()['data']['machine_number'] == m1.machine_chassis_no
-        assert res.json()['data']['assigned_operator'] == 'Ravi Kumar'
+        assert res.json()['data']['assigned_operator'] == op.get_display_name()
 

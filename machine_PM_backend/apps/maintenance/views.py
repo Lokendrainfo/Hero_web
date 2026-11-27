@@ -367,6 +367,18 @@ class SubmissionListCreateView(APIView):
 
     def post(self, request):
         payload = extract_submission_payload(request)
+        raw_client_uid = payload.get('user_id') if payload.get('user_id') not in (None, '') else payload.get('operator_id')
+        if raw_client_uid not in (None, ''):
+            try:
+                if int(raw_client_uid) != request.user.id:
+                    raise PermissionDenied("You cannot submit maintenance under another operator's identity.")
+            except (TypeError, ValueError):
+                raise ValidationError({"user_id": "user_id must be a valid integer ID."})
+        for untrusted_key in (
+            'submitted_by_id', 'submitted_by_name', 'submitted_by_role',
+            'operator_name', 'assigned_operator', 'user_role', 'vendor_name', 'vendor_id',
+        ):
+            payload.pop(untrusted_key, None)
         payload['_require_explicit_camera'] = True
         submission = create_maintenance_submission(
             user=request.user,

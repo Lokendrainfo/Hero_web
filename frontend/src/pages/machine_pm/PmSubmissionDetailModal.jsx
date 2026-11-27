@@ -443,7 +443,7 @@ export const PmSubmissionDetailModal = ({ isOpen, onClose, submission, canReview
                 <div style={{ color: 'var(--text-muted)' }}>Performed By</div>
                 <strong>{submission.submitted_by_name}</strong>
                 <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
-                  Role: {submission.submitted_by_role} · Assigned Op: {submission.assigned_operator || 'Unassigned'}
+                  Role: {submission.submitted_by_role} · Assigned Op: {submission.assigned_operator || 'Not Assigned'}
                 </div>
                 {submission.scheduled_due_date && (
                   <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', marginTop: '3px' }}>

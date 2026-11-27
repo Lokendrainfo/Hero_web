@@ -184,7 +184,7 @@ class TestMobileApkDynamicIntegration:
         assert data['machine']['machine_number'] == '600202608401'
         assert data['machine']['machine_model'] == 'APOLLO A600 V2'
         assert data['machine']['vendor_name'] == 'Vendor Alpha Infra'
-        assert data['machine']['assigned_operator'] == 'Ravi Kumar'
+        assert data['machine']['assigned_operator'] == 'Ravi Operator'
         assert data['machine']['current_hour_meter_reading'] == 245.0
 
         assert data['maintenance']['activity_id'] == cfg_weekly['id']

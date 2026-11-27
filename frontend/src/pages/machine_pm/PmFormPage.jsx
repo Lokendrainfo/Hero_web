@@ -749,9 +749,6 @@ export const PmFormPage = () => {
     if (machineDetail?.vendor_id !== undefined && machineDetail?.vendor_id !== null) {
       fd.append('vendor_id', String(machineDetail.vendor_id));
     }
-    if (user?.id) {
-      fd.append('operator_id', String(user.id));
-    }
     fd.append('frequency', selectedFreq);
     fd.append('hour_meter_reading', String(Number(hourMeter)));
     if (checklist?.schedule_status?.current_occurrence_date) {
@@ -1772,7 +1769,8 @@ export const PmFormPage = () => {
                 <div><span style={{ color: 'var(--text-muted)' }}>Machine ID / Number:</span><br /><strong style={{ fontFamily: 'var(--font-mono)' }}>{machineDetail.id} / {machineDetail.machine_number}</strong></div>
                 <div><span style={{ color: 'var(--text-muted)' }}>Model & Type:</span><br /><strong>{machineDetail.machine_model} ({machineDetail.machine_type})</strong></div>
                 <div><span style={{ color: 'var(--text-muted)' }}>Vendor:</span><br /><strong>{machineDetail.vendor_name}</strong></div>
-                <div><span style={{ color: 'var(--text-muted)' }}>Assigned Operator:</span><br /><strong>{machineDetail.assigned_operator}</strong></div>
+                <div><span style={{ color: 'var(--text-muted)' }}>Assigned Operator:</span><br /><strong>{machineDetail.assigned_operator || 'Not Assigned'}</strong></div>
+                <div><span style={{ color: 'var(--text-muted)' }}>Current Hour Meter:</span><br /><strong style={{ fontFamily: 'var(--font-mono)' }}>{machineDetail.engine_hours ?? 0} hrs</strong></div>
                 <div><span style={{ color: 'var(--text-muted)' }}>Site / Assignment:</span><br /><strong>{machineDetail.site_name || machineDetail.location_name || 'Operational'}</strong></div>
               </div>
             ) : null}

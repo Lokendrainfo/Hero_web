@@ -47,7 +47,7 @@ class TestMaintenanceWorkflows:
         m_data = m_val.json()['data']
         assert m_data['machine_number'] == '600202608401'
         assert m_data['machine_model'] == 'APOLLO A600 V2'
-        assert m_data['assigned_operator'] == 'Ravi Kumar'
+        assert m_data['assigned_operator'] == 'Ravi Operator'
         assert m_data['vendor_name'] == 'Vendor Alpha Infra'
 
         checklist = client.get('/api/v1/pm/checklist/?frequency=DAILY').json()['data']['items']

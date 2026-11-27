@@ -428,7 +428,7 @@ export const PmDashboardPage = () => {
                     </td>
                     <td>
                       <div style={{ fontWeight: 600 }}>{m.vendor_name}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Op: {m.operator_name}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Op: {m.operator_name || 'Not Assigned'}</div>
                     </td>
                     <td>
                       {m.last_maintenance ? (
